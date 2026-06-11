@@ -6,6 +6,7 @@ Ko's personal opinionated CLI. Thin wrappers around SDKs I use often, built so b
 - `ko exa search|get` — Exa semantic web search + URL → markdown
 - `ko arxiv search|fetch` — arxiv search + paper-to-markdown
 - `ko gsheets info|tabs|get|auth` — read Google Sheets via OAuth
+- `ko doc <file>` — PDF/Office/image → plain text via liteparse (local, no models). Bare shortcut: `ko <file>` routes here when the arg is an existing file.
 
 ## Principles
 - **Opinionated, not generic.** Do what I actually do, the way I do it. Defaults match my habits.
@@ -40,4 +41,4 @@ Ko's personal opinionated CLI. Thin wrappers around SDKs I use often, built so b
 - No interactive prompts inside commands (except the one-time OAuth browser popup)
 
 ## Not yet
-- Next up: `ko fetch` (URL → markdown, Wayback fallback), `ko yt` (YouTube transcript/summary). Full candidate list + priorities in `docs/ideas.md`.
+- Next up: `ko fetch` (URL → markdown, Wayback fallback), `ko yt` (YouTube transcript/summary). Full candidate list + priorities in `docs/ideas.md`. (`ko pdf` shipped as `ko doc`.)

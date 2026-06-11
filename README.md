@@ -7,6 +7,7 @@ Current subcommands:
 - `ko exa` — semantic web search + URL → markdown (via [Exa](https://exa.ai))
 - `ko arxiv` — arxiv search + paper-to-markdown
 - `ko gsheets` — read Google Sheets via OAuth
+- `ko doc` — PDF/Office/image → plain text (via [liteparse](https://developers.llamaindex.ai/liteparse/); local, fast, no models)
 
 ## Install
 
@@ -30,6 +31,11 @@ ko exa search "claude code hooks" --since 3
 # arxiv — no auth needed
 ko arxiv search "tool use benchmark" --since 12 --long
 ko arxiv fetch 2604.02460 -o paper.md
+
+# documents — fully local, no auth
+ko doc report.pdf                 # PDF/Office/image → plain text
+ko report.pdf                     # same: bare file args route to doc
+ko doc slides.pptx -p 1-5 -o slides.txt   # Office needs `brew install --cask libreoffice`
 
 # Google Sheets — needs one-off OAuth (see below)
 # (example ID is Google's public sample sheet)

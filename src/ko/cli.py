@@ -9,6 +9,7 @@ from pathlib import Path
 import typer
 
 from . import arxiv as arxiv_mod
+from . import doc as doc_mod
 from . import exa as exa_mod
 from . import google_auth
 from . import gsheets as gsheets_mod
@@ -16,7 +17,7 @@ from .agents import research_run, research_repl
 
 
 app = typer.Typer(
-    help="ko — Ko's opinionated CLI (exa, arxiv, gsheets, agent).",
+    help="ko — Ko's opinionated CLI (exa, arxiv, gsheets, doc, agent).",
     no_args_is_help=True,
 )
 
@@ -50,9 +51,7 @@ def arxiv_search(
     n: int = typer.Option(
         arxiv_mod.DEFAULT_MAX_RESULTS, "--n", help="max results to return"
     ),
-    long: bool = typer.Option(
-        False, "--long", "-l", help="include abstract summary"
-    ),
+    long: bool = typer.Option(False, "--long", "-l", help="include abstract summary"),
 ) -> None:
     """Search arxiv, newest first. Defaults to the last 18 months."""
     results = arxiv_mod.search(query, since_months=since, max_results=n)
@@ -190,7 +189,9 @@ def gsheets_info(
     spreadsheet_id: str = typer.Argument(
         ..., help="Google Sheet ID (the part between /d/ and /edit in the URL)"
     ),
-    as_json: bool = typer.Option(False, "--json", help="emit JSON instead of plain text"),
+    as_json: bool = typer.Option(
+        False, "--json", help="emit JSON instead of plain text"
+    ),
 ) -> None:
     """Show a sheet's title and tab names."""
     info = gsheets_mod.get_info(spreadsheet_id)
@@ -232,9 +233,7 @@ def gsheets_get(
     if raw and formula:
         typer.echo("--raw and --formula are mutually exclusive", err=True)
         raise typer.Exit(2)
-    render = (
-        "UNFORMATTED_VALUE" if raw else "FORMULA" if formula else "FORMATTED_VALUE"
-    )
+    render = "UNFORMATTED_VALUE" if raw else "FORMULA" if formula else "FORMATTED_VALUE"
     rows = gsheets_mod.get_range(spreadsheet_id, range_name, value_render=render)
     _emit_rows(rows, as_json)
 
@@ -254,6 +253,37 @@ def gsheets_auth(
     typer.echo(f"Signed in. Token cached at {google_auth.TOKEN_FILE}.")
 
 
+# --- doc ---
+
+
+@app.command("doc")
+def doc(
+    file: Path = typer.Argument(
+        ...,
+        exists=True,
+        dir_okay=False,
+        help="PDF, Office doc, or image (Office needs LibreOffice; images use OCR)",
+    ),
+    pages: str = typer.Option(
+        None, "--pages", "-p", help="page range, e.g. '1-5' or '3'"
+    ),
+    out: Path = typer.Option(
+        None, "--out", "-o", help="write text to this path; prints to stdout if omitted"
+    ),
+    no_ocr: bool = typer.Option(
+        False, "--no-ocr", help="skip OCR of image-based text (faster)"
+    ),
+) -> None:
+    """Document → plain text via liteparse. Local + fast, no models. Shortcut: `ko <file>`."""
+    text = doc_mod.parse(file, pages=pages, ocr=not no_ocr)
+    if out is None:
+        typer.echo(text)
+    else:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(text)
+        typer.echo(f"Wrote {len(text):,} chars to {out}", err=True)
+
+
 # --- agent ---
 
 agent_app = typer.Typer(help="AI agents powered by pydantic-ai.", no_args_is_help=True)
@@ -262,11 +292,16 @@ app.add_typer(agent_app, name="agent")
 
 @agent_app.command("research")
 def agent_research(
-    prompt: str = typer.Argument(None, help="research prompt; omit to enter interactive mode"),
-    model: str = typer.Option(None, "--model", "-m", help="model string, e.g. anthropic:claude-sonnet-4-6"),
+    prompt: str = typer.Argument(
+        None, help="research prompt; omit to enter interactive mode"
+    ),
+    model: str = typer.Option(
+        None, "--model", "-m", help="model string, e.g. anthropic:claude-sonnet-4-6"
+    ),
 ) -> None:
     """Research agent with web search via Exa. No prompt = interactive REPL."""
     import os
+
     if model:
         os.environ["KO_AGENT_MODEL"] = model
     if prompt:
@@ -275,5 +310,21 @@ def agent_research(
         research_repl()
 
 
-if __name__ == "__main__":
+def main() -> None:
+    """Entry point with a bare-argument shortcut: if the first arg is an
+    existing file (not a command name), route to `ko doc` — so `ko paper.pdf`
+    just works. Deterministic: command names always win over file names."""
+    import sys
+
+    args = sys.argv[1:]
+    if args and not args[0].startswith("-"):
+        known = {g.name for g in app.registered_groups} | {
+            c.name for c in app.registered_commands
+        }
+        if args[0] not in known and Path(args[0]).is_file():
+            sys.argv.insert(1, "doc")
     app()
+
+
+if __name__ == "__main__":
+    main()
