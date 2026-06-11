@@ -43,6 +43,23 @@ HN consensus 2025–26: CLI beats MCP for agent tooling (~10–32× lower token 
 - **`ko translate`** — DeepL, 500K chars/mo free (un-skipped: the free tier kills the old cost objection). Official CLI is Node/display-y; Python `deepl` SDK is clean. `ko fetch url | ko translate --to en`.
 - Weaker / only-if-I-need-them: `ko stocks` (Polygon), `ko trends` (pytrends, scrapes unofficial endpoint), `ko notion`, `ko ask` (Perplexity Sonar — overlaps exa).
 
+## `ko ai` — the agent layer (design sketch, 2026-06-11)
+
+ko grows two explicit layers:
+
+- **Layer 1 — deterministic plumbing.** `ko exa`, `ko fetch`, `ko yt`, `ko hn`… No LLM ever. Pipeable, cheap, safe for agents to call blind.
+- **Layer 2 — `ko ai "<prompt>"`.** A pydantic-ai agent whose tools *are* the Layer 1 module functions. Every new subcommand = a new agent tool for free, because `cli.py` and the agent wrap the same functions (same trick as the MCP plan). Absorbs/renames today's `ko agent`.
+
+Decisions:
+
+- **Explicit `ko ai`, not bare `ko "<prompt>"`** — a typo'd subcommand must never silently spend tokens, and agents calling Layer 1 need certainty it stays deterministic. Intelligence is opt-in.
+- **Skills as markdown recipes** at `~/.config/ko/skills/<name>.md` — frontmatter (description, allowed tools) + prompt body with `{args}`. `ko ai hn opus` → loads `hn.md`, runs: search HN for "opus" by date, keep >50-comment discussions, read top ≤5 (urls + comment trees), summarise + key highlights. Editable text, not code — same pattern as Claude skills, applied to my own CLI.
+- **SQLite at `~/.local/share/ko/ko.db`** — two tables, pays rent twice:
+  - `conversations`: pydantic-ai message histories (JSON-serializable natively) → `ko ai --continue`/`--resume` for free.
+  - `fetches`: (url, ts, markdown) — doubles as the **Layer 1 cache**: repeat `ko fetch` = instant + free (agents re-fetch constantly). `--no-cache` to bypass.
+  - Boundary: cache + history only. Knowledge store / saved links is yaad's job — don't rebuild yaad inside ko.
+- **Smart routing lives in `ko fetch`, not the agent.** No `ko linktopdf`/`linktoyt`: `ko fetch <anything>` sniffs deterministically — youtube.com/youtu.be → transcript, content-type PDF → pymupdf4llm, else trafilatura, dead link → Wayback. One universal "thing → markdown" command. Smart ≠ fuzzy.
+
 ## Infra
 
 - [ ] PyPI trusted publisher + tag-push GitHub Action (plan in WORKLOG 2026-04-22).
