@@ -21,6 +21,11 @@ The single list of candidate subcommands. WORKLOG tracks what happened; this tra
   - Transcript: **youtube-transcript-api** (v1.2.4) — hits YouTube's transcript endpoint directly, no video download; auto-captions, manual subs, translation. (yt-dlp is overkill for transcript-only.)
   - `--summarise`: pydantic-ai over the transcript (we already ship pydantic-ai).
   - Fallback when no transcript exists: Gemini native video understanding — pass URL as `file_data` part + JSON prompt. Pattern proven in `~/code/yaad/yaad/api/gemini.py` (`get_youtube_summary`, gemini-3-flash, ~fractions of a cent per video).
+- [ ] **`ko x <list>`** — X/Twitter digest via xai-sdk (paid but cheap; `XAI_API_KEY` env).
+  - `xai_sdk.tools.x_search(from_date, to_date, allowed_x_handles=[...])` — server-side agentic tool: Grok searches X, returns synthesis + citations + `response.cost_usd` in ONE request (verified in SDK source, `src/xai_sdk/tools.py`).
+  - No X-List API in the SDK — named lists live in ko config (`~/.config/ko/config.toml`: `[x.lists] ai = ["karpathy", ...]`). `ko x ai --days 3` → x_search restricted to that list's handles, last 3 days, returns digest of notable posts. Useful for me *and* agents (cheaper/cleaner than agents trying to scrape X).
+  - Flags: `--days`, `--prompt` override, `--json`. That's it.
+- [ ] **Bare-link shortcut: `ko <url>`** — paste a link as the only arg, ko detects it's a URL (deterministic: scheme/domain pattern, no LLM) and routes to `ko fetch`, which sniffs YouTube/PDF/article/dead-link under the hood. The "I just want the markdown of this thing" zero-thought path.
 
 ## Backlog (priority order; library picks researched 2026-06-11)
 
@@ -58,7 +63,19 @@ Decisions:
   - `conversations`: pydantic-ai message histories (JSON-serializable natively) → `ko ai --continue`/`--resume` for free.
   - `fetches`: (url, ts, markdown) — doubles as the **Layer 1 cache**: repeat `ko fetch` = instant + free (agents re-fetch constantly). `--no-cache` to bypass.
   - Boundary: cache + history only. Knowledge store / saved links is yaad's job — don't rebuild yaad inside ko.
-- **Smart routing lives in `ko fetch`, not the agent.** No `ko linktopdf`/`linktoyt`: `ko fetch <anything>` sniffs deterministically — youtube.com/youtu.be → transcript, content-type PDF → pymupdf4llm, else trafilatura, dead link → Wayback. One universal "thing → markdown" command. Smart ≠ fuzzy.
+- **Smart routing lives in `ko fetch`, not the agent.** No `ko linktopdf`/`linktoyt`: `ko fetch <anything>` sniffs deterministically — youtube.com/youtu.be → transcript, content-type PDF → pymupdf4llm, else trafilatura, dead link → Wayback. One universal "thing → markdown" command. Smart ≠ fuzzy. Plus the bare-link shortcut: `ko <url>` (top-level URL detection) routes straight to fetch.
+
+### Implementation notes (research 2026-06-11: pydantic.dev docs + refs/pydantic-ai source + sift/yaad prior art)
+
+The skills system is ~zero custom code — pydantic-ai 2026 ships the pieces:
+
+- **Skills = `Capability` with `defer_loading=True`.** Each skill collapses to a one-line catalog entry (id + description) until the model calls `load_capability(id)` — context stays lean no matter how many skills exist. Alternative for declarative files: `Agent.from_file(<yaml>)` (proven in sift — 15-line sector YAMLs, `sift/run.py:77`).
+- **Tool grouping: one `FunctionToolset` per module** (`exa`, `arxiv`, `fetch`, `yt`, `hn`), each carrying its own `instructions=`. Per-skill allowed-tools = `FilteredToolset` or per-run `toolsets=[...]` (run-time injection is supported).
+- **REPL: reuse `clai`'s `run_chat()`** (`pydantic_ai/_cli/__init__.py`, ~100 importable lines: prompt_toolkit + rich.Live markdown streaming + /multiline /cp /markdown). It takes `message_history=` — exactly the injection point for our SQLite resume. Don't hand-roll what `agents/research.py` started.
+- **Persistence (blessed API):** `ModelMessagesTypeAdapter.dump_json(messages)` / `.validate_json(blob)`; store one blob per exchange keyed by session (canonical example: `examples/chat_app.py`). Built-in `conversation_id` threads runs → `ko ai --continue`. `ReinjectSystemPrompt()` capability handles resumed sessions. **Record `pydantic_ai_version` per conversation** — old versions can't read newer transcripts (sift learned this: `sift/run.py` run.json).
+- **Steal from sift (`~/code/jabberwocky/sift/run.py`):** `UsageLimits(request_limit=N)` runaway cap; cost-per-run via `ModelResponse.cost().total_price` (genai-prices, already in our tree); retrying httpx transport (`AsyncTenacityTransport` + `wait_retry_after`); *the runner writes outputs, the agent never does*.
+- **From pydantic-deepagents: skip the framework** (autonomous subagent teams — overkill). Steal two guards eventually: stuck-loop detection (identical repeated tool calls → break) and large-tool-output eviction.
+- **Streaming:** simple path is 3 lines (`rich.Live` + `result.stream_output()` → `Markdown`); upgrade to `agent.iter()` only when we want "calling exa_search…" progress lines.
 
 ## Infra
 
