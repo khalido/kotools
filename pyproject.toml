@@ -1,5 +1,5 @@
 [project]
-name = "ko"
+name = "ko-tools"
 version = "0.1.0"
 description = "Ko's personal opinionated CLI — thin wrappers around SDKs I use often, built so both I and AI agents can lean on it."
 readme = "README.md"

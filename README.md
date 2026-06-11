@@ -18,7 +18,7 @@ uv tool install --editable /path/to/ko
 uvx --from /path/to/ko ko --help
 ```
 
-(Once published to PyPI: `uv tool install ko` or `uvx ko`.)
+(Once published to PyPI: `uv tool install ko-tools` — the package is `ko-tools`, the command it installs is still `ko`.)
 
 ## Quick start
 
