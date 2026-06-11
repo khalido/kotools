@@ -21,10 +21,11 @@ The single list of candidate subcommands. WORKLOG tracks what happened; this tra
   - Transcript: **youtube-transcript-api** (v1.2.4) — hits YouTube's transcript endpoint directly, no video download; auto-captions, manual subs, translation. (yt-dlp is overkill for transcript-only.)
   - `--summarise`: pydantic-ai over the transcript (we already ship pydantic-ai).
   - Fallback when no transcript exists: Gemini native video understanding — pass URL as `file_data` part + JSON prompt. Pattern proven in `~/code/yaad/yaad/api/gemini.py` (`get_youtube_summary`, gemini-3-flash, ~fractions of a cent per video).
-- [ ] **`ko x <list>`** — X/Twitter digest via xai-sdk (paid but cheap; `XAI_API_KEY` env).
-  - `xai_sdk.tools.x_search(from_date, to_date, allowed_x_handles=[...])` — server-side agentic tool: Grok searches X, returns synthesis + citations + `response.cost_usd` in ONE request (verified in SDK source, `src/xai_sdk/tools.py`).
-  - No X-List API in the SDK — named lists live in ko config (`~/.config/ko/config.toml`: `[x.lists] ai = ["karpathy", ...]`). `ko x ai --days 3` → x_search restricted to that list's handles, last 3 days, returns digest of notable posts. Useful for me *and* agents (cheaper/cleaner than agents trying to scrape X).
-  - Flags: `--days`, `--prompt` override, `--json`. That's it.
+- [ ] **`ko x <list>`** — fetch recent posts from X via the official **XDK** (`uv add xdk`, X API v2, my API key in env).
+  - `Client(...)` → `client.posts.recent_search(query=...)`, post lookup, list timeline (X API v2 `lists/{id}/tweets`); auto-pagination built in. Auto-generated SDK, endpoints mirror the v2 REST docs.
+  - `ko x ai --days 3` → posts from my AI list (real X List ID, or named handle-set in `~/.config/ko/config.toml`), last 3 days, TSV/`--json` out. Raw posts, deterministic — Layer 1, agents consume directly.
+  - ⚠️ Verify my API tier covers reads: X API free tier is ~write-only; Basic ($200/mo) is the usual read floor. If that's not on, the fallback is xai-sdk's `x_search(from_date, allowed_x_handles=[...])` — Grok-mediated server-side search, per-request pricing (`response.cost_usd`), genuinely cheap, but returns a synthesized digest + citations rather than raw posts. Could even be both: `ko x` (raw, XDK) and a `ko ai` skill for the digest.
+  - Flags: `--days`, `--n`, `--json`. That's it.
 - [ ] **Bare-link shortcut: `ko <url>`** — paste a link as the only arg, ko detects it's a URL (deterministic: scheme/domain pattern, no LLM) and routes to `ko fetch`, which sniffs YouTube/PDF/article/dead-link under the hood. The "I just want the markdown of this thing" zero-thought path.
 
 ## Backlog (priority order; library picks researched 2026-06-11)
