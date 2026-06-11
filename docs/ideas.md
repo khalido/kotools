@@ -17,6 +17,7 @@ The single list of candidate subcommands. WORKLOG tracks what happened; this tra
     2. Fetch raw HTML via the **`id_` suffix**: `web.archive.org/web/{timestamp}id_/{url}` — no toolbar/rewritten links; mandatory or trafilatura ingests archive chrome.
     - Gotchas: ~60 req/min then 429 + 1-hr IP block (honor Retry-After, set User-Agent); NYT/FT/Guardian self-excluded from recent archiving.
   - Maybe later: `--jina` escape hatch (`r.jina.ai/<url>`) for JS-heavy pages — cloud, slow (~8 s), but handles what static extraction can't.
+  - **PDF-link branch** (decided 2026-06-11): URL sniffs as PDF (extension or content-type) → download to `~/Downloads/<name>.pdf` (where I'd look for it on a Mac), parse via `ko doc`, text → stdout, saved path → stderr. `--no-save` parses from temp and discards (agent case — no clutter). arxiv.org/pdf/* URLs should redirect to `ko arxiv fetch` instead (source-based markdown beats PDF parsing — measured).
 - [ ] **`ko yt <url>`** — YouTube → transcript / summary.
   - Transcript: **youtube-transcript-api** (v1.2.4) — hits YouTube's transcript endpoint directly, no video download; auto-captions, manual subs, translation. (yt-dlp is overkill for transcript-only.)
   - `--summarise`: pydantic-ai over the transcript (we already ship pydantic-ai).
@@ -33,6 +34,7 @@ The single list of candidate subcommands. WORKLOG tracks what happened; this tra
 - [ ] **`ko q "SELECT ..."`** — **duckdb** Python package: SQL over CSV/JSON/Parquet, zero schema setup, pipeable. (duckdb already in my brew list — confirmed habit.)
 - [ ] **`ko rss <feed>`** — feed → TSV/markdown via feedparser. RSS parsing is solved-but-fiddly; agents do it badly with curl. (NetNewsWire user.)
 - [x] **`ko doc <file>`** — SHIPPED 2026-06-11 (was "ko pdf"). **liteparse** (LlamaIndex, v2, Rust): fully local, no models, spatial reading order, OCR fallback; PDF native, Office/images via LibreOffice/ImageMagick conversion (liteparse errors helpfully if missing). Plain-text output (`result.text` — no markdown mode; fine for agent consumption). Bare shortcut: `ko <file>` routes to doc. Quality escalation still available: marker (uv tool — shell out), Mistral OCR (~$0.001/page) for hard scans.
+  - **Head-to-head vs arxiv2md** (2606.12412, 21pp/6 MB, 2026-06-11): arxiv2md wins decisively *for arxiv* — real markdown structure, clean LaTeX equations, refs stripped (65K chars) because it parses the LaTeX source, not the PDF. liteparse: 3.5 s, decent reading order, but two-column tables flatten messily, equations garble, layout artifacts (103K chars). **Keep both**: `ko arxiv fetch` for arxiv (source beats PDF every time), `ko doc` for everything that only exists as a PDF/scan/Office file.
 - [ ] **`ko hn`** — direct Algolia REST via httpx (`hn.algolia.com/api/v1/search`, `search_by_date`, `items/{id}` for comment trees). No auth, **zero new deps** — every Python HN wrapper is unmaintained. Composes with `ko fetch`.
 - [ ] **`ko prompt <path>`** — depend on **files-to-prompt** (simonw, v0.6) rather than rebuild: `-c` Claude XML, `-m` markdown fences, feature-stable.
 - [ ] **`ko scholar`** — **OpenAlex REST** (250M works, free, no key) for breadth + **semanticscholar** PyPI for TLDRs/citation graph.
@@ -60,7 +62,7 @@ Decisions:
 
 - **Explicit `ko ai`, not bare `ko "<prompt>"`** — a typo'd subcommand must never silently spend tokens, and agents calling Layer 1 need certainty it stays deterministic. Intelligence is opt-in.
 - **Skills as markdown recipes** at `~/.config/ko/skills/<name>.md` — frontmatter (description, allowed tools) + prompt body with `{args}`. `ko ai hn opus` → loads `hn.md`, runs: search HN for "opus" by date, keep >50-comment discussions, read top ≤5 (urls + comment trees), summarise + key highlights. Editable text, not code — same pattern as Claude skills, applied to my own CLI.
-- **SQLite at `~/.local/share/ko/ko.db`** — two tables, pays rent twice:
+- **SQLite, not DuckDB, at `~/.local/share/ko/ko.db`** (considered 2026-06-11): the db's jobs are transactional KV (conversation blobs, fetch cache) — SQLite's home turf, stdlib, zero deps. DuckDB is columnar/analytical, weaker as a KV store. No loss: `ko q` brings DuckDB anyway, and DuckDB ATTACHes SQLite files directly — analytics over ko.db ("what do I fetch most?") via `ko q` for free. Two tables:
   - `conversations`: pydantic-ai message histories (JSON-serializable natively) → `ko ai --continue`/`--resume` for free.
   - `fetches`: (url, ts, markdown) — doubles as the **Layer 1 cache**: repeat `ko fetch` = instant + free (agents re-fetch constantly). `--no-cache` to bypass.
   - Boundary: cache + history only. Knowledge store / saved links is yaad's job — don't rebuild yaad inside ko.
