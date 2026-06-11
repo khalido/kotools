@@ -8,25 +8,40 @@ The single list of candidate subcommands. WORKLOG tracks what happened; this tra
 
 ## Next up
 
-- [ ] **`ko fetch <url>`** — URL → clean markdown.
-  - Primary: best-in-class extraction lib (research in flight — trafilatura vs readability+markdownify vs jina).
-  - `--archive`: resolve via Wayback Machine availability API, fetch the snapshot (use the `id_` raw-HTML suffix), return *that* as markdown. Also the fallback when the live fetch 404s/paywalls.
-  - Flags: `--archive`, maybe `--date` (closest snapshot), `--max-chars`. That's it.
+- [ ] **`ko fetch <url>`** — URL → clean markdown. ~40 lines total. (Research done 2026-06-11.)
+  - Extraction: **trafilatura** (pin ≥2.1) — tops every independent benchmark (F1 0.958 Scrapinghub, 0.841 WCXB-2025), native markdown out, built-in fetcher, one call:
+    `trafilatura.extract(trafilatura.fetch_url(url), output_format="markdown", include_links=True, include_tables=True)`
+  - Rejected: readability+markdownify (dominated), html2text (converter not extractor, GPL), docling (~1 GB PyTorch for web pages, no), markitdown (no boilerplate removal), Crawl4AI (drags in Chromium).
+  - Wayback (`--archive`, also auto-fallback on HTTP errors):
+    1. Resolve: `GET archive.org/wayback/available?url={url}` (+`&timestamp=YYYYMMDD` for `--date`) → `archived_snapshots.closest`; filter `status=="200"`; empty dict = no capture.
+    2. Fetch raw HTML via the **`id_` suffix**: `web.archive.org/web/{timestamp}id_/{url}` — no toolbar/rewritten links; mandatory or trafilatura ingests archive chrome.
+    - Gotchas: ~60 req/min then 429 + 1-hr IP block (honor Retry-After, set User-Agent); NYT/FT/Guardian self-excluded from recent archiving.
+  - Maybe later: `--jina` escape hatch (`r.jina.ai/<url>`) for JS-heavy pages — cloud, slow (~8 s), but handles what static extraction can't.
 - [ ] **`ko yt <url>`** — YouTube → transcript / summary.
-  - Transcript: grab directly from YouTube (youtube-transcript-api or similar — no parsing, agents use output as-is).
+  - Transcript: **youtube-transcript-api** (v1.2.4) — hits YouTube's transcript endpoint directly, no video download; auto-captions, manual subs, translation. (yt-dlp is overkill for transcript-only.)
   - `--summarise`: pydantic-ai over the transcript (we already ship pydantic-ai).
   - Fallback when no transcript exists: Gemini native video understanding — pass URL as `file_data` part + JSON prompt. Pattern proven in `~/code/yaad/yaad/api/gemini.py` (`get_youtube_summary`, gemini-3-flash, ~fractions of a cent per video).
 
-## Backlog (priority order)
+## Backlog (priority order; library picks researched 2026-06-11)
 
-- [ ] **`ko q "SELECT ..."`** — DuckDB ad-hoc SQL over JSON/CSV/Parquet, no DB file. (duckdb already in my brew list — confirmed habit.)
+- [ ] **`ko q "SELECT ..."`** — **duckdb** Python package: SQL over CSV/JSON/Parquet, zero schema setup, pipeable. (duckdb already in my brew list — confirmed habit.)
 - [ ] **`ko rss <feed>`** — feed → TSV/markdown via feedparser. RSS parsing is solved-but-fiddly; agents do it badly with curl. (NetNewsWire user.)
-- [ ] **`ko pdf <file>`** — PDF → text/markdown. Fast path: pymupdf4llm. Quality path: marker (already installed as a uv tool — maybe just shell out). Complements `ko arxiv fetch`.
-- [ ] **`ko hn`** — HN Algolia search, NDJSON out. Composes with `ko fetch`.
-- [ ] **`ko prompt <path>`** — files-to-prompt clone for stuffing repos/dirs into context.
-- [ ] **`ko scholar`** — Semantic Scholar citation graph (what arxiv can't give).
-- [ ] **`ko summarise`** — opinionated summariser via pydantic-ai. One good prompt, not a prompt framework.
+- [ ] **`ko pdf <file>`** — **pymupdf4llm**: PDF → markdown in one call, no ML, megabytes not gigabytes. Quality escalation paths: marker (already a uv tool — shell out), or Mistral OCR (~$0.001/page) for hard scans. docling rejected (~1 GB PyTorch install).
+- [ ] **`ko hn`** — direct Algolia REST via httpx (`hn.algolia.com/api/v1/search`, `search_by_date`, `items/{id}` for comment trees). No auth, **zero new deps** — every Python HN wrapper is unmaintained. Composes with `ko fetch`.
+- [ ] **`ko prompt <path>`** — depend on **files-to-prompt** (simonw, v0.6) rather than rebuild: `-c` Claude XML, `-m` markdown fences, feature-stable.
+- [ ] **`ko scholar`** — **OpenAlex REST** (250M works, free, no key) for breadth + **semanticscholar** PyPI for TLDRs/citation graph.
+- [ ] **`ko summarise`** — composition, not a wrapper: pipe `ko fetch`/`ko pdf` output into the existing pydantic-ai agent. One good prompt, not a prompt framework.
 - [ ] Later: `ko clip`, `ko note`, `ko standup`, `ko schema`, `ko embed`.
+
+## New candidates (HN scan, 2026-06-11 — gap-verified, not committed to)
+
+HN consensus 2025–26: CLI beats MCP for agent tooling (~10–32× lower token cost) — ko's exact thesis. These had confirmed gaps (no decent CLI exists) + ready SDKs:
+
+- **`ko cal`** — Google Calendar readonly. Reuses our existing OAuth flow + token cache, just one more scope; `gcalcli` is display-oriented, not pipeable. Cheapest possible add.
+- **`ko fred`** — FRED economic data (844K series, free key, no CLI anywhere). Time-series → TSV matches the gsheets pattern.
+- **`ko certs`** — crt.sh cert-transparency/subdomain lookup. No SDK, undocumented JSON endpoint, maximally curl-hostile.
+- **`ko translate`** — DeepL, 500K chars/mo free (un-skipped: the free tier kills the old cost objection). Official CLI is Node/display-y; Python `deepl` SDK is clean. `ko fetch url | ko translate --to en`.
+- Weaker / only-if-I-need-them: `ko stocks` (Polygon), `ko trends` (pytrends, scrapes unofficial endpoint), `ko notion`, `ko ask` (Perplexity Sonar — overlaps exa).
 
 ## Infra
 
@@ -38,5 +53,6 @@ The single list of candidate subcommands. WORKLOG tracks what happened; this tra
 - `ko gh` — `gh` already excellent, agents use it natively
 - `ko jira` / `ko linear` — volatile APIs, painful auth, low return
 - `ko atuin` / `ko zoxide` — shell-integrated, can't wrap from Python
-- `ko translate` — existing CLIs fine; API cost doesn't justify
+- Tavily / Brave search / Firecrawl / IPinfo / CoinGecko wrappers — official CLIs now exist (checked 2026-06)
+- newspaper3k (dead since 2018), every Python HN wrapper (unmaintained), docling-for-HTML
 - Big famous tools generally (rg, fzf, jq…) — wrap only API/SDK-shaped things that *lack* a good CLI (the Exa rule)
