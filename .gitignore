@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+.ruff_cache/
+dist/
+build/
+.DS_Store
+.claude/settings.local.json
+.arxiv2md_cache/
+
+# never commit real credentials or tokens
+google_client.json
+google_token.json
+*.secret.*
+.env
