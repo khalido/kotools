@@ -32,7 +32,9 @@ The single list of candidate subcommands. WORKLOG tracks what happened; this tra
 
 - [ ] **`ko q "SELECT ..."`** — **duckdb** Python package: SQL over CSV/JSON/Parquet, zero schema setup, pipeable. (duckdb already in my brew list — confirmed habit.)
 - [ ] **`ko rss <feed>`** — feed → TSV/markdown via feedparser. RSS parsing is solved-but-fiddly; agents do it badly with curl. (NetNewsWire user.)
-- [ ] **`ko pdf <file>`** — **pymupdf4llm**: PDF → markdown in one call, no ML, megabytes not gigabytes. Quality escalation paths: marker (already a uv tool — shell out), or Mistral OCR (~$0.001/page) for hard scans. docling rejected (~1 GB PyTorch install).
+- [ ] **`ko pdf <file>`** — fast path: **liteparse** (LlamaIndex, `pip install liteparse`, v2 May 2026) — Rust, fully local, no models/API keys, "good old-fashioned PDF parsing" (Simon Willison's take): spatial multi-column reading order, bounding boxes, Tesseract OCR fallback, 457-page/100 MB doc in ~0.8 s. Bonus: also parses DOCX/XLSX/PPTX/images, so `ko pdf` could quietly become "ko parse any document".
+  - To verify before committing: markdown output shape (it emits text + layout; check vs pymupdf4llm's native markdown) and license terms. pymupdf4llm remains the markdown-native alternative.
+  - Quality escalation paths unchanged: marker (already a uv tool — shell out), or Mistral OCR (~$0.001/page) for hard scans. docling rejected (~1 GB PyTorch install).
 - [ ] **`ko hn`** — direct Algolia REST via httpx (`hn.algolia.com/api/v1/search`, `search_by_date`, `items/{id}` for comment trees). No auth, **zero new deps** — every Python HN wrapper is unmaintained. Composes with `ko fetch`.
 - [ ] **`ko prompt <path>`** — depend on **files-to-prompt** (simonw, v0.6) rather than rebuild: `-c` Claude XML, `-m` markdown fences, feature-stable.
 - [ ] **`ko scholar`** — **OpenAlex REST** (250M works, free, no key) for breadth + **semanticscholar** PyPI for TLDRs/citation graph.
