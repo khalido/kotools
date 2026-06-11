@@ -8,6 +8,7 @@ Current subcommands:
 - `ko arxiv` — arxiv search + paper-to-markdown
 - `ko gsheets` — read Google Sheets via OAuth
 - `ko doc` — PDF/Office/image → plain text (via [liteparse](https://developers.llamaindex.ai/liteparse/); local, fast, no models)
+- `ko hn` — Hacker News top stories, search, comment trees (via [Algolia](https://hn.algolia.com/api); no auth)
 
 ## Install
 
@@ -36,6 +37,12 @@ ko arxiv fetch 2604.02460 -o paper.md
 ko doc report.pdf                 # PDF/Office/image → plain text
 ko report.pdf                     # same: bare file args route to doc
 ko doc slides.pptx -p 1-5 -o slides.txt   # Office needs `brew install --cask libreoffice`
+
+# Hacker News — no auth
+ko hn top                         # top 10 of the last 24h (hckrnews-style)
+ko hn top --n 20 --days 7         # top 20 of the week
+ko hn search "agent memory" --min-comments 50
+ko hn item 48480978               # story + comment tree (first column of top/search)
 
 # Google Sheets — needs one-off OAuth (see below)
 # (example ID is Google's public sample sheet)

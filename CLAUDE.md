@@ -7,6 +7,7 @@ Ko's personal opinionated CLI. Thin wrappers around SDKs I use often, built so b
 - `ko arxiv search|fetch` — arxiv search + paper-to-markdown
 - `ko gsheets info|tabs|get|auth` — read Google Sheets via OAuth
 - `ko doc <file>` — PDF/Office/image → plain text via liteparse (local, no models). Bare shortcut: `ko <file>` routes here when the arg is an existing file.
+- `ko hn top|search|item` — Hacker News via Algolia (no auth). `top` = hckrnews-style top 10/20 by points; `search` defaults to last 12 months; `item` = story + comment tree as text.
 
 ## Principles
 - **Opinionated, not generic.** Do what I actually do, the way I do it. Defaults match my habits.

@@ -4,6 +4,7 @@ Newest first. Big picture only — git commits have the detail.
 
 ## 2026-06-11
 
+- **Shipped `ko hn`** — top/search/item over the Algolia HN API (no auth, one new dep: httpx, now explicit). `top` reproduces my hckrnews.com top-10/20 habit (top-by-points in a day window ≈ front-page filter — verified Algolia's `front_page` tag only covers the *current* front page, so points it is). `search` defaults to last 12 months, `--min-comments` for the ">50 comments" recipe, `--new` for chronological. `item` renders the comment tree as indented text, links expanded to full hrefs (HN truncates anchor text). First column of top/search is the id — composes into `ko hn item <id>`.
 - **Shipped `ko doc`** — first new subcommand since the port. liteparse (Rust, local, no models) → plain text from PDF/Office/images; `--pages`, `-o`, `--no-ocr`. Entry point moved to `cli:main` which adds the bare-arg shortcut: `ko paper.pdf` routes to `doc` (command names always win; URL→fetch routing reserved for when fetch exists). Self-contained test fixture: hand-built minimal PDF, PDFium reconstructs the xref.
 - First commits! Initial commit + rename: package is `ko-tools` (PyPI `ko` is squatted), command stays `ko`. `uv build` verified.
 - Installed editable (`uv tool install --editable ~/code/ko`) — `ko` now on PATH everywhere. Fixed `arxiv2md` resolution (uv tool installs don't expose dependency scripts on PATH; resolve from our own venv).

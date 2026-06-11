@@ -12,6 +12,7 @@ from . import arxiv as arxiv_mod
 from . import doc as doc_mod
 from . import exa as exa_mod
 from . import google_auth
+from . import hn as hn_mod
 from . import gsheets as gsheets_mod
 from .agents import research_run, research_repl
 
@@ -28,6 +29,12 @@ exa_app = typer.Typer(
     help="exa semantic web search (EXA_API_KEY required).", no_args_is_help=True
 )
 app.add_typer(exa_app, name="exa")
+
+hn_app = typer.Typer(
+    help="Hacker News top stories + search via Algolia (no auth).",
+    no_args_is_help=True,
+)
+app.add_typer(hn_app, name="hn")
 
 gsheets_app = typer.Typer(
     help="Read Google Sheets. OAuth to your Google account on first run.",
@@ -170,6 +177,83 @@ def exa_get(
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(combined)
         typer.echo(f"Wrote {len(combined):,} chars to {out}", err=True)
+
+
+# --- hn ---
+
+
+def _echo_stories(stories: list[hn_mod.Story], as_json: bool) -> None:
+    if as_json:
+        typer.echo(json.dumps([asdict(s) for s in stories], default=str))
+        return
+    for s in stories:
+        date = s.created_at.strftime("%Y-%m-%d")
+        typer.echo(f"{s.id}  {s.points:>4}pts  {s.num_comments:>4}c  {date}  {s.title}")
+        typer.echo(f"  {s.url or s.hn_url}")
+        typer.echo("")
+
+
+@hn_app.command("top")
+def hn_top(
+    n: int = typer.Option(
+        hn_mod.DEFAULT_TOP_N, "--n", help="how many stories (10 or 20, hckrnews-style)"
+    ),
+    days: int = typer.Option(
+        1, "--days", "-d", help="window: top stories of the last N days"
+    ),
+    as_json: bool = typer.Option(False, "--json", help="emit JSON instead of text"),
+) -> None:
+    """Top stories by points, last 24h by default. First column is the id for `ko hn item`."""
+    _echo_stories(hn_mod.top(n=n, days=days), as_json)
+
+
+@hn_app.command("search")
+def hn_search(
+    query: str = typer.Argument(..., help="search query"),
+    n: int = typer.Option(hn_mod.DEFAULT_SEARCH_N, "--n", help="max results"),
+    since: int = typer.Option(
+        hn_mod.DEFAULT_SINCE_MONTHS,
+        "--since",
+        "-s",
+        help="only stories from the last N months (0 = all time)",
+    ),
+    new: bool = typer.Option(
+        False, "--new", help="sort newest first instead of by relevance"
+    ),
+    min_comments: int = typer.Option(
+        0, "--min-comments", "-c", help="only stories with at least N comments"
+    ),
+    as_json: bool = typer.Option(False, "--json", help="emit JSON instead of text"),
+) -> None:
+    """Search HN stories. Relevance order, last 12 months by default."""
+    results = hn_mod.search(
+        query, n=n, since_months=since, by_date=new, min_comments=min_comments
+    )
+    if not results:
+        typer.echo(f"No results for '{query}'.")
+        raise typer.Exit(0)
+    _echo_stories(results, as_json)
+
+
+@hn_app.command("item")
+def hn_item(
+    item_id: str = typer.Argument(..., help="story id (first column of top/search)"),
+    n: int = typer.Option(
+        hn_mod.DEFAULT_MAX_COMMENTS, "--n", help="max comments to show (0 = all)"
+    ),
+) -> None:
+    """One story + its comment tree as readable indented text."""
+    story, comments = hn_mod.item(item_id, max_comments=n)
+    date = story.created_at.strftime("%Y-%m-%d")
+    typer.echo(f"{story.title}  ({story.points}pts, {date})")
+    if story.url:
+        typer.echo(story.url)
+    typer.echo(story.hn_url)
+    for c in comments:
+        pad = "  " * (c.depth + 1)
+        typer.echo(f"\n{pad}[{c.author}]")
+        for line in c.text.splitlines():
+            typer.echo(f"{pad}{line}" if line else "")
 
 
 # --- gsheets ---
