@@ -2,6 +2,13 @@
 
 Newest first. Big picture only — git commits have the detail.
 
+## 2026-06-11
+
+- First commits! Initial commit + rename: package is `ko-tools` (PyPI `ko` is squatted), command stays `ko`. `uv build` verified.
+- Installed editable (`uv tool install --editable ~/code/ko`) — `ko` now on PATH everywhere. Fixed `arxiv2md` resolution (uv tool installs don't expose dependency scripts on PATH; resolve from our own venv).
+- Scrubbed personal sheet ID from README (now Google's public sample sheet).
+- Started `docs/ideas.md` — the single candidate-subcommand list (backlog moved there from this file). Headline ideas: `ko fetch` with Wayback fallback, `ko yt` (transcript + pydantic-ai summary, Gemini video-understanding fallback à la yaad).
+
 ## 2026-04-24
 
 - Drafted `docs/pydantic-ai.md` — plan for `ko agent` subcommand. Picked pydantic-ai over Claude Agent SDK / smolagents / LangChain: model-agnostic, typed outputs, composes with our existing dataclasses, thin runtime. Sandbox deferred until we add a code-execution tool — `mcp-run-python` (Pydantic team's Deno+Pyodide MCP server) is the likely first pick; E2B/Daytona/Modal if that's too limited.
@@ -42,20 +49,6 @@ Newest first. Big picture only — git commits have the detail.
   - Use Anthropic's Python MCP SDK as the transport
   - Each module (`exa.py`, `arxiv.py`, `gsheets.py`) should remain MCP-agnostic — only `cli.py` and a new `mcp.py` know about their respective transports
 
-### Backlog (from research scan, priority order for Ko's stack)
+### Backlog
 
-- [ ] `ko fetch <url>` — URL → clean markdown (Jina Reader). Closes the loop between `ko exa` and `ko arxiv`. Trivial.
-- [ ] `ko q "SELECT ..."` — DuckDB ad-hoc SQL over JSON/CSV/Parquet, no DB file. Big for Sheets export munging.
-- [ ] `ko prompt <path>` — `files-to-prompt` clone. Agents lean on this pattern.
-- [ ] `ko pdf <file>` — PDF → text (pymupdf). Complements `ko arxiv fetch`.
-- [ ] `ko hn` — HN Algolia search, NDJSON out. Composes with `ko fetch`.
-- [ ] `ko scholar` — Semantic Scholar citation graph (what arxiv can't give).
-- [ ] `ko summarise` — opinionated Claude summariser (opposite philosophy to simonw/llm).
-- [ ] Later: `ko clip`, `ko note`, `ko standup`, `ko schema`, `ko embed`.
-
-### Skip (considered, not a fit)
-
-- `ko gh` — `gh` CLI already excellent, has `--json`, Claude Code uses it natively
-- `ko jira` / `ko linear` — volatile APIs, painful auth, low return
-- `ko atuin` / `ko zoxide` — shell-integrated, can't meaningfully wrap from Python
-- `ko translate` — existing CLIs fine; API cost doesn't justify
+Moved to `docs/ideas.md` (2026-06-11) — single list of candidate subcommands, priorities, and the skip list.

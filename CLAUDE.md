@@ -40,4 +40,4 @@ Ko's personal opinionated CLI. Thin wrappers around SDKs I use often, built so b
 - No interactive prompts inside commands (except the one-time OAuth browser popup)
 
 ## Not yet
-- `ko fetch` (URL → markdown via Jina/Exa), `ko pdf` (PDF → text), `ko q` (DuckDB SQL over JSON/CSV), `ko prompt` (files-to-prompt), `ko hn`, `ko note`, `ko scholar`. See WORKLOG for priorities.
+- Next up: `ko fetch` (URL → markdown, Wayback fallback), `ko yt` (YouTube transcript/summary). Full candidate list + priorities in `docs/ideas.md`.
