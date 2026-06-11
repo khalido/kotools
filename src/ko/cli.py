@@ -12,6 +12,7 @@ from . import arxiv as arxiv_mod
 from . import doc as doc_mod
 from . import exa as exa_mod
 from . import google_auth
+from . import hf as hf_mod
 from . import hn as hn_mod
 from . import gsheets as gsheets_mod
 from .agents import research_run, research_repl
@@ -29,6 +30,12 @@ exa_app = typer.Typer(
     help="exa semantic web search (EXA_API_KEY required).", no_args_is_help=True
 )
 app.add_typer(exa_app, name="exa")
+
+hf_app = typer.Typer(
+    help="Hugging Face paper pages: daily feed, semantic search, metadata (no auth).",
+    no_args_is_help=True,
+)
+app.add_typer(hf_app, name="hf")
 
 hn_app = typer.Typer(
     help="Hacker News top stories + search via Algolia (no auth).",
@@ -177,6 +184,97 @@ def exa_get(
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(combined)
         typer.echo(f"Wrote {len(combined):,} chars to {out}", err=True)
+
+
+# --- hf ---
+
+
+def _echo_papers(papers: list[hf_mod.Paper], as_json: bool, long: bool) -> None:
+    if as_json:
+        typer.echo(json.dumps([asdict(p) for p in papers], default=str))
+        return
+    for p in papers:
+        date = p.published_at.strftime("%Y-%m-%d")
+        typer.echo(f"{p.id}  {p.upvotes:>4}▲  {date}  {p.title}")
+        if long and (p.ai_summary or p.summary):
+            excerpt = (p.ai_summary or p.summary)[:400].replace("\n", " ")
+            typer.echo(f"  {excerpt}")
+        typer.echo("")
+
+
+@hf_app.command("top")
+def hf_top(
+    n: int = typer.Option(hf_mod.DEFAULT_TOP_N, "--n", help="how many papers"),
+    date: str = typer.Option(
+        None, "--date", "-d", help="YYYY-MM-DD daily feed (default: latest)"
+    ),
+    long: bool = typer.Option(False, "--long", "-l", help="include summary excerpt"),
+    as_json: bool = typer.Option(False, "--json", help="emit JSON instead of text"),
+) -> None:
+    """Daily Papers by upvotes (trending). First column is the arxiv id — feeds `ko hf info|get` and `ko arxiv fetch`."""
+    _echo_papers(hf_mod.top(n=n, date=date), as_json, long)
+
+
+@hf_app.command("search")
+def hf_search(
+    query: str = typer.Argument(..., help="search query (semantic + full-text)"),
+    n: int = typer.Option(hf_mod.DEFAULT_SEARCH_N, "--n", help="max results"),
+    long: bool = typer.Option(False, "--long", "-l", help="include summary excerpt"),
+    as_json: bool = typer.Option(False, "--json", help="emit JSON instead of text"),
+) -> None:
+    """Search AI papers on hf.co/papers (covers title, authors, content)."""
+    results = hf_mod.search(query, n=n)
+    if not results:
+        typer.echo(f"No results for '{query}'.")
+        raise typer.Exit(0)
+    _echo_papers(results, as_json, long)
+
+
+@hf_app.command("info")
+def hf_info(
+    ref: str = typer.Argument(..., help="arxiv id, arxiv URL, or hf.co/papers URL"),
+    as_json: bool = typer.Option(False, "--json", help="emit JSON instead of text"),
+) -> None:
+    """One paper's metadata: upvotes, github + stars, AI summary, linked models/datasets/spaces."""
+    p = hf_mod.info(ref)
+    if as_json:
+        typer.echo(json.dumps(asdict(p), default=str))
+        return
+    typer.echo(f"{p.title}  ({p.upvotes}▲, {p.published_at.strftime('%Y-%m-%d')})")
+    typer.echo(p.hf_url)
+    if p.github_repo:
+        typer.echo(f"code: {p.github_repo}  ({p.github_stars:,}★)")
+    if p.project_page:
+        typer.echo(f"project: {p.project_page}")
+    for label, ids in [
+        ("models", p.linked_models),
+        ("datasets", p.linked_datasets),
+        ("spaces", p.linked_spaces),
+    ]:
+        if ids:
+            typer.echo(f"{label}: {', '.join(ids)}")
+    if p.ai_summary or p.summary:
+        typer.echo(f"\n{p.ai_summary or p.summary}")
+
+
+@hf_app.command("get")
+def hf_get(
+    ref: str = typer.Argument(..., help="arxiv id, arxiv URL, or hf.co/papers URL"),
+    out: Path = typer.Option(
+        None,
+        "--out",
+        "-o",
+        help="write markdown to this path; prints to stdout if omitted",
+    ),
+) -> None:
+    """Fetch a paper as markdown. Only papers indexed on hf.co/papers; else use `ko arxiv fetch`."""
+    content = hf_mod.get(ref)
+    if out is None:
+        typer.echo(content)
+    else:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(content)
+        typer.echo(f"Wrote {len(content):,} chars to {out}", err=True)
 
 
 # --- hn ---

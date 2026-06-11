@@ -9,6 +9,7 @@ Current subcommands:
 - `ko gsheets` — read Google Sheets via OAuth
 - `ko doc` — PDF/Office/image → plain text (via [liteparse](https://developers.llamaindex.ai/liteparse/); local, fast, no models)
 - `ko hn` — Hacker News top stories, search, comment trees (via [Algolia](https://hn.algolia.com/api); no auth)
+- `ko hf` — Hugging Face [paper pages](https://huggingface.co/papers): daily feed, semantic search, metadata, markdown (no auth)
 
 ## Install
 
@@ -43,6 +44,12 @@ ko hn top                         # top 10 of the last 24h (hckrnews-style)
 ko hn top --n 20 --days 7         # top 20 of the week
 ko hn search "agent memory" --min-comments 50
 ko hn item 48480978               # story + comment tree (first column of top/search)
+
+# Hugging Face papers — no auth
+ko hf top                         # today's Daily Papers by upvotes
+ko hf search "agent memory" --long
+ko hf info 2412.20138             # upvotes, github + stars, linked models/datasets
+ko hf get 2412.20138 -o paper.md  # paper as markdown (indexed papers only)
 
 # Google Sheets — needs one-off OAuth (see below)
 # (example ID is Google's public sample sheet)
