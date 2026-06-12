@@ -29,6 +29,16 @@ Why we use it, what we verified in its source, what bit us. Official docs are ca
 - **In-core spec-serializable capabilities**: NativeTool, ImageGeneration, Instrumentation, MCP, PrefixTools, PrepareTools, ProcessHistory, ReinjectSystemPrompt, SetToolMetadata, Thinking, Toolset, ToolSearch, WebFetch, WebSearch, XSearch, …
 - **`known_model_names()`** (480 qualified names) — feeds `ko llm` `-m` autocomplete; filter by configured env keys; OpenRouter models aren't enumerated (arbitrary strings — pull their live catalog when keyed).
 
+## Agent Skills ↔ Capabilities (researched 2026-06-12)
+
+They're different layers, not rivals: **agentskills.io is the portable file format** (knowledge, shareable, Claude Code loads it natively); **Capability is the runtime object** (typed, composable, enforceable). Author skills as files, load them as capabilities.
+
+- **Officially blessed bridge:** the v2 capabilities doc itself (`docs/capabilities.md` in v2-main, ~line 409) shows a `load_skill(path)` that splits SKILL.md frontmatter → `Capability(id, description, instructions=body, defer_loading=True)`. Pydantic publishes their own skill at github.com/pydantic/skills (vendored at `.agents/skills/building-pydantic-ai-agents/`). Native interop tracked in pydantic-ai issue #3365 — check before building our loader, it may land.
+- **Community prior art:** `pydantic-ai-skills` (PyPI; adds `read_skill_resource` + `run_skill_script` tools for bundled files/scripts), `haiku.skills` (sub-agent-per-skill mode — each skill runs isolated with only its tools), `coleam00/custom-agent-with-skills` (clean roll-your-own reference). In refs: hermes-agent carries 150+ SKILL.md files, openclaw 75+ — a borrowable ecosystem, which is the real argument for staying on-format.
+- **`allowed-tools` frontmatter is Claude-Code-specific** (Experimental in the spec) — hosts like raw pydantic-ai ignore it. Our opinionated upgrade: map it to a `FilteredToolset` so ko *enforces* what the spec only suggests. That's the Capability robustness win: skill text says "only use X"; a capability can make non-X tools not exist.
+- **Bundled resource files:** embed small ones inline after the body at load time; if they grow, add a `read_skill_resource` tool (DougTrajano pattern) for second-stage disclosure.
+- **Pure text recipes** ("use A then B, double-check, report") are just `instructions=` — they work with zero special handling.
+
 ## Useful v2 features on our radar
 
 - **`pydantic_ai.direct`** — model call with no Agent at all; possible ultra-thin `ko llm` core (we still prefer Agent for the shared mental model).
