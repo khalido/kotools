@@ -11,6 +11,7 @@ Current subcommands:
 - `ko hf` — Hugging Face [paper pages](https://huggingface.co/papers): daily feed, semantic search, metadata, markdown (no auth)
 - `ko hn` — Hacker News top stories, search, comment trees (via [Algolia](https://hn.algolia.com/api); no auth)
 - `ko doc` — PDF/Office/image → plain text (via [liteparse](https://developers.llamaindex.ai/liteparse/); local, fast, no models)
+- `ko x` — search recent X posts (via the official [XDK](https://docs.x.com/xdks/python/overview); needs a paid API tier for reads)
 - `ko gsheets` — read Google Sheets via OAuth
 - `ko agent` — pydantic-ai research agent (early; the agent layer is growing)
 
@@ -36,6 +37,7 @@ Keys live in environment variables (shell profile or `.env` — never in the rep
 | `ANTHROPIC_API_KEY` | `ko agent` | 💰 | Default agent model. |
 | `OPENROUTER_API_KEY` | `ko agent` (planned default) | 💰 | One key, any model — the easy way to explore new models via pydantic-ai. |
 | `GEMINI_API_KEY` | planned `ko yt` fallback | 💰 | Gemini native video understanding when no transcript exists. |
+| `X_BEARER_TOKEN` | `ko x` | 💰 | X API v2 Bearer Token. Reads need a paid tier (free is ~write-only). [developer.x.com](https://developer.x.com) |
 | — (Google OAuth) | `ko gsheets` | free | Not a key: one-off browser consent, token cached locally. See below. |
 | — | `ko arxiv`, `ko hn`, `ko hf`, `ko doc` | free | No auth at all. |
 

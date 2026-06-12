@@ -839,6 +839,7 @@ dependencies = [
     { name = "mcp", extra = ["cli"] },
     { name = "pydantic-ai" },
     { name = "typer" },
+    { name = "xdk" },
 ]
 
 [package.dev-dependencies]
@@ -860,6 +861,7 @@ requires-dist = [
     { name = "mcp", extras = ["cli"], specifier = ">=1.27.0" },
     { name = "pydantic-ai", specifier = "==2.0.0b7" },
     { name = "typer", specifier = ">=0.24.1" },
+    { name = "xdk", specifier = ">=0.9.0" },
 ]
 
 [package.metadata.requires-dev]
@@ -1976,6 +1978,20 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/79/d9/7cfd5a312760ac4dd8bf0184a6ee9e43c33e47f3dadc303032ce012b8fa3/wrapt-1.17.3-cp314-cp314t-win_amd64.whl", hash = "sha256:73d496de46cd2cdbdbcce4ae4bcdb4afb6a11234a1df9c085249d55166b95116", size = 41334, upload-time = "2025-08-12T05:53:14.178Z" },
     { url = "https://files.pythonhosted.org/packages/46/78/10ad9781128ed2f99dbc474f43283b13fea8ba58723e98844367531c18e9/wrapt-1.17.3-cp314-cp314t-win_arm64.whl", hash = "sha256:f38e60678850c42461d4202739f9bf1e3a737c7ad283638251e79cc49effb6b6", size = 38471, upload-time = "2025-08-12T05:52:57.784Z" },
     { url = "https://files.pythonhosted.org/packages/1f/f6/a933bd70f98e9cf3e08167fc5cd7aaaca49147e48411c0bd5ae701bb2194/wrapt-1.17.3-py3-none-any.whl", hash = "sha256:7171ae35d2c33d326ac19dd8facb1e82e5fd04ef8c6c0e394d7af55a55051c22", size = 23591, upload-time = "2025-08-12T05:53:20.674Z" },
+]
+
+[[package]]
+name = "xdk"
+version = "0.9.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pydantic" },
+    { name = "requests" },
+    { name = "requests-oauthlib" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/09/3c/6940c6e94d4f96f5f048bb11e7303cfe09ca5bc4fd95f25d461f350b3b58/xdk-0.9.0.tar.gz", hash = "sha256:0fab8a1649cb92b824f3ff0b579a2e8bcce42a5c378298a4e381f0d1f40191d6", size = 404139, upload-time = "2026-02-28T01:17:14.879Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/0b/37/b7e57c9fe9c4f383afc1a4b16451373ee5ae96dd25b02e1c0dd347b30423/xdk-0.9.0-py3-none-any.whl", hash = "sha256:042555e661c1ee772e085d9eb4df0a335b1f81dcfb9ae7fba1a32d950cd6a4ef", size = 172500, upload-time = "2026-02-28T01:17:13.356Z" },
 ]
 
 [[package]]

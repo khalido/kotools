@@ -14,6 +14,7 @@ from . import exa as exa_mod
 from . import google_auth
 from . import hf as hf_mod
 from . import hn as hn_mod
+from . import x as x_mod
 from . import gsheets as gsheets_mod
 from .agents import research_run, research_repl
 
@@ -48,6 +49,12 @@ gsheets_app = typer.Typer(
     no_args_is_help=True,
 )
 app.add_typer(gsheets_app, name="gsheets")
+
+x_app = typer.Typer(
+    help="X (Twitter) posts via the official XDK (X_BEARER_TOKEN required, paid tier for reads).",
+    no_args_is_help=True,
+)
+app.add_typer(x_app, name="x")
 
 
 # --- arxiv ---
@@ -464,6 +471,42 @@ def doc(
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(text)
         typer.echo(f"Wrote {len(text):,} chars to {out}", err=True)
+
+
+# --- x ---
+
+
+@x_app.command("search")
+def x_search(
+    query: str = typer.Argument(
+        ..., help="X search query (supports operators like from:user, -is:retweet)"
+    ),
+    n: int = typer.Option(x_mod.DEFAULT_MAX_RESULTS, "--n", help="max posts"),
+    days: int = typer.Option(
+        x_mod.DEFAULT_DAYS, "--days", "-d", help="how far back (API max ~7 days)"
+    ),
+    top: bool = typer.Option(
+        False, "--top", help="sort by relevancy instead of newest first"
+    ),
+    as_json: bool = typer.Option(False, "--json", help="emit JSON instead of text"),
+) -> None:
+    """Search recent X posts. Newest first by default."""
+    posts = x_mod.search(query, n=n, days=days, top=top)
+    if not posts:
+        typer.echo(f"No posts for '{query}' in the last {days} days.")
+        raise typer.Exit(0)
+    if as_json:
+        typer.echo(json.dumps([asdict(p) for p in posts], default=str))
+        return
+    for p in posts:
+        date = p.created_at.strftime("%Y-%m-%d")
+        text = " ".join(p.text.split())  # collapse newlines for scanability
+        if len(text) > 200:
+            text = text[:200] + "…"
+        typer.echo(f"@{p.author}  {date}  {p.likes}♥ {p.reposts}rt")
+        typer.echo(f"  {text}")
+        typer.echo(f"  {p.url}")
+        typer.echo("")
 
 
 # --- agent ---
