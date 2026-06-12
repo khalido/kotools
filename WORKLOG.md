@@ -4,7 +4,7 @@ Newest first. Big picture only — git commits have the detail; candidate ideas 
 
 ## 2026-06-13
 
-- **Shipped `ko tmdb`** — movie/TV quick check (rating, overview, regional watch providers, AU default), ported from my chota-bot TypeScript tool. TMDB v4 bearer token, free tier; providers data is JustWatch via TMDB. Live-verified.
+- **Shipped `ko tv`** — movie/TV quick check (rating, overview, regional watch providers, AU default), ported from my chota-bot TypeScript tool. TMDB v4 bearer token, free tier; providers data is JustWatch via TMDB. Live-verified.
 
 ## 2026-06-12
 

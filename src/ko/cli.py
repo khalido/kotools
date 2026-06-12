@@ -537,11 +537,11 @@ def x_lists() -> None:
         typer.echo(f"{lst.id}\t{lst.name}")
 
 
-# --- tmdb ---
+# --- tv (tmdb) ---
 
 
-@app.command("tmdb")
-def tmdb(
+@app.command("tv")
+def tv(
     query: str = typer.Argument(..., help="movie or TV title to look up"),
     tv: bool = typer.Option(False, "--tv", help="TV shows only"),
     movie: bool = typer.Option(False, "--movie", help="movies only"),

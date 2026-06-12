@@ -12,7 +12,7 @@ Current subcommands:
 - `ko hn` — Hacker News top stories, search, comment trees (via [Algolia](https://hn.algolia.com/api); no auth)
 - `ko doc` — PDF/Office/image → plain text (via [liteparse](https://developers.llamaindex.ai/liteparse/); local, fast, no models)
 - `ko x` — search recent X posts (via the official [XDK](https://docs.x.com/xdks/python/overview); needs a paid API tier for reads)
-- `ko tmdb` — movie/TV quick check: rating, overview, where to stream (AU default; via [TMDB](https://developer.themoviedb.org))
+- `ko tv` — movie/TV quick check: rating, overview, where to stream (AU default; via [TMDB](https://developer.themoviedb.org))
 - `ko gsheets` — read Google Sheets via OAuth
 - `ko agent` — pydantic-ai research agent (early; the agent layer is growing)
 
@@ -39,7 +39,7 @@ Keys live in environment variables (shell profile or `.env` — never in the rep
 | `OPENROUTER_API_KEY` | `ko agent` (planned default) | 💰 | One key, any model — the easy way to explore new models via pydantic-ai. |
 | `GEMINI_API_KEY` | planned `ko yt` fallback | 💰 | Gemini native video understanding when no transcript exists. |
 | `X_BEARER_TOKEN` | `ko x` | 💰 | X API v2 Bearer Token. Reads need a paid tier (free is ~write-only). [developer.x.com](https://developer.x.com) |
-| `TMDB_READ_ACCESS_TOKEN` | `ko tmdb` | free | v4 Read Access Token from [TMDB settings](https://www.themoviedb.org/settings/api). |
+| `TMDB_READ_ACCESS_TOKEN` | `ko tv` | free | v4 Read Access Token from [TMDB settings](https://www.themoviedb.org/settings/api). |
 | — (Google OAuth) | `ko gsheets` | free | Not a key: one-off browser consent, token cached locally. See below. |
 | — | `ko arxiv`, `ko hn`, `ko hf`, `ko doc` | free | No auth at all. |
 
@@ -74,8 +74,8 @@ ko exa search "claude code hooks" --since 3
 ko exa get https://example.com/post       # URL → clean markdown (handles PDF URLs too)
 
 # movies/TV — needs TMDB_READ_ACCESS_TOKEN (free)
-ko tmdb "dune"                    # rating + overview + where to stream in AU
-ko tmdb "the bear" --tv -c US     # TV only, US providers
+ko tv "dune"                    # rating + overview + where to stream in AU
+ko tv "the bear" --tv -c US     # TV only, US providers
 
 # Google Sheets — needs one-off OAuth (see below)
 # (example ID is Google's public sample sheet)
