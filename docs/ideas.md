@@ -83,6 +83,8 @@ Decisions:
 
 ### Implementation notes (research 2026-06-11: pydantic.dev docs + pydantic-ai source + private prior art)
 
+**On pydantic-ai v2.0.0b7 as of 2026-06-12** (was 1.87; switched before building anything — v2 is harness-first with `capabilities=[...]` as the core primitive, exactly our skills plan). Verified on upgrade: research agent + all tests pass untouched; clai internals we read are v2-current (diff vs beta: 10 trivial lines); `Capability` imports from `pydantic_ai.capabilities` (not top-level); `known_model_names()` exists (480 qualified names — the `ko llm` completion source, no fallback needed); `openrouter:`/`anthropic:` both resolve with the default extras. Gotchas: pin the exact beta (`==2.0.0b7`, bump deliberately; stable v2 imminent — un-pin then); `[tool.uv] prerelease = "allow"` needed for the slim sub-package; **`openai:` now means the Responses API** (`openai-chat:` for Chat Completions). Upgrade guide: pydantic.dev/docs/ai/changelog/.
+
 The skills system is ~zero custom code — pydantic-ai 2026 ships the pieces:
 
 - **Skills = `Capability` with `defer_loading=True`.** Each skill collapses to a one-line catalog entry (id + description) until the model calls `load_capability(id)` — context stays lean no matter how many skills exist. Alternative for declarative files: `Agent.from_file(<yaml>)` (proven in a private extraction pipeline — 15-line agent YAMLs).

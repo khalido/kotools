@@ -22,7 +22,7 @@ dependencies = [
     "httpx>=0.27",
     "liteparse>=2.0.7",
     "mcp[cli]>=1.27.0",
-    "pydantic-ai>=1.87.0",
+    "pydantic-ai==2.0.0b7",
     "typer>=0.24.1",
 ]
 
@@ -32,6 +32,10 @@ Issues = "https://github.com/khalido/ko-tools/issues"
 
 [project.scripts]
 ko = "ko.cli:main"
+
+[tool.uv]
+# pydantic-ai v2 is in beta; its sub-packages (pydantic-ai-slim) are prereleases too
+prerelease = "allow"
 
 [build-system]
 requires = ["hatchling"]
