@@ -90,6 +90,14 @@ The skills system is ~zero custom code — pydantic-ai 2026 ships the pieces:
 - **Streaming:** simple path is 3 lines (`rich.Live` + `result.stream_output()` → `Markdown`); upgrade to `agent.iter()` only when we want "calling exa_search…" progress lines.
 - **Chat UX, mined from simonw/llm source (2026-06-12):** steal — `!multi`/`!edit` REPL commands (multi-line input + $EDITOR escape); a user `aliases.json` + default-model file (maps cleanly onto pydantic-ai model strings; nicer than env-only); its SQLite shape (`conversations` + `responses` rows with model, tokens, duration → our two-table plan is validated, add those columns); YAML templates with `string.Template` vars (≈ our skills files); reasoning-vs-text stream split (thinking → stderr dim, text → stdout). Skip — `keys.json` store (env vars + pydantic-ai suffice), fragments (until prompt reuse hurts), pluggy plugins (single-owner tool). Notably `llm chat` has **no mid-chat model switch** — our `/model` slash command in `run_chat()` would be a genuine improvement, and it's cheap: pydantic-ai takes `model=` per run, history carries over. Shell completion: typer's `autocompletion=` callback on `-m` over a curated favourites list.
 
+## Per-tool docs: knowledge base vs skills (decided 2026-06-12)
+
+Two separate artifacts per tool — don't conflate them:
+
+- **`docs/<tool>.md` — internal knowledge base / dev & build guide.** For *us when building*: why we chose this library/API, what it's good for, the 2–3 alternatives considered and why they lost, pricing, experiments and findings ("arxiv API is slow, 429s under load — that's why the test is opt-in"), links to official docs/specs/skill files. Free-form, honest, opinionated. Pick a tool back up a year later and this is the context.
+- **`skills/<name>/SKILL.md` — agent-facing usage skill**, [agentskills.io](https://agentskills.io) standard (YAML frontmatter: name + description; markdown body). For *agents when using*: when to reach for `ko hn`, which flags, output shapes, composition recipes (`hf top` → `arxiv fetch`). Consumed two ways: outer agents (Claude Code loads the standard directly) and `ko ai` (pydantic-ai has no native skills — but `Capability` explicitly wraps "Markdown files with YAML frontmatter — the format used by Anthropic Agent Skills", per pydantic.dev/docs/ai/core-concepts/capabilities/). One file, both consumers.
+- Tension to respect: CLAUDE.md says "needing a skill is a design smell" — `--help` stays the first-line contract; SKILL.md carries only what help text can't (cross-tool recipes, judgment defaults, cost awareness).
+
 ## Infra
 
 - [ ] PyPI trusted publisher + tag-push GitHub Action (plan in WORKLOG 2026-04-22).
