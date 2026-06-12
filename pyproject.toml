@@ -27,8 +27,8 @@ dependencies = [
 ]
 
 [project.urls]
-Repository = "https://github.com/khalido/ko"
-Issues = "https://github.com/khalido/ko/issues"
+Repository = "https://github.com/khalido/ko-tools"
+Issues = "https://github.com/khalido/ko-tools/issues"
 
 [project.scripts]
 ko = "ko.cli:main"

@@ -1,15 +1,18 @@
 # ko
 
-Ko's personal opinionated CLI. Thin wrappers over SDKs I use often — equally ergonomic for humans and AI agents.
+A personal toolkit for me and my agents to quickly check or grab stuff — papers, posts, sheets, documents, the web — without leaving the terminal.
+
+Each subcommand wraps the best library or API I found for that job, with the defaults I actually want baked in and only 2–3 flags exposed. Several of the APIs are paid: life is too short to do everything yourself, and at personal scale they cost a few dollars a month. Everything is equally usable by a human skimming `--help` and by an AI agent calling it from bash.
 
 Current subcommands:
 
 - `ko exa` — semantic web search + URL → markdown (via [Exa](https://exa.ai))
 - `ko arxiv` — arxiv search + paper-to-markdown
-- `ko gsheets` — read Google Sheets via OAuth
-- `ko doc` — PDF/Office/image → plain text (via [liteparse](https://developers.llamaindex.ai/liteparse/); local, fast, no models)
-- `ko hn` — Hacker News top stories, search, comment trees (via [Algolia](https://hn.algolia.com/api); no auth)
 - `ko hf` — Hugging Face [paper pages](https://huggingface.co/papers): daily feed, semantic search, metadata, markdown (no auth)
+- `ko hn` — Hacker News top stories, search, comment trees (via [Algolia](https://hn.algolia.com/api); no auth)
+- `ko doc` — PDF/Office/image → plain text (via [liteparse](https://developers.llamaindex.ai/liteparse/); local, fast, no models)
+- `ko gsheets` — read Google Sheets via OAuth
+- `ko agent` — pydantic-ai research agent (early; the agent layer is growing)
 
 ## Install
 
@@ -23,33 +26,43 @@ uvx --from /path/to/ko ko --help
 
 (Once published to PyPI: `uv tool install ko-tools` — the package is `ko-tools`, the command it installs is still `ko`.)
 
+## API keys
+
+Keys live in environment variables (shell profile or `.env` — never in the repo). What you need depends on what you use; most of ko works with no keys at all.
+
+| Env var | Used by | Paid? | Notes |
+|---|---|---|---|
+| `EXA_API_KEY` | `ko exa` | 💰 | Search $7/1k requests (contents for 10 results included); standalone contents $1/1k pages. [exa.ai](https://exa.ai) |
+| `ANTHROPIC_API_KEY` | `ko agent` | 💰 | Default agent model. |
+| `OPENROUTER_API_KEY` | `ko agent` (planned default) | 💰 | One key, any model — the easy way to explore new models via pydantic-ai. |
+| `GEMINI_API_KEY` | planned `ko yt` fallback | 💰 | Gemini native video understanding when no transcript exists. |
+| — (Google OAuth) | `ko gsheets` | free | Not a key: one-off browser consent, token cached locally. See below. |
+| — | `ko arxiv`, `ko hn`, `ko hf`, `ko doc` | free | No auth at all. |
+
 ## Quick start
 
 ```bash
-# Exa — needs EXA_API_KEY
-export EXA_API_KEY=...
-ko exa search "claude code hooks" --since 3
-
-# arxiv — no auth needed
+# papers: discover on HF, read via arxiv (best quality), parse anything else locally
+ko hf top                         # today's Daily Papers by upvotes
+ko hf search "agent memory" --long
+ko hf info 2412.20138             # upvotes, github + stars, linked models/datasets
 ko arxiv search "tool use benchmark" --since 12 --long
 ko arxiv fetch 2604.02460 -o paper.md
+
+# Hacker News
+ko hn top                         # top 10 of the last 24h (hckrnews-style)
+ko hn top --n 20 --days 7         # top 20 of the week
+ko hn search "agent memory" --min-comments 50
+ko hn item 48480978               # story + comment tree (first column of top/search)
 
 # documents — fully local, no auth
 ko doc report.pdf                 # PDF/Office/image → plain text
 ko report.pdf                     # same: bare file args route to doc
 ko doc slides.pptx -p 1-5 -o slides.txt   # Office needs `brew install --cask libreoffice`
 
-# Hacker News — no auth
-ko hn top                         # top 10 of the last 24h (hckrnews-style)
-ko hn top --n 20 --days 7         # top 20 of the week
-ko hn search "agent memory" --min-comments 50
-ko hn item 48480978               # story + comment tree (first column of top/search)
-
-# Hugging Face papers — no auth
-ko hf top                         # today's Daily Papers by upvotes
-ko hf search "agent memory" --long
-ko hf info 2412.20138             # upvotes, github + stars, linked models/datasets
-ko hf get 2412.20138 -o paper.md  # paper as markdown (indexed papers only)
+# web search — needs EXA_API_KEY
+ko exa search "claude code hooks" --since 3
+ko exa get https://example.com/post       # URL → clean markdown (handles PDF URLs too)
 
 # Google Sheets — needs one-off OAuth (see below)
 # (example ID is Google's public sample sheet)
@@ -86,11 +99,11 @@ Logout / re-auth: `ko gsheets auth --logout`.
 ```bash
 cd ko
 uv sync
-uv run pytest
+uv run pytest          # offline by default; KO_LIVE_TESTS=1 enables live-API tests
 uv run ko --help
 ```
 
-Python 3.14, `uv`, `ruff`, `pytest`, `typer`.
+Python 3.14, `uv`, `ruff`, `pytest`, `typer`. Candidate subcommands and design notes: [docs/ideas.md](docs/ideas.md).
 
 ## License
 
