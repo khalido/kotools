@@ -1,58 +1,67 @@
-# pydantic-ai — notes for ko's agent layer
+# pydantic-ai — knowledge base
 
-Decision record, not a tutorial — https://pydantic.dev/docs/ai/ is canonical. Captures *our* choices so we don't relitigate them.
+Why we use it, what we verified in its source, what bit us. Official docs are canonical: https://pydantic.dev/docs/ai/ — this file is *our* accumulated knowledge. Design decisions for the agent layer live in `ideas.md` ("`ko ai`").
 
-**Status (2026-06):** v0 shipped as `ko agent research` (`src/ko/agents/research.py` — one-shot + REPL, Exa search tool). The broader design — `ko ai`, skills as capabilities, SQLite persistence — lives in `docs/ideas.md` under "`ko ai` — the agent layer".
+## Version status
 
-## Why pydantic-ai (over the alternatives)
+- **On v2.0.0b7** (pinned exact, 2026-06-12). v2 is harness-first: `capabilities=[...]` is the core primitive — matches ko's skills design, which is why we jumped before building anything. Stable v2 "two weeks away" since 2026-05-20, so any day; **un-pin when it lands**.
+- `[tool.uv] prerelease = "allow"` required (the `pydantic-ai-slim` sub-package is also beta).
+- Source mirrors: `~/code/refs/pydantic-ai` (main = v1 line) and `~/code/refs/pydantic-ai-v2` (v2-main worktree). While on beta, **verify against v2-main source before relying on API details** — preview docs and main drift.
+- v1→v2 gotchas: `openai:` model strings now hit the Responses API (`openai-chat:` = old Chat Completions); bare install ships fewer provider extras (anthropic + openrouter still included — verified).
 
-- **Model-agnostic.** One-line swap between `anthropic:...`, `openai:...`, `google:...`, OpenRouter.
-- **Typed outputs.** `output_type=SomeDataclass` — composes directly with ko's dataclass returns (`ExaResult`, `SheetInfo`, …).
-- **Simple core.** `Agent` + `@tool_plain` is ~10 lines to a working agent. No DAG/orchestrator to learn.
-- **FastAPI-like DX** from the Pydantic team.
+## Why pydantic-ai (decided 2026-04; alternatives considered)
 
-Considered and skipped: **Claude Agent SDK** (Anthropic-locked, big runtime), **smolagents** (code-agent-first — forces the sandbox question on day one), **LangChain/LangGraph/CrewAI** (kitchen sink), **OpenAI Agents SDK** (we're not on OpenAI).
+- **Model-agnostic** — one string swaps provider (`anthropic:`, `openrouter:org/model`, …).
+- **Typed outputs** — `output_type=SomeDataclass` composes with ko's dataclass returns.
+- **Thin core, FastAPI-like DX**; v2's capabilities map 1:1 onto ko's skills plan.
+- Skipped: Claude Agent SDK (Anthropic-locked, heavy runtime), smolagents (code-agent-first → sandbox question on day one), LangChain/LangGraph/CrewAI (kitchen sink), OpenAI Agents SDK (wrong provider).
 
-## Toolsets — the useful abstraction
+## v2 API facts (audited against v2-main source, 2026-06-12)
 
-One `FunctionToolset` per ko module (`exa`, `arxiv`, `hn`, `hf`…), each with its own `instructions=`; pass `toolsets=[...]` per agent or per run. Worth knowing (https://pydantic.dev/docs/ai/toolsets/):
+- **`Capability(*, instructions=None, toolsets=None, tools=(), id=None, description=None, defer_loading=False)`** (`capabilities/capability.py`). `defer_loading=True` hides everything behind a one-line catalog entry until the model calls `load_capability(id)`; `id` required when deferred.
+- **No `from_file`/markdown helpers on Capability** — it holds live Python objects and can't round-trip YAML. Skills-as-markdown is ~3 lines of our own: `Capability(id=name, description=frontmatter.description, instructions=md_body, defer_loading=True)`.
+- **`Agent.from_file(yaml/json)`** exists, but only for spec-constructible capabilities (`NativeTool`, `MCP`, `ReinjectSystemPrompt`, …) — not custom `Capability` with functions.
+- **Toolsets survive** under capabilities: `FunctionToolset(tools=[...], instructions=...)`; `Capability(toolsets=[...])` wraps them. `FilteredToolset` takes a *callable* `(ctx, tool_def) -> bool`, not a name list. Per-run `toolsets=[...]` and `capabilities=[...]` both work.
+- **`agent.model` is read-only in v2.** Model switching = pass `model="..."` per `run()`/`run_sync()` call (one Agent instance serves all models). The v1 clai pattern (`agent.model = infer_model(...)`) is dead — our `/model` command just keeps the current choice in a variable.
+- **Persistence is ours to own**: `ModelMessagesTypeAdapter.dump_json(result.all_messages())` → blob; reload via `.validate_json` into `message_history=`. `conversation_id` is metadata threading only — no built-in storage. `ReinjectSystemPrompt()` for resumed sessions. Record `pydantic_ai_version` with stored transcripts (old can't read new).
+- **`UsageLimits`**: `request_limit=50` default; also `tool_calls_limit`, token limits, `count_tokens_before_request`. Cost: `ModelResponse.cost().total_price` (via the `genai-prices` dep).
+- **`Hooks` capability** is extensive in-core: before/after run, node, model request, tool validate/execute (+ wrap/error variants), `@hooks.on.before_model_request` decorator form. Named guardrail/memory capabilities live in **pydantic-ai-harness** (separate package, defer).
+- **In-core spec-serializable capabilities**: NativeTool, ImageGeneration, Instrumentation, MCP, PrefixTools, PrepareTools, ProcessHistory, ReinjectSystemPrompt, SetToolMetadata, Thinking, Toolset, ToolSearch, WebFetch, WebSearch, XSearch, …
+- **`known_model_names()`** (480 qualified names) — feeds `ko llm` `-m` autocomplete; filter by configured env keys; OpenRouter models aren't enumerated (arbitrary strings — pull their live catalog when keyed).
 
-- `.filtered(fn)` — hide tools at runtime
-- `.prefixed("exa")` — avoid name clashes
-- `.approval_required(fn)` — human-in-the-loop for writes/spend
-- `.defer_loading()` — don't load schemas until discovered (large MCP toolsets)
-- `CombinedToolset([a, b])` — merge
+## Useful v2 features on our radar
+
+- **`pydantic_ai.direct`** — model call with no Agent at all; possible ultra-thin `ko llm` core (we still prefer Agent for the shared mental model).
+- **`Thinking()`** — extended thinking for Anthropic models, one line in `capabilities=[]`.
+- **`ToolSearch`** — model searches tools by description instead of seeing all schemas; relevant when ko's tool surface grows.
+- **Per-run `spec=` overlay** — merge AgentSpec config at call time without rebuilding the agent.
+- **`WebFetch`/`WebSearch` capabilities** — provider-native search/fetch with local fallback. Note: does NOT obsolete `ko fetch` (Layer 1 must stay deterministic + LLM-free), but `ko ai` could lean on them.
+- **clai** (`pydantic_ai/_cli/__init__.py`, private module — pin-sensitive): compose from its pieces, don't call `run_chat()` whole (it never returns messages). Import `ask_agent()` (streams, returns `all_messages()`), `handle_slash_command()`, `CustomAutoSuggest`; pass `config_dir=~/.config/ko`. Verified v2-current (diff vs main: 10 trivial lines). `clai web` = free browser chat UI for any agent.
 
 ## Sandbox — only when we execute code
 
-[`mcp-run-python`](https://github.com/pydantic/mcp-run-python) (Pydantic's Deno+Pyodide MCP server) is the first pick when the agent needs to *run arbitrary code*. An agent that only calls `exa.search()` / `arxiv.fetch()` has no untrusted code — no sandbox needed. Alternatives if Pyodide is too limited: E2B, Daytona, Modal.
-
-## Open questions
-
-- **Default model:** leaning `anthropic:claude-sonnet-4-6`; `KO_AGENT_MODEL` env override for cheap OpenRouter runs.
-- **Approval gating:** gsheets writes (once added) should be `.approval_required()`.
-- **Logfire:** one-line integration; add when debugging hurts.
+[`mcp-run-python`](https://github.com/pydantic/mcp-run-python) (Deno+Pyodide MCP server) when the agent must run arbitrary code. Tool-calling-only agents need no sandbox. Fallbacks: E2B, Daytona, Modal.
 
 ## Auth & secrets
 
-- **Google:** human runs `ko gsheets auth` once → cached token. Agent/MCP contexts read the cache; if missing, fail loud — never spawn a browser from a non-interactive process.
-- **Provider keys:** env vars, loaded lazily in the relevant module, never at import time.
+- Google: `ko gsheets auth` once → cached token; non-interactive contexts fail loud, never spawn a browser.
+- Provider keys: env vars, loaded lazily in the using module, never at import time.
 
 ## Ecosystem — use vs defer
 
 | Package | Use? | Why |
 |---|---|---|
-| `pydantic-ai` | ✅ installed | Core agent + toolsets + MCP client. |
-| `pydantic-ai-slim[...]` | maybe later | If full-package lockfile bloat bites. |
-| `pydantic-ai-harness` | ⏸ defer | Capability library (memory, guardrails, code mode). |
+| `pydantic-ai` (v2 beta) | ✅ pinned | Core agent + capabilities + toolsets + MCP client. |
+| `pydantic-ai-harness` | ⏸ defer | Memory, guardrails, code mode — install per-capability when wanted. |
 | `mcp` (official SDK) | ✅ in deps | We're the MCP *server*; pydantic-ai is the MCP *client*. |
-| `logfire` | ⏸ defer | Observability; add when debugging hurts. |
+| `logfire` | ⏸ defer | One-line observability; add when debugging hurts. |
 
 ## References
 
 - Docs: https://pydantic.dev/docs/ai/ (llms.txt: https://pydantic.dev/docs/ai/llms.txt)
+- v2 changelog / upgrade guide: https://pydantic.dev/docs/ai/changelog/
+- v2.0.0b1 release notes: https://github.com/pydantic/pydantic-ai/releases/tag/v2.0.0b1
 - Capabilities: https://pydantic.dev/docs/ai/core-concepts/capabilities/
-- Toolsets: https://pydantic.dev/docs/ai/toolsets/
 - MCP client: https://pydantic.dev/docs/ai/mcp/client/
 - Multi-agent / delegation: https://pydantic.dev/docs/ai/guides/multi-agent-applications/
-- Harness + code mode: https://pydantic.dev/docs/ai/harness/overview/
+- Local source: `~/code/refs/pydantic-ai-v2` (v2-main), `~/code/refs/pydantic-ai` (main/v1)
