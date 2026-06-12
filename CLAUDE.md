@@ -9,6 +9,7 @@ Ko's personal opinionated CLI. Thin wrappers around SDKs I use often, built so b
 - `ko doc <file>` — PDF/Office/image → plain text via liteparse (local, no models). Bare shortcut: `ko <file>` routes here when the arg is an existing file.
 - `ko hn top|search|item` — Hacker News via Algolia (no auth). `top` = hckrnews-style top 10/20 by points; `search` defaults to last 12 months; `item` = story + comment tree as text.
 - `ko hf top|search|info|get` — Hugging Face paper pages (no auth). `top` = Daily Papers by upvotes; `search` = semantic; `info` = metadata incl. github/models/datasets; `get` = paper as markdown. Same ids as arxiv — composes with `ko arxiv fetch`.
+- `ko tmdb <title>` — movie/TV rating + overview + regional watch providers (`TMDB_READ_ACCESS_TOKEN`, free; AU default, `--country`).
 - `ko x search|list|lists` — X via the official XDK (`X_BEARER_TOKEN`, paid tier for reads). `list <name>` = recent posts from my list; bare shortcut `ko x ai` ≡ `ko x list ai`. Search index ≈ last 7 days.
 
 ## Principles

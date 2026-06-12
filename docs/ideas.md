@@ -53,6 +53,7 @@ The single list of candidate subcommands. WORKLOG tracks what happened; this tra
 
 HN consensus 2025–26: CLI beats MCP for agent tooling (~10–32× lower token cost) — ko's exact thesis. These had confirmed gaps (no decent CLI exists) + ready SDKs:
 
+- [x] **`ko tmdb`** — SHIPPED 2026-06-13 (ported from my chota-bot TS tool — the "is it good and where do I stream it" check I do often). TMDB v4 Read Access Token (free tier), searches movies+TV merged by popularity, AU watch providers by default (`--country`; data is JustWatch-supplied via TMDB partnership — no scraping). Provider dedupe keeps each service's best offer (stream > free > ads > rent > buy). Live-verified.
 - **`ko cal`** — Google Calendar readonly. Reuses our existing OAuth flow + token cache, just one more scope; `gcalcli` is display-oriented, not pipeable. Cheapest possible add.
 - **`ko fred`** — FRED economic data (844K series, free key, no CLI anywhere). Time-series → TSV matches the gsheets pattern.
 - **`ko certs`** — crt.sh cert-transparency/subdomain lookup. No SDK, undocumented JSON endpoint, maximally curl-hostile.

@@ -14,6 +14,7 @@ from . import exa as exa_mod
 from . import google_auth
 from . import hf as hf_mod
 from . import hn as hn_mod
+from . import tmdb as tmdb_mod
 from . import x as x_mod
 from . import gsheets as gsheets_mod
 from .agents import research_run, research_repl
@@ -534,6 +535,55 @@ def x_lists() -> None:
     """Your X lists (owned + followed), one per line."""
     for lst in x_mod.my_lists():
         typer.echo(f"{lst.id}\t{lst.name}")
+
+
+# --- tmdb ---
+
+
+@app.command("tmdb")
+def tmdb(
+    query: str = typer.Argument(..., help="movie or TV title to look up"),
+    tv: bool = typer.Option(False, "--tv", help="TV shows only"),
+    movie: bool = typer.Option(False, "--movie", help="movies only"),
+    year: int = typer.Option(None, "--year", "-y", help="release year filter"),
+    country: str = typer.Option(
+        tmdb_mod.DEFAULT_COUNTRY, "--country", "-c", help="watch-provider region"
+    ),
+    n: int = typer.Option(3, "--n", help="how many runner-up matches to list"),
+    as_json: bool = typer.Option(False, "--json", help="emit JSON instead of text"),
+) -> None:
+    """Movie/TV quick check: rating, overview, and where to watch (AU by default)."""
+    if tv and movie:
+        typer.echo("--tv and --movie are mutually exclusive", err=True)
+        raise typer.Exit(2)
+    kind = "tv" if tv else "movie" if movie else None
+    top, rest = tmdb_mod.lookup(query, kind=kind, year=year, country=country)
+    if top is None:
+        typer.echo(f"No matches for '{query}'.")
+        raise typer.Exit(0)
+    if as_json:
+        typer.echo(
+            json.dumps({"top": asdict(top), "matches": [asdict(t) for t in rest[:n]]})
+        )
+        return
+    year_s = top.year or "—"
+    typer.echo(f"{top.title} ({year_s})  ★{top.rating:.1f}  {top.kind}")
+    if top.overview:
+        typer.echo(f"  {top.overview[:300]}{'…' if len(top.overview) > 300 else ''}")
+    if top.providers:
+        offers = " · ".join(
+            f"{tmdb_mod.OFFER_LABELS[o]}: {', '.join(names)}"
+            for o, names in top.providers.items()
+        )
+        typer.echo(f"  {offers}")
+    else:
+        typer.echo(f"  not streaming in {country}")
+    typer.echo(f"  {top.watch_link or top.url}")
+    if rest[:n]:
+        others = " · ".join(
+            f"{t.title} ({t.year or '—'}, {t.kind}) ★{t.rating:.1f}" for t in rest[:n]
+        )
+        typer.echo(f"\nOther matches: {others}")
 
 
 # --- agent ---
