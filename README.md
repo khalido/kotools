@@ -103,7 +103,7 @@ ko gsheets get 1Bxi... 'Class Data!A1:F6' --json
 2. **Enable the APIs.** APIs & Services → Library → enable *Google Sheets API* and *Google Drive API*.
 3. **Create OAuth credentials.** APIs & Services → Credentials → Create Credentials → OAuth client ID → Application type: **Desktop app**. Download the JSON.
 4. **Save the JSON** to `~/.config/ko/google_client.json` (or set `KO_GOOGLE_CLIENT_FILE=<path>`).
-5. **Run `ko gsheets auth`.** A browser window opens; approve; you're done. The refresh token is cached at `~/.config/ko/google_token.json`.
+5. **Run `ko gsheets auth`.** A browser window opens; approve; you're done. The refresh token is cached at `~/.local/state/ko/google_token.json`.
 
 Logout / re-auth: `ko gsheets auth --logout`.
 

@@ -83,7 +83,9 @@ def _arxiv2md_bin() -> str:
     found = shutil.which("arxiv2md")
     if found:
         return found
-    raise RuntimeError("arxiv2md not found (should ship with the arxiv2markdown dependency)")
+    raise RuntimeError(
+        "arxiv2md not found (should ship with the arxiv2markdown dependency)"
+    )
 
 
 def fetch(arxiv_id: str) -> str:

@@ -651,6 +651,96 @@ def tv(
         typer.echo(f"\nOther matches: {others}")
 
 
+# --- doctor ---
+
+
+@app.command("doctor")
+def doctor() -> None:
+    """Setup health check: every tool, what it needs, and whether it's ready."""
+    import os
+    import shutil
+    import sys
+
+    from rich.console import Console
+    from rich.table import Table
+
+    from . import google_auth, llm as _llm
+
+    def env(var: str) -> tuple[str, str]:
+        return ("✓ set", "green") if os.environ.get(var) else ("✗ missing", "red")
+
+    arxiv2md = (
+        shutil.which("arxiv2md") or (Path(sys.executable).parent / "arxiv2md").exists()
+    )
+    soffice = (
+        bool(shutil.which("soffice")) or Path("/Applications/LibreOffice.app").exists()
+    )
+    default = _llm.default_model()
+    default_key = _llm.PROVIDER_KEYS.get(default.split(":")[0], "")
+
+    rows: list[tuple[str, str, str, tuple[str, str]]] = [
+        ("hn", "Hacker News top/search/comments", "—", ("✓ no auth", "green")),
+        ("hf", "HF papers: daily feed, search, metadata", "—", ("✓ no auth", "green")),
+        (
+            "fetch",
+            "URL → markdown (articles, PDFs, Wayback)",
+            "—",
+            ("✓ no auth", "green"),
+        ),
+        (
+            "arxiv",
+            "arxiv search + paper → markdown",
+            "arxiv2md binary",
+            ("✓ found", "green") if arxiv2md else ("✗ missing", "red"),
+        ),
+        (
+            "doc",
+            "PDF/Office/image → text (local)",
+            "LibreOffice for Office files",
+            ("✓ found", "green") if soffice else ("– optional", "yellow"),
+        ),
+        ("exa", "semantic web search (paid)", "EXA_API_KEY", env("EXA_API_KEY")),
+        (
+            "llm",
+            f"one-shot LLM (default {default})",
+            default_key or "?",
+            env(default_key) if default_key else ("? unknown provider", "yellow"),
+        ),
+        ("x", "X posts (paid tier for reads)", "X_BEARER_TOKEN", env("X_BEARER_TOKEN")),
+        (
+            "tv",
+            "movie/TV info + where to stream",
+            "TMDB_READ_ACCESS_TOKEN",
+            env("TMDB_READ_ACCESS_TOKEN"),
+        ),
+        (
+            "gsheets",
+            "read Google Sheets",
+            "OAuth client + token",
+            ("✓ authed", "green")
+            if google_auth.TOKEN_FILE.exists()
+            else ("– run `ko gsheets auth`", "yellow")
+            if google_auth.CLIENT_FILE.exists()
+            else ("✗ no client file", "red"),
+        ),
+    ]
+
+    table = Table(title="ko doctor", title_justify="left")
+    table.add_column("tool", style="bold")
+    table.add_column("does")
+    table.add_column("needs", style="dim")
+    table.add_column("status")
+    for name, does, needs, (status, color) in rows:
+        table.add_row(name, does, needs, f"[{color}]{status}[/{color}]")
+    Console().print(table)
+
+    extra = [m for m in _llm.available_models() if ":" in m]
+    providers = sorted({m.split(":")[0] for m in extra})
+    Console().print(
+        f"[dim]models available to -m: {len(extra)} across {', '.join(providers) or 'none'}[/dim]"
+    )
+
+
 # --- agent ---
 
 agent_app = typer.Typer(help="AI agents powered by pydantic-ai.", no_args_is_help=True)

@@ -26,14 +26,15 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import Resource, build
 
+from .dirs import config_dir, state_file
 
-CONFIG_DIR = Path(
-    os.environ.get("KO_CONFIG_DIR") or (Path.home() / ".config" / "ko")
-)
+
+CONFIG_DIR = config_dir()
 CLIENT_FILE = Path(
     os.environ.get("KO_GOOGLE_CLIENT_FILE") or (CONFIG_DIR / "google_client.json")
 )
-TOKEN_FILE = CONFIG_DIR / "google_token.json"
+# token is state, not config — lives in ~/.local/state/ko (auto-migrated)
+TOKEN_FILE = state_file("google_token.json")
 
 SCOPES_READONLY = [
     "https://www.googleapis.com/auth/spreadsheets.readonly",

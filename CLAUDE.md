@@ -35,10 +35,16 @@ Ko's personal opinionated CLI. Thin wrappers around SDKs I use often, built so b
 4. Deps in `pyproject.toml` under `[project].dependencies`
 
 ## Google auth (gsheets)
-- OAuth user flow (desktop app). First command triggers browser consent, token cached at `~/.config/ko/google_token.json`.
+- OAuth user flow (desktop app). First command triggers browser consent, token cached at `~/.local/state/ko/google_token.json`.
 - Scopes read-only by default: `spreadsheets.readonly` + `drive.readonly`.
 - **Scope is per-API, not per-folder.** Google OAuth can't be restricted to a single Drive folder. Access is "anything this Google account can see." If that's too broad, use a service account (separate tool) and share specific sheets with it.
 - Prereq: OAuth 2.0 Desktop client JSON at `~/.config/ko/google_client.json` (or set `KO_GOOGLE_CLIENT_FILE`). Full setup in README.
+
+## Directories (`src/ko/dirs.py`)
+- `~/.config/ko/` — user-editable config, dotfile-sync-safe (`KO_CONFIG_DIR`)
+- `~/.local/state/ko/` — tokens + id caches, never synced (`KO_STATE_DIR`); old config-dir state files auto-migrate
+- `~/.cache/ko/` — disposable (`KO_CACHE_DIR`)
+- `ko doctor` shows per-tool setup status (keys set, binaries found, auth done)
 
 ## Agent notes
 - `ko --help` / `ko <cmd> --help` are the contract

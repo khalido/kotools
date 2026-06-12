@@ -6,8 +6,9 @@ name (the actual daily habit; `ko x ai` = my AI list). Param names mirror
 the SDK (`max_results`, `start_time`, `sort_order`) so agent-written code
 composes with X's docs.
 
-Name→id lookups (my user id, list ids) are cached at ~/.config/ko/x_cache.json
-— rate limits on the lower tiers are tight, don't spend calls on lookups.
+Name→id lookups (my user id, list ids) are cached in ko's state dir
+(~/.local/state/ko) — rate limits on the lower tiers are tight, don't spend
+calls on lookups.
 Home timeline is NOT here: that endpoint needs OAuth user-context, not the
 app-only bearer token. Lists + search work app-only.
 
@@ -22,15 +23,16 @@ import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
-from pathlib import Path
 
 from xdk import Client
+
+from .dirs import state_file
 
 
 DEFAULT_MAX_RESULTS = 10
 DEFAULT_DAYS = 7  # recent-search index only goes back ~7 days
 DEFAULT_LIST_N = 20
-CACHE_FILE = Path.home() / ".config" / "ko" / "x_cache.json"
+CACHE_FILE = state_file("x_cache.json")  # state, not config — never dotfile-synced
 
 
 def _default_handle() -> str:
