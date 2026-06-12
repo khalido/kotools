@@ -33,11 +33,30 @@ Why we use it, what we verified in its source, what bit us. Official docs are ca
 
 They're different layers, not rivals: **agentskills.io is the portable file format** (knowledge, shareable, Claude Code loads it natively); **Capability is the runtime object** (typed, composable, enforceable). Author skills as files, load them as capabilities.
 
-- **Officially blessed bridge:** the v2 capabilities doc itself (`docs/capabilities.md` in v2-main, ~line 409) shows a `load_skill(path)` that splits SKILL.md frontmatter → `Capability(id, description, instructions=body, defer_loading=True)`. Pydantic publishes their own skill at github.com/pydantic/skills (vendored at `.agents/skills/building-pydantic-ai-agents/`). Native interop tracked in pydantic-ai issue #3365 — check before building our loader, it may land.
+- **No shipped loader — confirmed against v2-main source 2026-06-12** (second sweep; zero hits across `capabilities/`'s ~30 files). The `load_skill(path)` in `docs/capabilities.md` (~line 426) is copy-paste glue, not an importable API: split SKILL.md frontmatter → `Capability(id, description, instructions=body, defer_loading=True)`. Pydantic publishes their own skill at github.com/pydantic/skills (vendored at `.agents/skills/building-pydantic-ai-agents/`).
+- **Watch items, correctly identified:** issue #3365 is about Anthropic's *API-level* container-skills beta (a CodeExecutionTool concern) — NOT the SKILL.md file format; don't wait on it. The actual file-format loader is **pydantic-ai-harness PR #183** (🚧 on their roadmap, unreleased as of v0.3.0). DougTrajano's `SkillsToolset` PR #3780 to core was closed-with-changes-requested. Until harness ships it, roll our own (~30 lines) — swap later if theirs is better.
 - **Community prior art:** `pydantic-ai-skills` (PyPI; adds `read_skill_resource` + `run_skill_script` tools for bundled files/scripts), `haiku.skills` (sub-agent-per-skill mode — each skill runs isolated with only its tools), `coleam00/custom-agent-with-skills` (clean roll-your-own reference). In refs: hermes-agent carries 150+ SKILL.md files, openclaw 75+ — a borrowable ecosystem, which is the real argument for staying on-format.
 - **`allowed-tools` frontmatter is Claude-Code-specific** (Experimental in the spec) — hosts like raw pydantic-ai ignore it. Our opinionated upgrade: map it to a `FilteredToolset` so ko *enforces* what the spec only suggests. That's the Capability robustness win: skill text says "only use X"; a capability can make non-X tools not exist.
 - **Bundled resource files:** embed small ones inline after the body at load time; if they grow, add a `read_skill_resource` tool (DougTrajano pattern) for second-stage disclosure.
 - **Pure text recipes** ("use A then B, double-check, report") are just `instructions=` — they work with zero special handling.
+- **Our loader design** (`src/ko/skills.py`, ~30 lines, when we build `ko ai`):
+  ```python
+  def load_skill(skill_dir: Path) -> Capability:
+      front, body = parse_frontmatter((skill_dir / "SKILL.md").read_text())
+      extras = "".join(                       # small bundled refs inlined;
+          f"\n\n## {f.name}\n\n{f.read_text()}"   # add a read_skill_resource
+          for f in sorted((skill_dir / "references").glob("*.md"))  # tool if they grow
+      ) if (skill_dir / "references").is_dir() else ""
+      return Capability(
+          id=front["name"], description=front["description"],
+          instructions=body + extras, defer_loading=True,
+      )
+
+  def load_skills(names: list[str] | None = None) -> list[Capability]:
+      # repo skills/ first, ~/.config/ko/skills/ overlay wins on name clash;
+      # names=None → all, else filter (the agents/<name>.toml `skills = [...]` hook)
+  ```
+  Packaging note: repo `skills/` must ship in the wheel for uv-tool installs — hatch `force-include` into `ko/_skills/` + `importlib.resources`, or just keep skills under `src/ko/skills_data/`. Decide at build time.
 
 ## Useful v2 features on our radar
 
