@@ -45,4 +45,4 @@ Ko's personal opinionated CLI. Thin wrappers around SDKs I use often, built so b
 - No interactive prompts inside commands (except the one-time OAuth browser popup)
 
 ## Not yet
-- Next up: `ko fetch` (URL → markdown, Wayback fallback), `ko yt` (YouTube transcript/summary). Full candidate list + priorities in `docs/ideas.md`. (`ko pdf` shipped as `ko doc`.)
+- Next up: `ko fetch` (URL → markdown, Wayback fallback) and `ko llm` (stdin-aware one-shot) — the pair that unblocks `ko ai`. Full candidate list + priorities in `docs/ideas.md`.

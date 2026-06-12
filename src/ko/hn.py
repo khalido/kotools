@@ -68,14 +68,15 @@ def top(n: int = DEFAULT_TOP_N, days: int = 1) -> list[Story]:
     """Top stories by points over the last `days` days. `top(10)` ≈ hckrnews top-10."""
     cutoff = int((datetime.now(timezone.utc) - timedelta(days=days)).timestamp())
     data = _get(
-        "search",  # no query + points sort = day's leaderboard
+        "search",  # no query + popularity ranking ≈ points; we re-sort to guarantee it
         {
             "tags": "story",
             "numericFilters": f"created_at_i>{cutoff}",
             "hitsPerPage": n,
         },
     )
-    return [_story(h) for h in data["hits"]]
+    stories = [_story(h) for h in data["hits"]]
+    return sorted(stories, key=lambda s: s.points, reverse=True)
 
 
 def search(

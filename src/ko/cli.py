@@ -58,6 +58,11 @@ x_app = typer.Typer(
 app.add_typer(x_app, name="x")
 
 
+def _emit_json(items: list) -> None:
+    """Shared --json path: list of dataclasses -> one JSON array on stdout."""
+    typer.echo(json.dumps([asdict(i) for i in items], default=str))
+
+
 # --- arxiv ---
 
 
@@ -199,7 +204,7 @@ def exa_get(
 
 def _echo_papers(papers: list[hf_mod.Paper], as_json: bool, long: bool) -> None:
     if as_json:
-        typer.echo(json.dumps([asdict(p) for p in papers], default=str))
+        _emit_json(papers)
         return
     for p in papers:
         date = p.published_at.strftime("%Y-%m-%d")
@@ -290,7 +295,7 @@ def hf_get(
 
 def _echo_stories(stories: list[hn_mod.Story], as_json: bool) -> None:
     if as_json:
-        typer.echo(json.dumps([asdict(s) for s in stories], default=str))
+        _emit_json(stories)
         return
     for s in stories:
         date = s.created_at.strftime("%Y-%m-%d")
@@ -477,6 +482,21 @@ def doc(
 # --- x ---
 
 
+def _echo_posts(posts: list[x_mod.Post], as_json: bool) -> None:
+    if as_json:
+        _emit_json(posts)
+        return
+    for p in posts:
+        date = p.created_at.strftime("%Y-%m-%d")
+        text = " ".join(p.text.split())  # collapse newlines for scanability
+        if len(text) > 200:
+            text = text[:200] + "…"
+        typer.echo(f"@{p.author}  {date}  {p.likes}♥ {p.reposts}rt")
+        typer.echo(f"  {text}")
+        typer.echo(f"  {p.url}")
+        typer.echo("")
+
+
 @x_app.command("search")
 def x_search(
     query: str = typer.Argument(
@@ -497,21 +517,6 @@ def x_search(
         typer.echo(f"No posts for '{query}' in the last {days} days.")
         raise typer.Exit(0)
     _echo_posts(posts, as_json)
-
-
-def _echo_posts(posts: list[x_mod.Post], as_json: bool) -> None:
-    if as_json:
-        typer.echo(json.dumps([asdict(p) for p in posts], default=str))
-        return
-    for p in posts:
-        date = p.created_at.strftime("%Y-%m-%d")
-        text = " ".join(p.text.split())  # collapse newlines for scanability
-        if len(text) > 200:
-            text = text[:200] + "…"
-        typer.echo(f"@{p.author}  {date}  {p.likes}♥ {p.reposts}rt")
-        typer.echo(f"  {text}")
-        typer.echo(f"  {p.url}")
-        typer.echo("")
 
 
 @x_app.command("list")

@@ -30,8 +30,11 @@ from xdk import Client
 DEFAULT_MAX_RESULTS = 10
 DEFAULT_DAYS = 7  # recent-search index only goes back ~7 days
 DEFAULT_LIST_N = 20
-DEFAULT_HANDLE = os.environ.get("KO_X_HANDLE", "ko")
 CACHE_FILE = Path.home() / ".config" / "ko" / "x_cache.json"
+
+
+def _default_handle() -> str:
+    return os.environ.get("KO_X_HANDLE", "ko")
 
 
 @dataclass
@@ -129,13 +132,18 @@ def _collect(pages, n: int) -> list[Post]:
 
 def _cache() -> dict:
     if CACHE_FILE.is_file():
-        return json.loads(CACHE_FILE.read_text())
+        try:
+            return json.loads(CACHE_FILE.read_text())
+        except (json.JSONDecodeError, OSError):
+            return {}  # corrupt cache is not fatal — it just gets rebuilt
     return {}
 
 
 def _cache_write(data: dict) -> None:
     CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    CACHE_FILE.write_text(json.dumps(data, indent=1))
+    tmp = CACHE_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, indent=1))
+    os.replace(tmp, CACHE_FILE)  # atomic — a crash mid-write can't corrupt the cache
 
 
 def _user_id(handle: str) -> str:
@@ -149,8 +157,9 @@ def _user_id(handle: str) -> str:
     return uid
 
 
-def my_lists(handle: str = DEFAULT_HANDLE) -> list[XList]:
+def my_lists(handle: str | None = None) -> list[XList]:
     """All lists I own or follow. Refreshes the name→id cache as a side effect."""
+    handle = handle or _default_handle()
     uid = _user_id(handle)
     found: dict[str, XList] = {}
     for method in (_client().users.get_owned_lists, _client().users.get_followed_lists):
@@ -178,9 +187,10 @@ def _list_id(name: str, handle: str) -> str:
 
 
 def list_posts(
-    name: str, n: int = DEFAULT_LIST_N, handle: str = DEFAULT_HANDLE
+    name: str, n: int = DEFAULT_LIST_N, handle: str | None = None
 ) -> list[Post]:
     """Recent posts from one of my lists, by name (case-insensitive), newest first."""
+    handle = handle or _default_handle()
     pages = _client().lists.get_posts(
         id=_list_id(name, handle),
         max_results=max(10, min(n, 100)),
