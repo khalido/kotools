@@ -1,8 +1,11 @@
-"""Smoke tests for ko.arxiv. Some tests hit the live arxiv API."""
+"""Smoke tests for ko.arxiv. Live-API tests are opt-in via KO_LIVE_TESTS=1."""
 
 from __future__ import annotations
 
+import os
 from datetime import datetime, timezone
+
+import pytest
 
 from ko.arxiv import SearchResult, search
 
@@ -19,6 +22,10 @@ def test_short_id_extracts_from_entry_url():
     assert r.short_id == "2604.02460v1"
 
 
+@pytest.mark.skipif(
+    not os.environ.get("KO_LIVE_TESTS"),
+    reason="hits the live (slow, rate-limited) arxiv API; set KO_LIVE_TESTS=1",
+)
 def test_search_returns_recent_results():
     results = search("large language model", since_months=6, max_results=3)
     assert len(results) > 0

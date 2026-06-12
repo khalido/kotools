@@ -22,7 +22,7 @@ The single list of candidate subcommands. WORKLOG tracks what happened; this tra
 - [ ] **`ko yt <url>`** — YouTube → transcript / summary.
   - Transcript: **youtube-transcript-api** (v1.2.4) — hits YouTube's transcript endpoint directly, no video download; auto-captions, manual subs, translation. (yt-dlp is overkill for transcript-only.)
   - `--summarise`: pydantic-ai over the transcript (we already ship pydantic-ai).
-  - Fallback when no transcript exists: Gemini native video understanding — pass URL as `file_data` part + JSON prompt. Pattern proven in `~/code/yaad/yaad/api/gemini.py` (`get_youtube_summary`, gemini-3-flash, ~fractions of a cent per video).
+  - Fallback when no transcript exists: Gemini native video understanding — pass URL as `file_data` part + JSON prompt. Pattern proven in a private project (`get_youtube_summary`: gemini-3-flash, ~fractions of a cent per video).
 - [ ] **`ko x <list>`** — fetch recent posts from X via the official **XDK** (`uv add xdk`, X API v2, my API key in env).
   - `Client(...)` → `client.posts.recent_search(query=...)`, post lookup, list timeline (X API v2 `lists/{id}/tweets`); auto-pagination built in. Auto-generated SDK, endpoints mirror the v2 REST docs.
   - `ko x ai --days 3` → posts from my AI list (real X List ID, or named handle-set in `~/.config/ko/config.toml`), last 3 days, TSV/`--json` out. Raw posts, deterministic — Layer 1, agents consume directly.
@@ -70,19 +70,19 @@ Decisions:
 - **SQLite, not DuckDB, at `~/.local/share/ko/ko.db`** (considered 2026-06-11): the db's jobs are transactional KV (conversation blobs, fetch cache) — SQLite's home turf, stdlib, zero deps. DuckDB is columnar/analytical, weaker as a KV store. No loss: `ko q` brings DuckDB anyway, and DuckDB ATTACHes SQLite files directly — analytics over ko.db ("what do I fetch most?") via `ko q` for free. Two tables:
   - `conversations`: pydantic-ai message histories (JSON-serializable natively) → `ko ai --continue`/`--resume` for free.
   - `fetches`: (url, ts, markdown) — doubles as the **Layer 1 cache**: repeat `ko fetch` = instant + free (agents re-fetch constantly). `--no-cache` to bypass.
-  - Boundary: cache + history only. Knowledge store / saved links is yaad's job — don't rebuild yaad inside ko.
+  - Boundary: cache + history only. Knowledge store / saved links belongs to a separate app — don't rebuild that inside ko.
 - **Paper-research skill** (idea 2026-06-12, from HF's internal "context-research" pattern): Layer 1 stays dumb — `ko hf search` is one search, full stop. The pipeline lives in a `ko ai` skill: take the question → generate 2–3 keyword-variant queries → run `hf search` (and `arxiv search`/`pwc search`) in parallel → cheap-model subagent triages by relevance + recency → `hf get`/`arxiv fetch` the top few → read methodology/results → synthesize. Relevant for the research-masters use. Later.
 - **Smart routing lives in `ko fetch`, not the agent.** No `ko linktopdf`/`linktoyt`: `ko fetch <anything>` sniffs deterministically — youtube.com/youtu.be → transcript, content-type PDF → pymupdf4llm, else trafilatura, dead link → Wayback. One universal "thing → markdown" command. Smart ≠ fuzzy. Plus the bare-link shortcut: `ko <url>` (top-level URL detection) routes straight to fetch.
 
-### Implementation notes (research 2026-06-11: pydantic.dev docs + refs/pydantic-ai source + sift/yaad prior art)
+### Implementation notes (research 2026-06-11: pydantic.dev docs + pydantic-ai source + private prior art)
 
 The skills system is ~zero custom code — pydantic-ai 2026 ships the pieces:
 
-- **Skills = `Capability` with `defer_loading=True`.** Each skill collapses to a one-line catalog entry (id + description) until the model calls `load_capability(id)` — context stays lean no matter how many skills exist. Alternative for declarative files: `Agent.from_file(<yaml>)` (proven in sift — 15-line sector YAMLs, `sift/run.py:77`).
+- **Skills = `Capability` with `defer_loading=True`.** Each skill collapses to a one-line catalog entry (id + description) until the model calls `load_capability(id)` — context stays lean no matter how many skills exist. Alternative for declarative files: `Agent.from_file(<yaml>)` (proven in a private extraction pipeline — 15-line agent YAMLs).
 - **Tool grouping: one `FunctionToolset` per module** (`exa`, `arxiv`, `fetch`, `yt`, `hn`), each carrying its own `instructions=`. Per-skill allowed-tools = `FilteredToolset` or per-run `toolsets=[...]` (run-time injection is supported).
 - **REPL: reuse `clai`'s `run_chat()`** (`pydantic_ai/_cli/__init__.py`, ~100 importable lines: prompt_toolkit + rich.Live markdown streaming + /multiline /cp /markdown). It takes `message_history=` — exactly the injection point for our SQLite resume. Don't hand-roll what `agents/research.py` started.
-- **Persistence (blessed API):** `ModelMessagesTypeAdapter.dump_json(messages)` / `.validate_json(blob)`; store one blob per exchange keyed by session (canonical example: `examples/chat_app.py`). Built-in `conversation_id` threads runs → `ko ai --continue`. `ReinjectSystemPrompt()` capability handles resumed sessions. **Record `pydantic_ai_version` per conversation** — old versions can't read newer transcripts (sift learned this: `sift/run.py` run.json).
-- **Steal from sift (`~/code/jabberwocky/sift/run.py`):** `UsageLimits(request_limit=N)` runaway cap; cost-per-run via `ModelResponse.cost().total_price` (genai-prices, already in our tree); retrying httpx transport (`AsyncTenacityTransport` + `wait_retry_after`); *the runner writes outputs, the agent never does*.
+- **Persistence (blessed API):** `ModelMessagesTypeAdapter.dump_json(messages)` / `.validate_json(blob)`; store one blob per exchange keyed by session (canonical example: `examples/chat_app.py`). Built-in `conversation_id` threads runs → `ko ai --continue`. `ReinjectSystemPrompt()` capability handles resumed sessions. **Record `pydantic_ai_version` per conversation** — old versions can't read newer transcripts (learned the hard way in a prior pipeline).
+- **Steal from a private pydantic-ai pipeline of mine:** `UsageLimits(request_limit=N)` runaway cap; cost-per-run via `ModelResponse.cost().total_price` (genai-prices, already in our tree); retrying httpx transport (`AsyncTenacityTransport` + `wait_retry_after`); *the runner writes outputs, the agent never does*.
 - **From pydantic-deepagents: skip the framework** (autonomous subagent teams — overkill). Steal two guards eventually: stuck-loop detection (identical repeated tool calls → break) and large-tool-output eviction.
 - **Streaming:** simple path is 3 lines (`rich.Live` + `result.stream_output()` → `Markdown`); upgrade to `agent.iter()` only when we want "calling exa_search…" progress lines.
 

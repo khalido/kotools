@@ -10,7 +10,7 @@ Newest first. Big picture only — git commits have the detail.
 - First commits! Initial commit + rename: package is `ko-tools` (PyPI `ko` is squatted), command stays `ko`. `uv build` verified.
 - Installed editable (`uv tool install --editable ~/code/ko`) — `ko` now on PATH everywhere. Fixed `arxiv2md` resolution (uv tool installs don't expose dependency scripts on PATH; resolve from our own venv).
 - Scrubbed personal sheet ID from README (now Google's public sample sheet).
-- Started `docs/ideas.md` — the single candidate-subcommand list (backlog moved there from this file). Headline ideas: `ko fetch` with Wayback fallback, `ko yt` (transcript + pydantic-ai summary, Gemini video-understanding fallback à la yaad).
+- Started `docs/ideas.md` — the single candidate-subcommand list (backlog moved there from this file). Headline ideas: `ko fetch` with Wayback fallback, `ko yt` (transcript + pydantic-ai summary, Gemini video-understanding fallback — pattern proven in a private project).
 
 ## 2026-04-24
 
@@ -19,7 +19,7 @@ Newest first. Big picture only — git commits have the detail.
 ## 2026-04-22
 
 - Scaffolded repo: Python 3.14, `uv`, `typer`, hatchling build
-- Ported `exa` and `arxiv` from `~/code/masters` (mx CLI) with namespace renamed to `ko`
+- Ported `exa` and `arxiv` from a private predecessor CLI with namespace renamed to `ko`
 - Added `gsheets` module + `google_auth` module (OAuth installed-app flow, readonly scopes by default, token cache at `~/.config/ko/google_token.json`)
 - CLAUDE.md + README.md drafted; 5 tests pass, 1 skipped (gsheets live test, needs OAuth setup)
 - Refactored `arxiv.fetch()` to be pure — dropped `out_path` side effect, file write moved into `cli.py`. All domain modules now transport-agnostic (no printing, no file I/O), ready for MCP to import them alongside `cli.py`.

@@ -94,4 +94,4 @@ Python 3.14, `uv`, `ruff`, `pytest`, `typer`.
 
 ## License
 
-MIT.
+GPL-3.0-or-later. See [LICENSE](LICENSE).
