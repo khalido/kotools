@@ -1,57 +1,31 @@
 # WORKLOG — ko
 
-Newest first. Big picture only — git commits have the detail.
+Newest first. Big picture only — git commits have the detail; candidate ideas and decisions live in `docs/ideas.md`.
+
+## 2026-06-12
+
+- Pre-publish cleanup: GPL-3.0-or-later license, private references redacted, live arxiv test now opt-in (`KO_LIVE_TESTS=1`), PyPI urls + classifiers.
+- Research day, findings in `docs/ideas.md`: HF papers coverage measured (complement to arxiv, not a mirror); paperswithcode.co turns out to have a full undocumented API (`/openapi.json`) → `ko pwc` candidate; Exa Monitors assessed (runs are pollable — no webhook infra needed for v1). Decided to add per-tool reference docs (`docs/tools/`, skill format).
 
 ## 2026-06-11
 
-- **Shipped `ko hf`** — Hugging Face paper pages (idea via HF's own huggingface-papers skill). `top` = Daily Papers feed sorted by trending (the community-upvote layer arxiv lacks), `search` = hybrid semantic + full-text, `info` = metadata (upvotes, github repo + stars, AI summary, linked models/datasets/spaces), `get` = paper markdown via the `.md` endpoint. All read endpoints verified to work without a token. Accepts arxiv ids or arxiv/hf URLs (one regex). Same ids as arxiv, so `ko hf top` → `ko arxiv fetch <id>` composes; unindexed-paper 404s and the HTML-fallback case both raise pointing at `ko arxiv fetch`.
-- **Shipped `ko hn`** — top/search/item over the Algolia HN API (no auth, one new dep: httpx, now explicit). `top` reproduces my hckrnews.com top-10/20 habit (top-by-points in a day window ≈ front-page filter — verified Algolia's `front_page` tag only covers the *current* front page, so points it is). `search` defaults to last 12 months, `--min-comments` for the ">50 comments" recipe, `--new` for chronological. `item` renders the comment tree as indented text, links expanded to full hrefs (HN truncates anchor text). First column of top/search is the id — composes into `ko hn item <id>`.
-- **Shipped `ko doc`** — first new subcommand since the port. liteparse (Rust, local, no models) → plain text from PDF/Office/images; `--pages`, `-o`, `--no-ocr`. Entry point moved to `cli:main` which adds the bare-arg shortcut: `ko paper.pdf` routes to `doc` (command names always win; URL→fetch routing reserved for when fetch exists). Self-contained test fixture: hand-built minimal PDF, PDFium reconstructs the xref.
-- First commits! Initial commit + rename: package is `ko-tools` (PyPI `ko` is squatted), command stays `ko`. `uv build` verified.
-- Installed editable (`uv tool install --editable ~/code/ko`) — `ko` now on PATH everywhere. Fixed `arxiv2md` resolution (uv tool installs don't expose dependency scripts on PATH; resolve from our own venv).
-- Scrubbed personal sheet ID from README (now Google's public sample sheet).
-- Started `docs/ideas.md` — the single candidate-subcommand list (backlog moved there from this file). Headline ideas: `ko fetch` with Wayback fallback, `ko yt` (transcript + pydantic-ai summary, Gemini video-understanding fallback — pattern proven in a private project).
+- **Shipped `ko hf`** — Hugging Face paper pages: `top` (Daily Papers by upvotes), `search` (semantic), `info` (metadata + linked code/models/datasets), `get` (markdown). No auth. Same ids as arxiv, so it composes with `ko arxiv fetch`.
+- **Shipped `ko hn`** — Hacker News via Algolia: `top` (hckrnews-style top-N by points), `search` (12-month default), `item` (comment tree as text). No auth.
+- **Shipped `ko doc`** — PDF/Office/image → plain text via liteparse (local, no models), plus the bare-arg shortcut: `ko paper.pdf` routes to `doc`.
+- First commits. Package renamed `ko-tools` (PyPI `ko` is squatted), command stays `ko`. Installed editable as a uv tool; fixed `arxiv2md` resolution (uv tool installs don't put dependency scripts on PATH — resolve from our own venv).
+- Started `docs/ideas.md` as the single candidate list (backlog moved there from this file).
 
 ## 2026-04-24
 
-- Drafted `docs/pydantic-ai.md` — plan for `ko agent` subcommand. Picked pydantic-ai over Claude Agent SDK / smolagents / LangChain: model-agnostic, typed outputs, composes with our existing dataclasses, thin runtime. Sandbox deferred until we add a code-execution tool — `mcp-run-python` (Pydantic team's Deno+Pyodide MCP server) is the likely first pick; E2B/Daytona/Modal if that's too limited.
+- Drafted `docs/pydantic-ai.md` — agent plan. Picked pydantic-ai over Claude Agent SDK / smolagents / LangChain: model-agnostic, typed outputs, thin runtime. Sandbox deferred until we add a code-execution tool.
 
 ## 2026-04-22
 
-- Scaffolded repo: Python 3.14, `uv`, `typer`, hatchling build
-- Ported `exa` and `arxiv` from a private predecessor CLI with namespace renamed to `ko`
-- Added `gsheets` module + `google_auth` module (OAuth installed-app flow, readonly scopes by default, token cache at `~/.config/ko/google_token.json`)
-- CLAUDE.md + README.md drafted; 5 tests pass, 1 skipped (gsheets live test, needs OAuth setup)
-- Refactored `arxiv.fetch()` to be pure — dropped `out_path` side effect, file write moved into `cli.py`. All domain modules now transport-agnostic (no printing, no file I/O), ready for MCP to import them alongside `cli.py`.
-- Added `src/ko/mcp_server.py` stub with wiring sketch + MCP doc links. No runtime code yet — drop in `FastMCP` + `@mcp.tool()` wrappers when ready.
-- `uv add "mcp[cli]"` — Python MCP SDK 1.27.0 installed. Brings `mcp dev`/`mcp install` helpers for local debugging.
-- Expanded stub with structured-output insight (FastMCP auto-serializes dataclasses — no manual `asdict()`), Railway-friendly transport config (`stateless_http=True, json_response=True`), and deploy notes.
-- Verified MCP structured-output behaviour empirically + by reading `mcp/server/fastmcp/utilities/func_metadata.py:394`. Dataclasses get full JSON schema (field names, types, required/optional, nested `$ref`) but **not** per-field descriptions. `Annotated[T, Field(...)]` is stripped (`get_type_hints` called without `include_extras=True`). Pydantic `BaseModel` with `Field(description=...)` is the only way to get per-field docs into the tool schema — deferring that migration until we actually feel the pain.
-- `gsheets.get_info()` now returns a `SheetInfo` dataclass (was untyped dict). All domain modules now return typed, MCP-ready shapes.
+- Scaffolded repo: Python 3.14, `uv`, `typer`, hatchling. Ported `exa` + `arxiv` from a private predecessor CLI; added `gsheets` + `google_auth` (OAuth installed-app flow, readonly scopes, token cached at `~/.config/ko/google_token.json`).
+- Domain modules kept transport-agnostic (no printing, no file I/O) so a future MCP server imports them alongside `cli.py`; wiring stub in `src/ko/mcp_server.py`.
+- MCP structured-output finding: FastMCP auto-serializes dataclasses to a full JSON schema, but per-field descriptions require pydantic `BaseModel` + `Field(description=...)` — migration deferred until we feel the pain.
 
-### Open
+## Open
 
-- [ ] **PyPI trusted publisher setup** — publish on tag push via GitHub Actions, OIDC (no long-lived tokens).
-  - Reserve `ko` on PyPI first (one manual upload from local, or create a pending publisher against an empty project)
-  - Add trusted publisher at https://docs.pypi.org/trusted-publishers/adding-a-publisher/ — owner/repo, workflow filename (`publish.yml`), environment name
-  - `.github/workflows/publish.yml`: on `push: tags: ['v*']` → `uv sync`, `uv build`, `uv publish` (no token needed with trusted publisher)
-  - Release flow: bump `version` in `pyproject.toml`, `git tag vX.Y.Z && git push --tags`
-- [ ] **OAuth first-run** — create Desktop OAuth client in GCP, drop JSON at `~/.config/ko/google_client.json`, run `ko gsheets auth`
-- [ ] **`uv tool install --editable ~/code/ko`** — put `ko` on PATH so it works from any directory
-
-### Architecture / research
-
-- [ ] **Deploy MCP server to Railway** — once the MCP wrapper is live locally, host it as a personal remote MCP server. Path: expose `mcp.streamable_http_app()` as ASGI, `uvicorn ... --host 0.0.0.0 --port $PORT`, set `$KO_MCP_SECRET` env var for bearer-token auth (simplest interim). Connect from Claude.ai as a Custom Connector. Re-check the auth landscape at deploy time — MCP remote spec still evolving (https://modelcontextprotocol.io/docs/develop/connect-remote-servers).
-- [ ] **Expose `ko` tools as an MCP server** — same opinionated wrappers, second interface. CLI for humans + bash-pipes; MCP for AI agents (Claude Desktop, Cursor, Claude Code with MCP) calling natively. Single codebase, dual transport. Probably a `ko mcp` subcommand that runs the server (stdio by default for local Claude Desktop, optional HTTP).
-  - Study MCP intro: https://modelcontextprotocol.io/docs/getting-started/intro
-  - Study agent-skills scaffolding (may simplify a lot of this): https://modelcontextprotocol.io/docs/develop/build-with-agent-skills
-  - Key design question: how to wire Typer subcommands → MCP tools without duplicating definitions. Three options to evaluate:
-    1. **Shim layer** — MCP tools shell out to `ko <cmd>` subprocesses. Easiest, but returns strings, loses dataclass structure.
-    2. **Shared core functions** — both the Typer layer and the MCP layer wrap the same module functions (`exa.search()`, `gsheets.get_range()`). Cleaner, preserves typing. My current guess for the right answer.
-    3. **Auto-derive from Typer** — discover registered commands, introspect signatures, emit as MCP tools. Elegant if it works, possibly brittle.
-  - Use Anthropic's Python MCP SDK as the transport
-  - Each module (`exa.py`, `arxiv.py`, `gsheets.py`) should remain MCP-agnostic — only `cli.py` and a new `mcp.py` know about their respective transports
-
-### Backlog
-
-Moved to `docs/ideas.md` (2026-06-11) — single list of candidate subcommands, priorities, and the skip list.
+- [ ] **PyPI trusted publisher** — tag-push GitHub Action (`publish.yml`), OIDC, no long-lived tokens: https://docs.pypi.org/trusted-publishers/
+- [ ] **MCP server (`ko mcp`)** — shared-core-functions approach: CLI and MCP both wrap the same module functions. stdio for local clients; HTTP on Railway later. Stub + notes in `src/ko/mcp_server.py`.
