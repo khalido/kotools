@@ -495,6 +495,10 @@ def x_search(
     if not posts:
         typer.echo(f"No posts for '{query}' in the last {days} days.")
         raise typer.Exit(0)
+    _echo_posts(posts, as_json)
+
+
+def _echo_posts(posts: list[x_mod.Post], as_json: bool) -> None:
     if as_json:
         typer.echo(json.dumps([asdict(p) for p in posts], default=str))
         return
@@ -507,6 +511,29 @@ def x_search(
         typer.echo(f"  {text}")
         typer.echo(f"  {p.url}")
         typer.echo("")
+
+
+@x_app.command("list")
+def x_list(
+    name: str = typer.Argument(
+        ..., help="list name, case-insensitive (e.g. 'ai'). Shortcut: `ko x ai`"
+    ),
+    n: int = typer.Option(x_mod.DEFAULT_LIST_N, "--n", help="max posts"),
+    as_json: bool = typer.Option(False, "--json", help="emit JSON instead of text"),
+) -> None:
+    """Recent posts from one of your X lists, newest first."""
+    posts = x_mod.list_posts(name, n=n)
+    if not posts:
+        typer.echo(f"No recent posts in list '{name}'.")
+        raise typer.Exit(0)
+    _echo_posts(posts, as_json)
+
+
+@x_app.command("lists")
+def x_lists() -> None:
+    """Your X lists (owned + followed), one per line."""
+    for lst in x_mod.my_lists():
+        typer.echo(f"{lst.id}\t{lst.name}")
 
 
 # --- agent ---
@@ -536,9 +563,10 @@ def agent_research(
 
 
 def main() -> None:
-    """Entry point with a bare-argument shortcut: if the first arg is an
-    existing file (not a command name), route to `ko doc` — so `ko paper.pdf`
-    just works. Deterministic: command names always win over file names."""
+    """Entry point with deterministic bare-argument shortcuts (command names
+    always win): `ko paper.pdf` routes to `ko doc`, and `ko x ai` routes to
+    `ko x list ai` (anything after `x` that isn't an x command is a list name).
+    """
     import sys
 
     args = sys.argv[1:]
@@ -548,6 +576,10 @@ def main() -> None:
         }
         if args[0] not in known and Path(args[0]).is_file():
             sys.argv.insert(1, "doc")
+        elif args[0] == "x" and len(args) > 1 and not args[1].startswith("-"):
+            x_known = {c.name for c in x_app.registered_commands}
+            if args[1] not in x_known:
+                sys.argv.insert(2, "list")
     app()
 
 

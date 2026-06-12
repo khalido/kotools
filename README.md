@@ -62,6 +62,11 @@ ko doc report.pdf                 # PDF/Office/image → plain text
 ko report.pdf                     # same: bare file args route to doc
 ko doc slides.pptx -p 1-5 -o slides.txt   # Office needs `brew install --cask libreoffice`
 
+# X — needs X_BEARER_TOKEN (paid tier for reads)
+ko x ai                           # recent posts from your list named "ai"
+ko x lists                        # see your lists
+ko x search "claude code" --top   # search last 7 days by relevancy
+
 # web search — needs EXA_API_KEY
 ko exa search "claude code hooks" --since 3
 ko exa get https://example.com/post       # URL → clean markdown (handles PDF URLs too)

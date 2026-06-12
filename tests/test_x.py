@@ -36,3 +36,26 @@ def test_client_requires_token(monkeypatch):
     x._client.cache_clear()
     with pytest.raises(RuntimeError, match="X_BEARER_TOKEN"):
         x._client()
+
+
+def test_list_id_cache_hit(monkeypatch, tmp_path):
+    cache = tmp_path / "x_cache.json"
+    cache.write_text('{"lists": {"ko": {"ai": "777"}}}')
+    monkeypatch.setattr(x, "CACHE_FILE", cache)
+    # cache hit must not touch the network (no client, no token needed)
+    assert x._list_id("AI", "ko") == "777"
+
+
+def test_collect_caps_at_n():
+    page = SimpleNamespace(
+        includes=SimpleNamespace(users=[SimpleNamespace(id=1, username="a")]),
+        data=[
+            SimpleNamespace(
+                id=i, text=f"t{i}", author_id=1, created_at=None, public_metrics=None
+            )
+            for i in range(5)
+        ],
+    )
+    out = x._collect([page, page], n=3)
+    assert len(out) == 3
+    assert out[0].author == "a"

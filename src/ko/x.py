@@ -1,25 +1,43 @@
 """X (Twitter) via the official XDK (X API v2). Needs X_BEARER_TOKEN.
 
-One primitive for now: `search` over recent posts (the API's recent index
-covers ~the last 7 days). Param names mirror the SDK (`max_results`,
-`start_time`, `sort_order`) so agent-written code composes with X's docs.
+Two primitives: `search` over recent posts (the API's recent index covers
+~the last 7 days) and `list_posts` — recent posts from one of my X lists by
+name (the actual daily habit; `ko x ai` = my AI list). Param names mirror
+the SDK (`max_results`, `start_time`, `sort_order`) so agent-written code
+composes with X's docs.
 
-⚠️ Tier note: the free X API tier is ~write-only; reads (search) generally
-need Basic or above. A 403 here usually means the token's tier, not the code.
+Name→id lookups (my user id, list ids) are cached at ~/.config/ko/x_cache.json
+— rate limits on the lower tiers are tight, don't spend calls on lookups.
+Home timeline is NOT here: that endpoint needs OAuth user-context, not the
+app-only bearer token. Lists + search work app-only.
+
+⚠️ Tier note: the free X API tier is ~write-only; reads generally need
+Basic or above. A 403 here usually means the token's tier, not the code.
 """
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
+from pathlib import Path
 
 from xdk import Client
 
 
 DEFAULT_MAX_RESULTS = 10
 DEFAULT_DAYS = 7  # recent-search index only goes back ~7 days
+DEFAULT_LIST_N = 20
+DEFAULT_HANDLE = os.environ.get("KO_X_HANDLE", "ko")
+CACHE_FILE = Path.home() / ".config" / "ko" / "x_cache.json"
+
+
+@dataclass
+class XList:
+    id: str
+    name: str
 
 
 @dataclass
@@ -87,6 +105,11 @@ def search(
         expansions=["author_id"],
         user_fields=["username"],
     )
+    return _collect(pages, n)
+
+
+def _collect(pages, n: int) -> list[Post]:
+    """Drain paginated post responses into Posts, resolving authors per page."""
     out: list[Post] = []
     for page in pages:
         users = (
@@ -102,3 +125,67 @@ def search(
             if len(out) >= n:
                 return out
     return out
+
+
+def _cache() -> dict:
+    if CACHE_FILE.is_file():
+        return json.loads(CACHE_FILE.read_text())
+    return {}
+
+
+def _cache_write(data: dict) -> None:
+    CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    CACHE_FILE.write_text(json.dumps(data, indent=1))
+
+
+def _user_id(handle: str) -> str:
+    cache = _cache()
+    if uid := cache.get("users", {}).get(handle):
+        return uid
+    resp = _client().users.get_by_username(username=handle)
+    uid = str(resp.data.id)
+    cache.setdefault("users", {})[handle] = uid
+    _cache_write(cache)
+    return uid
+
+
+def my_lists(handle: str = DEFAULT_HANDLE) -> list[XList]:
+    """All lists I own or follow. Refreshes the name→id cache as a side effect."""
+    uid = _user_id(handle)
+    found: dict[str, XList] = {}
+    for method in (_client().users.get_owned_lists, _client().users.get_followed_lists):
+        for page in method(id=uid):
+            for lst in page.data or []:
+                found[str(lst.id)] = XList(id=str(lst.id), name=lst.name)
+    cache = _cache()
+    cache.setdefault("lists", {})[handle] = {
+        lst.name.lower(): lst.id for lst in found.values()
+    }
+    _cache_write(cache)
+    return sorted(found.values(), key=lambda lst: lst.name.lower())
+
+
+def _list_id(name: str, handle: str) -> str:
+    cached = _cache().get("lists", {}).get(handle, {})
+    if lid := cached.get(name.lower()):
+        return lid
+    lists = my_lists(handle)  # cache miss → refresh from the API
+    for lst in lists:
+        if lst.name.lower() == name.lower():
+            return lst.id
+    names = ", ".join(lst.name for lst in lists) or "(none found)"
+    raise RuntimeError(f"no X list named {name!r} for @{handle}. Your lists: {names}")
+
+
+def list_posts(
+    name: str, n: int = DEFAULT_LIST_N, handle: str = DEFAULT_HANDLE
+) -> list[Post]:
+    """Recent posts from one of my lists, by name (case-insensitive), newest first."""
+    pages = _client().lists.get_posts(
+        id=_list_id(name, handle),
+        max_results=max(10, min(n, 100)),
+        tweet_fields=["created_at", "public_metrics", "author_id"],
+        expansions=["author_id"],
+        user_fields=["username"],
+    )
+    return _collect(pages, n)
