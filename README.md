@@ -6,6 +6,8 @@ Each subcommand wraps the best library or API I found for that job, with the def
 
 Current subcommands:
 
+- `ko fetch` — URL → clean markdown: articles, PDFs (saved to ~/Downloads + parsed), arxiv links, dead links via Wayback. Shortcut: `ko <url>`
+- `ko llm` — one-shot LLM call, stdin-aware: `ko hn item 123 | ko llm "summarize"`
 - `ko exa` — semantic web search + URL → markdown (via [Exa](https://exa.ai))
 - `ko arxiv` — arxiv search + paper-to-markdown
 - `ko hf` — Hugging Face [paper pages](https://huggingface.co/papers): daily feed, semantic search, metadata, markdown (no auth)
@@ -37,7 +39,7 @@ Keys live in environment variables (shell profile or `.env` — never in the rep
 | `EXA_API_KEY` | `ko exa` | 💰 | Search $7/1k requests (contents for 10 results included); standalone contents $1/1k pages. [exa.ai](https://exa.ai) |
 | `ANTHROPIC_API_KEY` | `ko agent` | 💰 | Default agent model. |
 | `OPENROUTER_API_KEY` | `ko agent` (planned default) | 💰 | One key, any model — the easy way to explore new models via pydantic-ai. |
-| `GEMINI_API_KEY` | planned `ko yt` fallback | 💰 | Gemini native video understanding when no transcript exists. |
+| `GEMINI_API_KEY` | `ko llm` (default model) | 💰 | Default is `google:gemini-3.5-flash`; override via `-m` or `KO_DEFAULT_MODEL`. |
 | `X_BEARER_TOKEN` | `ko x` | 💰 | X API v2 Bearer Token. Reads need a paid tier (free is ~write-only). [developer.x.com](https://developer.x.com) |
 | `TMDB_READ_ACCESS_TOKEN` | `ko tv` | free | v4 Read Access Token from [TMDB settings](https://www.themoviedb.org/settings/api). |
 | — (Google OAuth) | `ko gsheets` | free | Not a key: one-off browser consent, token cached locally. See below. |
@@ -58,6 +60,15 @@ ko hn top                         # top 10 of the last 24h (hckrnews-style)
 ko hn top --n 20 --days 7         # top 20 of the week
 ko hn search "agent memory" --min-comments 50
 ko hn item 48480978               # story + comment tree (first column of top/search)
+
+# any URL → markdown (free, local extraction; Wayback fallback for dead links)
+ko https://example.com/post       # bare URLs route to fetch
+ko fetch https://x.com/paper.pdf  # PDFs download to ~/Downloads + parse
+ko fetch --archive https://dead-link.com/page   # straight to the Wayback Machine
+
+# one-shot LLM over anything (default: Gemini flash; -m for any model)
+ko hn item 48480978 | ko llm "summarize the debate, what's the consensus?"
+ko fetch https://example.com/post | ko llm "key claims as bullets"
 
 # documents — fully local, no auth
 ko doc report.pdf                 # PDF/Office/image → plain text

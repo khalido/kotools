@@ -11,9 +11,11 @@ import typer
 from . import arxiv as arxiv_mod
 from . import doc as doc_mod
 from . import exa as exa_mod
+from . import fetch as fetch_mod
 from . import google_auth
 from . import hf as hf_mod
 from . import hn as hn_mod
+from . import llm as llm_mod
 from . import tmdb as tmdb_mod
 from . import x as x_mod
 from . import gsheets as gsheets_mod
@@ -542,6 +544,64 @@ def x_lists() -> None:
         typer.echo(f"{lst.id}\t{lst.name}")
 
 
+# --- llm ---
+
+
+@app.command("llm")
+def llm_cmd(
+    prompt: str = typer.Argument(
+        ..., help="what to do; piped stdin becomes the input text"
+    ),
+    model: str = typer.Option(
+        None,
+        "--model",
+        "-m",
+        help=f"model string, e.g. {llm_mod.FALLBACK_MODEL} (default: KO_DEFAULT_MODEL or that)",
+        autocompletion=llm_mod.available_models,
+    ),
+    system: str = typer.Option(
+        None, "--system", "-s", help="replace the default system prompt"
+    ),
+) -> None:
+    """One-shot LLM call, no tools: `ko hn item 123 | ko llm "summarize the debate"`."""
+    import sys
+
+    stdin = None if sys.stdin.isatty() else sys.stdin.read()
+    typer.echo(llm_mod.run(prompt, stdin=stdin, model=model, system=system))
+
+
+# --- fetch ---
+
+
+@app.command("fetch")
+def fetch_cmd(
+    url: str = typer.Argument(..., help="URL — article, PDF link, or arxiv link"),
+    archive: bool = typer.Option(
+        False, "--archive", "-a", help="fetch from the Wayback Machine instead of live"
+    ),
+    date: str = typer.Option(
+        None, "--date", help="preferred Wayback snapshot date, YYYYMMDD"
+    ),
+    no_save: bool = typer.Option(
+        False, "--no-save", help="don't keep downloaded PDFs in ~/Downloads"
+    ),
+    out: Path = typer.Option(
+        None, "--out", "-o", help="write to this path; prints to stdout if omitted"
+    ),
+) -> None:
+    """URL → clean markdown. Articles via trafilatura, PDFs download + parse,
+    arxiv links via arxiv2md, dead links via Wayback. Shortcut: `ko <url>`."""
+    r = fetch_mod.fetch(url, archive=archive, date=date, save=not no_save)
+    if r.note:
+        typer.echo(f"[{r.note}]", err=True)
+    if out is None:
+        typer.echo(r.text)
+    else:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(r.text)
+        typer.echo(f"Wrote {len(r.text):,} chars to {out}", err=True)
+
+
 # --- tv (tmdb) ---
 
 
@@ -629,7 +689,9 @@ def main() -> None:
         known = {g.name for g in app.registered_groups} | {
             c.name for c in app.registered_commands
         }
-        if args[0] not in known and Path(args[0]).is_file():
+        if args[0].startswith(("http://", "https://")):
+            sys.argv.insert(1, "fetch")
+        elif args[0] not in known and Path(args[0]).is_file():
             sys.argv.insert(1, "doc")
         elif args[0] == "x" and len(args) > 1 and not args[1].startswith("-"):
             x_known = {c.name for c in x_app.registered_commands}
