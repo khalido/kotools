@@ -579,6 +579,11 @@ def fetch_cmd(
     archive: bool = typer.Option(
         False, "--archive", "-a", help="fetch from the Wayback Machine instead of live"
     ),
+    archive_is: bool = typer.Option(
+        False,
+        "--archive-is",
+        help="fetch the latest archive.today snapshot (best for hard paywalls)",
+    ),
     date: str = typer.Option(
         None, "--date", help="preferred Wayback snapshot date, YYYYMMDD"
     ),
@@ -590,8 +595,11 @@ def fetch_cmd(
     ),
 ) -> None:
     """URL → clean markdown. Articles via trafilatura, PDFs download + parse,
-    arxiv links via arxiv2md, dead links via Wayback. Shortcut: `ko <url>`."""
-    r = fetch_mod.fetch(url, archive=archive, date=date, save=not no_save)
+    arxiv links via arxiv2md, paywalls via archive.today, dead links via Wayback.
+    Shortcut: `ko <url>`."""
+    r = fetch_mod.fetch(
+        url, archive=archive, archive_is=archive_is, date=date, save=not no_save
+    )
     if r.note:
         typer.echo(f"[{r.note}]", err=True)
     if out is None:

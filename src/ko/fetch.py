@@ -5,11 +5,14 @@ Deterministic routing, no LLM:
 - PDF (by extension or content-type) → download to ~/Downloads (where I'd look
   for it), parse via liteparse; `save=False` parses from temp and discards
 - everything else → trafilatura extraction (best-in-benchmark boilerplate removal)
-- dead links (HTTP errors, empty extraction) → Wayback Machine fallback;
-  `archive=True` skips straight to it
+- dead link (HTTP error) → Wayback Machine (the page is gone, archive it)
+- 200 but empty extraction (paywall) → archive.today first (JS-rendered capture
+  beats Wayback on hard paywalls), then Wayback
 
+Force a source: `archive=True` (Wayback), `archive_is=True` (archive.today).
 Wayback notes: availability API picks the snapshot; the `id_` URL suffix is
 mandatory (raw HTML without archive toolbar/rewritten links). ~60 req/min limit.
+archive.today gates datacenter IPs behind a CAPTCHA — best-effort, residential-only.
 """
 
 from __future__ import annotations
@@ -82,6 +85,36 @@ def _wayback(url: str, date: str | None = None) -> Fetched:
     return Fetched(text=text, source="wayback", note=f"wayback snapshot {ts}")
 
 
+def _archive_is(url: str) -> Fetched:
+    """Latest archive.today snapshot → extracted text. Best-effort.
+
+    archive.is renders JavaScript at capture time, so it catches hard paywalls
+    (SMH, NYT, FT) that the Wayback Machine misses. The catch: it gates
+    automated clients behind a CAPTCHA/429 from datacenter IPs — works from a
+    normal residential connection, may fail from a VM/server. We fail loud so
+    the caller can fall back to Wayback.
+    """
+    # /newest/ redirects through the mirror chain to the most recent capture
+    resp = httpx.get(
+        f"https://archive.ph/newest/{url}",
+        headers=UA,
+        timeout=30,
+        follow_redirects=True,
+    )
+    if resp.status_code == 429 or "captcha" in resp.text[:2000].lower():
+        raise RuntimeError(
+            "archive.today blocked this request (CAPTCHA/rate-limit) — "
+            "common from datacenter IPs; try from a residential connection"
+        )
+    resp.raise_for_status()
+    text = _extract(resp.text, url)
+    if not text:
+        raise RuntimeError(f"no archive.today capture for {url}")
+    return Fetched(
+        text=text, source="archive.is", note=f"archive.today snapshot ({resp.url})"
+    )
+
+
 def _pdf(content: bytes, url: str, save: bool) -> Fetched:
     if save:
         DOWNLOADS.mkdir(parents=True, exist_ok=True)
@@ -94,14 +127,29 @@ def _pdf(content: bytes, url: str, save: bool) -> Fetched:
         return Fetched(text=doc_mod.parse(tmp.name), source="pdf")
 
 
+def _paywall_fallback(url: str, date: str | None) -> Fetched:
+    """A 200 page that extracted to nothing is usually a paywall. archive.today
+    (JS-rendered capture) beats Wayback here, so try it first, then Wayback."""
+    try:
+        return _archive_is(url)
+    except (httpx.HTTPError, RuntimeError):
+        return _wayback(url, date)
+
+
 def fetch(
-    url: str, archive: bool = False, date: str | None = None, save: bool = True
+    url: str,
+    archive: bool = False,
+    archive_is: bool = False,
+    date: str | None = None,
+    save: bool = True,
 ) -> Fetched:
     """One URL → markdown/text, routed by what it is. See module docstring."""
     if arxiv_id := _arxiv_id(url):
         return Fetched(
             text=arxiv_mod.fetch(arxiv_id), source="arxiv", note=f"arxiv {arxiv_id}"
         )
+    if archive_is:
+        return _archive_is(url)
     if archive:
         return _wayback(url, date)
 
@@ -109,8 +157,9 @@ def fetch(
         resp = httpx.get(url, headers=UA, timeout=30, follow_redirects=True)
         resp.raise_for_status()
     except httpx.HTTPError as e:
+        # dead link → page is gone → Wayback is the historical archive (not paywall)
         try:
-            return _wayback(url, date)  # dead/blocked link → archive fallback
+            return _wayback(url, date)
         except (httpx.HTTPError, RuntimeError):
             raise RuntimeError(
                 f"{url} is unreachable ({e}) and the Wayback Machine has no usable capture"
@@ -124,5 +173,5 @@ def fetch(
 
     text = _extract(resp.text, url)
     if not text:
-        return _wayback(url, date)  # paywall/empty page → try the archive
+        return _paywall_fallback(url, date)  # 200 but empty → likely paywall
     return Fetched(text=text, source="live")
