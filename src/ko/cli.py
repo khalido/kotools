@@ -19,7 +19,7 @@ from . import llm as llm_mod
 from . import tmdb as tmdb_mod
 from . import x as x_mod
 from . import gsheets as gsheets_mod
-from .agents import research_run, research_repl
+from .agents import research_run, research_repl, tv_run, tv_repl
 
 
 app = typer.Typer(
@@ -58,6 +58,14 @@ x_app = typer.Typer(
     no_args_is_help=True,
 )
 app.add_typer(x_app, name="x")
+
+
+@app.callback()
+def _startup() -> None:
+    """Runs before every command: make config.toml [keys] available as env vars."""
+    from . import config
+
+    config.load_keys_into_env()
 
 
 def _emit_json(items: list) -> None:
@@ -566,8 +574,23 @@ def llm_cmd(
     """One-shot LLM call, no tools: `ko hn item 123 | ko llm "summarize the debate"`."""
     import sys
 
+    llm_mod.refresh_openrouter_models()  # keeps -m autocomplete catalog fresh (once/day)
     stdin = None if sys.stdin.isatty() else sys.stdin.read()
     typer.echo(llm_mod.run(prompt, stdin=stdin, model=model, system=system))
+
+
+@app.command("models")
+def models_cmd(
+    refresh: bool = typer.Option(
+        False,
+        "--refresh",
+        help="force re-fetch the OpenRouter catalog, ignoring the 24h cache",
+    ),
+) -> None:
+    """List model strings usable with -m, one per line — filtered to providers whose key is set."""
+    llm_mod.refresh_openrouter_models(force=refresh)
+    for name in sorted(llm_mod.available_models()):
+        typer.echo(name)
 
 
 # --- fetch ---
@@ -665,17 +688,19 @@ def tv(
 @app.command("doctor")
 def doctor() -> None:
     """Setup health check: every tool, what it needs, and whether it's ready."""
-    import os
     import shutil
     import sys
 
     from rich.console import Console
     from rich.table import Table
 
-    from . import google_auth, llm as _llm
+    from . import config, google_auth, llm as _llm
 
     def env(var: str) -> tuple[str, str]:
-        return ("✓ set", "green") if os.environ.get(var) else ("✗ missing", "red")
+        return {
+            "env": ("✓ env", "green"),
+            "config": ("✓ config", "cyan"),
+        }.get(config.key_source(var), ("✗ missing", "red"))
 
     arxiv2md = (
         shutil.which("arxiv2md") or (Path(sys.executable).parent / "arxiv2md").exists()
@@ -716,6 +741,12 @@ def doctor() -> None:
         ),
         ("x", "X posts (paid tier for reads)", "X_BEARER_TOKEN", env("X_BEARER_TOKEN")),
         (
+            "agent",
+            "research agent (web search via exa)",
+            "OPENROUTER_API_KEY + EXA_API_KEY",
+            env("OPENROUTER_API_KEY"),
+        ),
+        (
             "tv",
             "movie/TV info + where to stream",
             "TMDB_READ_ACCESS_TOKEN",
@@ -742,6 +773,7 @@ def doctor() -> None:
         table.add_row(name, does, needs, f"[{color}]{status}[/{color}]")
     Console().print(table)
 
+    _llm.refresh_openrouter_models()  # populate/refresh the OR catalog cache
     extra = [m for m in _llm.available_models() if ":" in m]
     providers = sorted({m.split(":")[0] for m in extra})
     Console().print(
@@ -761,18 +793,47 @@ def agent_research(
         None, help="research prompt; omit to enter interactive mode"
     ),
     model: str = typer.Option(
-        None, "--model", "-m", help="model string, e.g. anthropic:claude-sonnet-4-6"
+        None, "--model", "-m", help="model override, e.g. openrouter:anthropic/claude-sonnet-4"
+    ),
+    resume: str = typer.Option(
+        None, "--resume", "-r", help="resume a saved session id (enters interactive mode)"
     ),
 ) -> None:
-    """Research agent with web search via Exa. No prompt = interactive REPL."""
-    import os
-
-    if model:
-        os.environ["KO_AGENT_MODEL"] = model
-    if prompt:
-        typer.echo(research_run(prompt))
+    """Research agent across web (exa), papers (arxiv, hf), and HN. No prompt = interactive REPL."""
+    if prompt and not resume:
+        research_run(prompt, model=model)  # prints itself (streams to TTY, plain when piped)
     else:
-        research_repl()
+        research_repl(model=model, resume=resume)
+
+
+@agent_app.command("tv")
+def agent_tv(
+    prompt: str = typer.Argument(
+        None, help="what you're in the mood for; omit to enter interactive mode"
+    ),
+    model: str = typer.Option(None, "--model", "-m", help="model override"),
+    resume: str = typer.Option(
+        None, "--resume", "-r", help="resume a saved session id (enters interactive mode)"
+    ),
+) -> None:
+    """TV/movie agent — what to watch in Australia, tuned to Ko. No prompt = interactive REPL."""
+    if prompt and not resume:
+        tv_run(prompt, model=model)
+    else:
+        tv_repl(model=model, resume=resume)
+
+
+@agent_app.command("sessions")
+def agent_sessions() -> None:
+    """List saved agent sessions, newest first (TSV: id, agent, model, title)."""
+    from ko import sessions
+
+    rows = sessions.listing()
+    if not rows:
+        typer.echo("no sessions yet", err=True)
+        raise typer.Exit(0)
+    for s in rows:
+        typer.echo(f"{s['id']}\t{s['agent']}\t{s['model']}\t{s['title']}")
 
 
 def main() -> None:

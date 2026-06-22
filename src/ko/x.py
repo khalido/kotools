@@ -72,20 +72,29 @@ def _client() -> Client:
     return Client(bearer_token=token)
 
 
+def _field(obj, name, default=None):
+    """Read a field whether the XDK handed us a dict or a model object.
+
+    search_recent returns posts/users as plain dicts; other SDK paths and our
+    tests use objects. Normalise both so callers don't care which.
+    """
+    if isinstance(obj, dict):
+        return obj.get(name, default)
+    return getattr(obj, name, default)
+
+
 def _post(p, users: dict[str, str]) -> Post:
-    metrics = getattr(p, "public_metrics", None) or {}
-    if hasattr(
-        metrics, "model_dump"
-    ):  # pydantic model or plain dict, depending on SDK path
+    metrics = _field(p, "public_metrics") or {}
+    if hasattr(metrics, "model_dump"):  # pydantic model or plain dict, per SDK path
         metrics = metrics.model_dump()
-    created = getattr(p, "created_at", None)
+    created = _field(p, "created_at")
     if isinstance(created, str):
         created = datetime.fromisoformat(created.replace("Z", "+00:00"))
     return Post(
-        id=str(p.id),
-        text=p.text,
+        id=str(_field(p, "id")),
+        text=_field(p, "text", ""),
         author=users.get(
-            str(getattr(p, "author_id", "")), "i"
+            str(_field(p, "author_id", "")), "i"
         ),  # 'i' → x.com/i/status/<id> still resolves
         created_at=created or datetime.now(timezone.utc),
         likes=int(metrics.get("like_count") or 0),
@@ -117,15 +126,12 @@ def _collect(pages, n: int) -> list[Post]:
     """Drain paginated post responses into Posts, resolving authors per page."""
     out: list[Post] = []
     for page in pages:
-        users = (
-            {
-                str(u.id): u.username
-                for u in (getattr(page.includes, "users", None) or [])
-            }
-            if getattr(page, "includes", None)
-            else {}
-        )
-        for p in page.data or []:
+        includes = _field(page, "includes")
+        users = {
+            str(_field(u, "id")): _field(u, "username")
+            for u in (_field(includes, "users") or [])
+        }
+        for p in _field(page, "data") or []:
             out.append(_post(p, users))
             if len(out) >= n:
                 return out

@@ -2,6 +2,17 @@
 
 Newest first. Big picture only — git commits have the detail; candidate ideas and decisions live in `docs/ideas.md`.
 
+## 2026-06-22
+
+- **Renamed `ko-tools` → `kotools`** (folder + PyPI name; command stays `ko`; `kotools` is free on PyPI). Recreated the venv — the folder rename orphaned console-script shebangs.
+- **Slimmed to `pydantic-ai-slim[google,openrouter]`** and dropped the global `prerelease = "allow"`: scoped prereleases to just the pydantic-ai v2 beta line (its sibling `pydantic-graph` referenced explicitly), so pydantic/mcp resolve to stable again. Loosened the beta pin to track new betas; upgraded all deps + bumped floors.
+- **OpenRouter in `ko llm`** — `openrouter:` models aren't in pydantic-ai's static `known_model_names()`, so we fetch OR's public `/models` (no auth) and cache it (24h TTL) to feed `-m` autocomplete. New `ko models [--refresh]`.
+- **`config.toml [keys]`** — API keys as a fallback to env (env wins), injected into the environment at startup; `ko doctor` now shows each key's source (env/config/missing) and lists all tools.
+- **Live tests for exa/tv/x** (x behind `KO_LIVE_TESTS`, paid reads). The x live test caught a real bug — the XDK returns dicts not objects; fixed with a dict-or-object accessor. Found `TMDB_READ_ACCESS_TOKEN` isn't exported to subprocesses (config.toml fixes it).
+- **Agent layer refactored to toolsets** — tools declared once as `FunctionToolset`s (`agents/_toolsets.py`: web/papers/news/tmdb), agents compose subsets (`research.py`, `tv.py`), shared run/stream/repl in `_shared.py`. v2 research (subagents on the refs): code factories beat YAML agent-spec (specs can't reference custom toolsets); capabilities deferred. Fixed `run_stream_sync` (not a context manager in v2); made tools resilient (one flaky source no longer aborts a run); per-agent models with a working `-m` (passed per-run, not baked in).
+- **Sessions** (`sessions.py`) — every agent turn dumped to `~/.local/state/ko/sessions/<id>.json` (full trace via `ModelMessagesTypeAdapter`); `-r <id>` resumes, `ko agent sessions` lists. Flat files, no DB yet.
+- Both agents live-verified (research across HF/arxiv/HN; tv on gemini-flash). README + CLAUDE.md updated.
+
 ## 2026-06-13
 
 - **Adopted XDG-style dir split** (`src/ko/dirs.py`, researched against httpie/yt-dlp/llm/poetry): `~/.config/ko` = synced config, `~/.local/state/ko` = tokens + id caches (google token + x cache auto-migrate there — avoids llm's everything-in-one-synced-dir anti-pattern), `~/.cache/ko` = disposable. Env overrides on all three.
@@ -37,5 +48,6 @@ Newest first. Big picture only — git commits have the detail; candidate ideas 
 
 ## Open
 
+- [ ] **`ko sessions summarize` → SQLite (`~/.local/state/ko/ko.db`)** — after a session, run a cheap-model pass that writes a row: `title`, a one-line `summary` (lightweight memory — the useful takeaway), `tags` (open-ended; refine the useful set over time), plus id/agent/model/timestamps. Enables "take me back to that one" and tag/topic filtering ("anything about python or HN"). The JSON session files stay the source of truth; SQLite is the index + memory layer. pydantic-ai does the summarize/tag pass.
 - [ ] **PyPI trusted publisher** — tag-push GitHub Action (`publish.yml`), OIDC, no long-lived tokens: https://docs.pypi.org/trusted-publishers/
 - [ ] **MCP server (`ko mcp`)** — shared-core-functions approach: CLI and MCP both wrap the same module functions. stdio for local clients; HTTP on Railway later. Stub + notes in `src/ko/mcp_server.py`.

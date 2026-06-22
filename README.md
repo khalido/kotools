@@ -16,7 +16,8 @@ Current subcommands:
 - `ko x` — search recent X posts (via the official [XDK](https://docs.x.com/xdks/python/overview); needs a paid API tier for reads)
 - `ko tv` — movie/TV quick check: rating, overview, where to stream (AU default; via [TMDB](https://developer.themoviedb.org))
 - `ko gsheets` — read Google Sheets via OAuth
-- `ko agent` — pydantic-ai research agent (early; the agent layer is growing)
+- `ko agent` — pydantic-ai agents: `research` (web + papers + HN) and `tv` (what to watch in AU), with saved/resumable sessions
+- `ko models` — list model strings usable with `-m` (incl. the live OpenRouter catalog)
 
 ## Install
 
@@ -28,18 +29,17 @@ uv tool install --editable /path/to/ko
 uvx --from /path/to/ko ko --help
 ```
 
-(Once published to PyPI: `uv tool install ko-tools` — the package is `ko-tools`, the command it installs is still `ko`.)
+(Once published to PyPI: `uv tool install kotools` — the package is `kotools`, the command it installs is still `ko`.)
 
 ## API keys
 
-Keys live in environment variables (shell profile or `.env` — never in the repo). What you need depends on what you use; most of ko works with no keys at all.
+Keys live in environment variables (shell profile or `.env`) or in `~/.config/ko/config.toml` under a `[keys]` table (env always wins) — never in the repo. `ko doctor` shows each key's source (env / config / missing). What you need depends on what you use; most of ko works with no keys at all.
 
 | Env var | Used by | Paid? | Notes |
 |---|---|---|---|
-| `EXA_API_KEY` | `ko exa` | 💰 | Search $7/1k requests (contents for 10 results included); standalone contents $1/1k pages. [exa.ai](https://exa.ai) |
-| `ANTHROPIC_API_KEY` | `ko agent` | 💰 | Default agent model. |
-| `OPENROUTER_API_KEY` | `ko agent` (planned default) | 💰 | One key, any model — the easy way to explore new models via pydantic-ai. |
-| `GEMINI_API_KEY` | `ko llm` (default model) | 💰 | Default is `google:gemini-3.5-flash`; override via `-m` or `KO_DEFAULT_MODEL`. |
+| `EXA_API_KEY` | `ko exa`, agents | 💰 | Search $7/1k requests (contents for 10 results included); standalone contents $1/1k pages. [exa.ai](https://exa.ai) |
+| `OPENROUTER_API_KEY` | `ko agent` (default), `ko llm` | 💰 | One key, any model. Default agent model is `openrouter:z-ai/glm-5.2`; `-m` overrides. |
+| `GEMINI_API_KEY` | `ko llm` (default), `ko agent tv` | 💰 | `ko llm` default is `google:gemini-3.5-flash` (`-m`/`KO_DEFAULT_MODEL`); also the `tv` agent's default. |
 | `X_BEARER_TOKEN` | `ko x` | 💰 | X API v2 Bearer Token. Reads need a paid tier (free is ~write-only). [developer.x.com](https://developer.x.com) |
 | `TMDB_READ_ACCESS_TOKEN` | `ko tv` | free | v4 Read Access Token from [TMDB settings](https://www.themoviedb.org/settings/api). |
 | — (Google OAuth) | `ko gsheets` | free | Not a key: one-off browser consent, token cached locally. See below. |

@@ -1,4 +1,6 @@
-"""Offline tests for ko.tmdb — pure logic, no API calls."""
+"""Tests for ko.tmdb — pure logic; live test skips if TMDB_READ_ACCESS_TOKEN is unset."""
+
+import os
 
 import pytest
 
@@ -43,3 +45,14 @@ def test_headers_require_token(monkeypatch):
     monkeypatch.delenv("TMDB_READ_ACCESS_TOKEN", raising=False)
     with pytest.raises(RuntimeError, match="TMDB_READ_ACCESS_TOKEN"):
         tmdb._headers()
+
+
+@pytest.mark.skipif(
+    not os.environ.get("TMDB_READ_ACCESS_TOKEN"),
+    reason="TMDB_READ_ACCESS_TOKEN not set; skipping live TMDB test",
+)
+def test_search_returns_titles():
+    results = tmdb.search("the matrix")
+    assert results
+    assert all(t.title for t in results)
+    assert any("matrix" in t.title.lower() for t in results)

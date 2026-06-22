@@ -1,5 +1,6 @@
-"""Offline tests for ko.x — pure logic, no API calls."""
+"""Tests for ko.x — pure logic; live test needs a token AND KO_LIVE_TESTS=1 (reads are paid)."""
 
+import os
 from types import SimpleNamespace
 
 import pytest
@@ -59,3 +60,14 @@ def test_collect_caps_at_n():
     out = x._collect([page, page], n=3)
     assert len(out) == 3
     assert out[0].author == "a"
+
+
+@pytest.mark.skipif(
+    not (os.environ.get("X_BEARER_TOKEN") and os.environ.get("KO_LIVE_TESTS")),
+    reason="set X_BEARER_TOKEN and KO_LIVE_TESTS=1 for the live (paid) X read",
+)
+def test_search_returns_posts_live():
+    x._client.cache_clear()
+    posts = x.search("ai", n=3)
+    assert posts
+    assert all(p.url.startswith("https://x.com/") for p in posts)

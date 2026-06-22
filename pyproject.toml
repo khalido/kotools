@@ -1,5 +1,5 @@
 [project]
-name = "ko-tools"
+name = "kotools"
 version = "0.1.0"
 description = "Ko's personal opinionated CLI — thin wrappers around SDKs I use often, built so both I and AI agents can lean on it."
 readme = "README.md"
@@ -13,18 +13,23 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
 ]
 dependencies = [
-    "arxiv>=3.0.0",
+    "arxiv>=4.0.0",
     "arxiv2markdown>=0.1.0",
-    "exa-py>=2.12.0",
-    "google-api-python-client>=2.194.0",
-    "google-auth>=2.49.2",
-    "google-auth-oauthlib>=1.3.1",
-    "httpx>=0.27",
-    "liteparse>=2.0.7",
-    "mcp[cli]>=1.27.0",
-    "pydantic-ai==2.0.0b7",
-    "trafilatura>=2.1",
-    "typer>=0.24.1",
+    "exa-py>=2.14.0",
+    "google-api-python-client>=2.197.0",
+    "google-auth>=2.55.0",
+    "google-auth-oauthlib>=1.4.0",
+    "httpx>=0.28.1",
+    "liteparse>=2.1.1",
+    "mcp[cli]>=1.28.0",
+    "pydantic-ai-slim[google,openrouter]>=2.0.0b7,<3",
+    # pydantic-ai v2 beta pins its sibling pydantic-graph to a prerelease too.
+    # Referencing it explicitly lets us drop the global prerelease=allow, so only
+    # the pydantic-ai beta line is prerelease and everything else stays on stable.
+    # Bump/remove both when pydantic-ai v2 ships final.
+    "pydantic-graph>=2.0.0b7,<3",
+    "trafilatura>=2.1.0",
+    "typer>=0.26.7",
     "xdk>=0.9.0",
 ]
 
@@ -35,10 +40,6 @@ Issues = "https://github.com/khalido/ko-tools/issues"
 [project.scripts]
 ko = "ko.cli:main"
 
-[tool.uv]
-# pydantic-ai v2 is in beta; its sub-packages (pydantic-ai-slim) are prereleases too
-prerelease = "allow"
-
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
@@ -48,6 +49,6 @@ packages = ["src/ko"]
 
 [dependency-groups]
 dev = [
-    "pytest>=9.0.3",
-    "ruff>=0.15.11",
+    "pytest>=9.1.1",
+    "ruff>=0.15.18",
 ]
