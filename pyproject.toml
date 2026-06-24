@@ -39,6 +39,7 @@ Issues = "https://github.com/khalido/ko-tools/issues"
 
 [project.scripts]
 ko = "ko.cli:main"
+kotools = "ko.cli:main"  # install-name alias; `ko` stays the daily command
 
 [build-system]
 requires = ["hatchling"]

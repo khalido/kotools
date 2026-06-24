@@ -14,7 +14,8 @@ from pydantic_ai import Agent
 from ko.agents import _shared
 from ko.agents._toolsets import tmdb, web
 
-# Cheap model — this is a light task. KO_AGENT_MODEL (the -m flag) overrides.
+# Cheap model — this is a light task. KO_AGENT_MODEL (read at import) overrides the
+# default; the `-m` flag overrides per-run via model=. KO_AGENT_MODEL is global to all agents.
 _MODEL = os.environ.get("KO_AGENT_MODEL", "google:gemini-3.5-flash")
 
 # TODO(ko): replace the tastes line with Ko's actual preferences.
@@ -35,9 +36,9 @@ agent = Agent(
 )
 
 
-def run(prompt: str, model: str | None = None) -> str:
-    """One-shot recommendation; streams to a TTY, plain text when piped."""
-    return _shared.run(agent, prompt, name="tv", model=model)
+def run(prompt: str, model: str | None = None, resume: str | None = None) -> str:
+    """One-shot recommendation; streams to a TTY, plain text when piped. resume=<id> continues."""
+    return _shared.run(agent, prompt, name="tv", model=model, resume=resume)
 
 
 def repl(model: str | None = None, resume: str | None = None) -> None:

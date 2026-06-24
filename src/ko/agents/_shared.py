@@ -37,15 +37,27 @@ def _stream(agent: Agent, prompt: str, history: list, model: str | None = None) 
     return text, result.all_messages()
 
 
-def run(agent: Agent, prompt: str, name: str = "agent", model: str | None = None) -> str:
-    """One-shot. Streams pretty markdown to a TTY; plain text when piped. Saves the session."""
+def run(
+    agent: Agent,
+    prompt: str,
+    name: str = "agent",
+    model: str | None = None,
+    resume: str | None = None,
+) -> str:
+    """One-shot. Streams pretty markdown to a TTY; plain text when piped. Saves the session.
+
+    `resume` continues a saved session (the prompt becomes its next turn) instead of
+    starting fresh — so `ko a research "follow-up" -r <id>` works as a one-shot continuation.
+    """
+    session_id = resume or sessions.new_id()
+    history = sessions.load(resume) if resume else []
     if _console.is_terminal:
-        text, messages = _stream(agent, prompt, [], model=model)
+        text, messages = _stream(agent, prompt, history, model=model)
     else:
-        result = agent.run_sync(prompt, model=model)
+        result = agent.run_sync(prompt, message_history=history, model=model)
         text, messages = result.output, result.all_messages()
         print(text)
-    sessions.save(sessions.new_id(), name, messages)
+    sessions.save(session_id, name, messages)
     return text
 
 

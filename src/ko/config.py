@@ -43,3 +43,8 @@ def key_source(name: str) -> str | None:
     if os.environ.get(name):
         return "env"
     return None
+
+
+def get(section: str, key: str, default=None):
+    """A non-secret config value, e.g. get('publish', 'domain')."""
+    return (_data().get(section) or {}).get(key, default)

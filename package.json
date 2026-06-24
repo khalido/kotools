@@ -1,0 +1,9 @@
+{
+  "name": "kotools-tooling",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Node tooling for ko — pinned wrangler for `ko publish`. Run `npm install`; the Python CLI calls node_modules/.bin/wrangler.",
+  "devDependencies": {
+    "wrangler": "^4"
+  }
+}

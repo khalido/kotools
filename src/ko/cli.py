@@ -19,6 +19,8 @@ from . import llm as llm_mod
 from . import tmdb as tmdb_mod
 from . import x as x_mod
 from . import gsheets as gsheets_mod
+from . import ticktick as ticktick_mod
+from . import publish as publish_mod
 from .agents import research_run, research_repl, tv_run, tv_repl
 
 
@@ -58,6 +60,18 @@ x_app = typer.Typer(
     no_args_is_help=True,
 )
 app.add_typer(x_app, name="x")
+
+tt_app = typer.Typer(
+    help="TickTick lists/tasks, read-only via its hosted MCP (TICKTICK_API_KEY). Manage tasks in TickTick itself.",
+    no_args_is_help=True,
+)
+app.add_typer(tt_app, name="tt")
+
+publish_app = typer.Typer(
+    help="Publish a folder to Cloudflare as a static site (needs wrangler). `ko publish new <dir>` scaffolds; `ko publish [dir]` deploys.",
+    no_args_is_help=True,
+)
+app.add_typer(publish_app, name="publish")
 
 
 @app.callback()
@@ -741,6 +755,23 @@ def doctor() -> None:
         ),
         ("x", "X posts (paid tier for reads)", "X_BEARER_TOKEN", env("X_BEARER_TOKEN")),
         (
+            "tt",
+            "TickTick lists/tasks (read-only, via MCP)",
+            "TICKTICK_API_KEY",
+            env("TICKTICK_API_KEY"),
+        ),
+        (
+            "publish",
+            "deploy a folder to Cloudflare (static)",
+            "wrangler + KO_CLOUDFLARE_API_TOKEN/ACCOUNT_ID",
+            {
+                "local": ("✓ repo-local", "green"),
+                "path": ("✓ on PATH", "green"),
+                "env": ("✓ KO_WRANGLER", "green"),
+                "npx": ("– via npx (run `npm install`)", "yellow"),
+            }.get(publish_mod.wrangler_source(), ("✗ no wrangler/npx", "red")),
+        ),
+        (
             "agent",
             "research agent (web search via exa)",
             "OPENROUTER_API_KEY + EXA_API_KEY",
@@ -785,6 +816,7 @@ def doctor() -> None:
 
 agent_app = typer.Typer(help="AI agents powered by pydantic-ai.", no_args_is_help=True)
 app.add_typer(agent_app, name="agent")
+app.add_typer(agent_app, name="a", hidden=True)  # shortcut: `ko a research`
 
 
 @agent_app.command("research")
@@ -800,8 +832,8 @@ def agent_research(
     ),
 ) -> None:
     """Research agent across web (exa), papers (arxiv, hf), and HN. No prompt = interactive REPL."""
-    if prompt and not resume:
-        research_run(prompt, model=model)  # prints itself (streams to TTY, plain when piped)
+    if prompt:
+        research_run(prompt, model=model, resume=resume)  # prints itself; resume continues a session
     else:
         research_repl(model=model, resume=resume)
 
@@ -817,8 +849,8 @@ def agent_tv(
     ),
 ) -> None:
     """TV/movie agent — what to watch in Australia, tuned to Ko. No prompt = interactive REPL."""
-    if prompt and not resume:
-        tv_run(prompt, model=model)
+    if prompt:
+        tv_run(prompt, model=model, resume=resume)
     else:
         tv_repl(model=model, resume=resume)
 
@@ -834,6 +866,112 @@ def agent_sessions() -> None:
         raise typer.Exit(0)
     for s in rows:
         typer.echo(f"{s['id']}\t{s['agent']}\t{s['model']}\t{s['title']}")
+
+
+# --- ticktick ---
+
+
+@tt_app.command("lists")
+def tt_lists(
+    json_out: bool = typer.Option(False, "--json", help="JSON instead of TSV"),
+) -> None:
+    """List your TickTick lists (TSV: id, name)."""
+    projects = ticktick_mod.list_projects()
+    if json_out:
+        _emit_json(projects)
+        return
+    if not projects:
+        typer.echo("no lists", err=True)
+        raise typer.Exit(0)
+    for p in projects:
+        typer.echo(f"{p.id}\t{p.name}")
+
+
+@tt_app.command("items")
+def tt_items(
+    list_name: str = typer.Argument(..., help="list name (substring ok) or id"),
+    json_out: bool = typer.Option(False, "--json", help="JSON instead of TSV"),
+) -> None:
+    """Open tasks in a list (TSV: priority, due, title). `ko tt <list>` is a shortcut."""
+    proj = ticktick_mod.resolve_list(list_name)
+    if not proj:
+        typer.echo(f"no list matching {list_name!r}", err=True)
+        raise typer.Exit(1)
+    tasks = ticktick_mod.get_tasks(proj.id)
+    if json_out:
+        _emit_json(tasks)
+        return
+    if not tasks:
+        typer.echo(f"{proj.name}: no open tasks", err=True)
+        raise typer.Exit(0)
+    for t in tasks:
+        typer.echo(f"{t.priority}\t{t.due or '—'}\t{t.title}")
+
+
+# --- publish ---
+
+
+@publish_app.command("new")
+def publish_new(
+    path: str = typer.Argument(..., help="folder to scaffold (created if missing)"),
+    title: str = typer.Option(None, "--title", "-t", help="page title (default: folder name)"),
+    md: bool = typer.Option(False, "--md", help="markdown doc site (write .md, README is the hub)"),
+    bare: bool = typer.Option(False, "--bare", help="just a CLAUDE.md of hints; build from scratch"),
+) -> None:
+    """Scaffold a site to publish. Default: static (Tailwind + Alpine). `--md` or `--bare`."""
+    from pathlib import Path
+
+    if md and bare:
+        typer.echo("--md and --bare are mutually exclusive", err=True)
+        raise typer.Exit(2)
+    mode = "md" if md else "bare" if bare else "static"
+    folder = Path(path)
+    written = publish_mod.scaffold(folder, title=title, mode=mode)
+    if written:
+        for p in written:
+            typer.echo(f"created {p}")
+    else:
+        typer.echo(f"{folder} already scaffolded (nothing overwritten)", err=True)
+    edit = "README.md" if mode == "md" else "index.html"
+    hint = f"edit {folder}/{edit}, then: ko publish {folder}"
+    if mode == "bare":
+        hint = f"build an index.html in {folder}, then: ko publish {folder}"
+    typer.echo(f"\n{hint}", err=True)
+
+
+@publish_app.command("up")
+def publish_up(
+    path: str = typer.Argument(".", help="folder to publish (default: current dir)"),
+    name: str = typer.Option(
+        None, "--name", "-n", help="subdomain/name (default: derived from folder, sticky)"
+    ),
+    force: bool = typer.Option(
+        False, "--force", "-f", help="take over an existing subdomain/Worker name"
+    ),
+) -> None:
+    """Deploy a folder to Cloudflare. Prints the URL. Re-running overwrites the same URL."""
+    from pathlib import Path
+
+    try:
+        url = publish_mod.deploy(Path(path), name=name, force=force)
+    except RuntimeError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1) from None
+    if url:
+        typer.echo(url)
+    else:
+        typer.echo("deployed — couldn't parse the URL; run `wrangler deployments list`", err=True)
+
+
+@publish_app.command("list")
+def publish_list() -> None:
+    """List everything published (TSV: name, url, folder)."""
+    rows = publish_mod.published()
+    if not rows:
+        typer.echo("nothing published yet", err=True)
+        raise typer.Exit(0)
+    for p in rows:
+        typer.echo(f"{p.name}\t{p.url}\t{p.folder}")
 
 
 def main() -> None:
@@ -856,6 +994,16 @@ def main() -> None:
             x_known = {c.name for c in x_app.registered_commands}
             if args[1] not in x_known:
                 sys.argv.insert(2, "list")
+        elif args[0] == "tt" and len(args) > 1 and not args[1].startswith("-"):
+            tt_known = {c.name for c in tt_app.registered_commands}
+            if args[1] not in tt_known:
+                sys.argv.insert(2, "items")  # `ko tt Shopping` -> `ko tt items Shopping`
+        elif args[0] == "publish":
+            pub_known = {c.name for c in publish_app.registered_commands}
+            # `ko publish` / `ko publish ./dir` / `ko publish -n foo` -> `... up ...`,
+            # but leave subcommands and `--help` to the group.
+            if not args[1:] or (args[1] not in pub_known and args[1] not in ("--help", "-h")):
+                sys.argv.insert(2, "up")
     app()
 
 

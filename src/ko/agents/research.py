@@ -16,7 +16,8 @@ from pydantic_ai import Agent
 from ko.agents import _shared
 from ko.agents._toolsets import news, papers, web
 
-# Research wants a capable model; KO_AGENT_MODEL (the -m flag) overrides per run.
+# Default model. KO_AGENT_MODEL (read at import) overrides the default; the `-m` flag
+# overrides per-run via the model= arg (see run/repl). KO_AGENT_MODEL is global to all agents.
 _MODEL = os.environ.get("KO_AGENT_MODEL", "openrouter:z-ai/glm-5.2")
 
 agent = Agent(
@@ -30,9 +31,9 @@ agent = Agent(
 )
 
 
-def run(prompt: str, model: str | None = None) -> str:
-    """One-shot research; streams to a TTY, plain text when piped."""
-    return _shared.run(agent, prompt, name="research", model=model)
+def run(prompt: str, model: str | None = None, resume: str | None = None) -> str:
+    """One-shot research; streams to a TTY, plain text when piped. resume=<id> continues a session."""
+    return _shared.run(agent, prompt, name="research", model=model, resume=resume)
 
 
 def repl(model: str | None = None, resume: str | None = None) -> None:

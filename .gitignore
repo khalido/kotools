@@ -10,6 +10,10 @@ build/
 .claude/settings.local.json
 .arxiv2md_cache/
 
+# node tooling for `ko publish` (wrangler) — package.json + lock are committed
+node_modules/
+.wrangler/
+
 # never commit real credentials or tokens
 google_client.json
 google_token.json

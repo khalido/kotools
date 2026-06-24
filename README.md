@@ -15,6 +15,7 @@ Current subcommands:
 - `ko doc` — PDF/Office/image → plain text (via [liteparse](https://developers.llamaindex.ai/liteparse/); local, fast, no models)
 - `ko x` — search recent X posts (via the official [XDK](https://docs.x.com/xdks/python/overview); needs a paid API tier for reads)
 - `ko tv` — movie/TV quick check: rating, overview, where to stream (AU default; via [TMDB](https://developer.themoviedb.org))
+- `ko tt` — TickTick lists + tasks (read-only) via its hosted MCP — `ko tt lists`, `ko tt items <list>`
 - `ko gsheets` — read Google Sheets via OAuth
 - `ko agent` — pydantic-ai agents: `research` (web + papers + HN) and `tv` (what to watch in AU), with saved/resumable sessions
 - `ko models` — list model strings usable with `-m` (incl. the live OpenRouter catalog)
@@ -42,6 +43,7 @@ Keys live in environment variables (shell profile or `.env`) or in `~/.config/ko
 | `GEMINI_API_KEY` | `ko llm` (default), `ko agent tv` | 💰 | `ko llm` default is `google:gemini-3.5-flash` (`-m`/`KO_DEFAULT_MODEL`); also the `tv` agent's default. |
 | `X_BEARER_TOKEN` | `ko x` | 💰 | X API v2 Bearer Token. Reads need a paid tier (free is ~write-only). [developer.x.com](https://developer.x.com) |
 | `TMDB_READ_ACCESS_TOKEN` | `ko tv` | free | v4 Read Access Token from [TMDB settings](https://www.themoviedb.org/settings/api). |
+| `TICKTICK_API_KEY` | `ko tt` | (TickTick sub) | TickTick app → Account → MCP → generate. Read-only here. |
 | — (Google OAuth) | `ko gsheets` | free | Not a key: one-off browser consent, token cached locally. See below. |
 | — | `ko arxiv`, `ko hn`, `ko hf`, `ko doc` | free | No auth at all. |
 
@@ -121,8 +123,9 @@ Logout / re-auth: `ko gsheets auth --logout`.
 ## Dev
 
 ```bash
-cd ko
+cd kotools
 uv sync
+npm install            # pinned wrangler for `ko publish` (needs Node; via fnm/nvm/etc.)
 uv run pytest          # offline by default; KO_LIVE_TESTS=1 enables live-API tests
 uv run ko --help
 ```
