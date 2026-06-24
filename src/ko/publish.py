@@ -252,6 +252,15 @@ def published() -> list[Published]:
 # --- deploy ---
 
 
+def check_url(url: str) -> int | None:
+    """GET the published URL as a post-deploy sanity check. Returns the HTTP status, or
+    None if unreachable. Non-fatal: a custom-domain cert can take 30-90s on first deploy."""
+    try:
+        return httpx.get(url, timeout=15, follow_redirects=True).status_code
+    except Exception:
+        return None
+
+
 def _parse_url(stdout: str, out_file: Path) -> str:
     """Best-effort live URL from wrangler's ND-JSON output, then stdout. "" if not found."""
     try:

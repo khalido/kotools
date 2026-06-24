@@ -48,6 +48,8 @@ Newest first. Big picture only — git commits have the detail; candidate ideas 
 
 ## Open
 
+- [ ] **kotools cloud backend (Cloudflare Worker + D1 + R2 on khalido.dev)** — store useful state in the cloud, not just locally: the publish registry (today `~/.local/state/ko/publish.json` → `ko publish list`), session summaries, agent memory. Local stays source-of-truth/cache; cloud is the sync + shared layer agents can read/write. Natural home for the `ko sessions summarize` index (D1 instead of local SQLite). This is also the worker that the publish tool's `--hono`/D1/R2 path would build on.
+- [ ] **Cloudflare Sandbox for agent code execution** — <https://developers.cloudflare.com/sandbox/> — a sandboxed place for agents to run throwaway code without local blast radius (the "agent writes + runs a script" need). Pairs with the cloud backend.
 - [ ] **`ko sessions summarize` → SQLite (`~/.local/state/ko/ko.db`)** — after a session, run a cheap-model pass that writes a row: `title`, a one-line `summary` (lightweight memory — the useful takeaway), `tags` (open-ended; refine the useful set over time), plus id/agent/model/timestamps. Enables "take me back to that one" and tag/topic filtering ("anything about python or HN"). The JSON session files stay the source of truth; SQLite is the index + memory layer. pydantic-ai does the summarize/tag pass.
 - [ ] **PyPI trusted publisher** — tag-push GitHub Action (`publish.yml`), OIDC, no long-lived tokens: https://docs.pypi.org/trusted-publishers/
 - [ ] **MCP server (`ko mcp`)** — shared-core-functions approach: CLI and MCP both wrap the same module functions. stdio for local clients; HTTP on Railway later. Stub + notes in `src/ko/mcp_server.py`.

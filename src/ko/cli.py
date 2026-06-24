@@ -958,7 +958,14 @@ def publish_up(
         typer.echo(str(e), err=True)
         raise typer.Exit(1) from None
     if url:
-        typer.echo(url)
+        typer.echo(url)  # stdout: the URL itself (pipeable)
+        code = publish_mod.check_url(url)  # sanity check: is it actually live?
+        if code == 200:
+            typer.echo("✓ live (HTTP 200)", err=True)
+        elif code:
+            typer.echo(f"⚠ deployed but HTTP {code} (cert may still be provisioning)", err=True)
+        else:
+            typer.echo("⚠ deployed but not reachable yet (cert may be provisioning)", err=True)
     else:
         typer.echo("deployed — couldn't parse the URL; run `wrangler deployments list`", err=True)
 
