@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -89,6 +90,16 @@ def _wrangler() -> list[str]:
     if shutil.which("wrangler"):
         return ["wrangler"]
     return ["npx", "--yes", "wrangler@4"]
+
+
+def _npm_install(folder: Path) -> None:
+    """Install a worker site's deps (Hono) before wrangler bundles it. Cached after first run."""
+    if not (folder / "package.json").exists() or (folder / "node_modules").exists():
+        return
+    npm = shutil.which("npm") or "npm"
+    proc = subprocess.run([npm, "install"], cwd=str(folder), capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise RuntimeError("npm install failed:\n" + (proc.stderr or proc.stdout))
 
 
 def cf_creds() -> tuple[str | None, str | None]:
@@ -163,6 +174,28 @@ def build_config(name: str, domain: str | None, spa: bool = True) -> dict:
     return cfg
 
 
+def build_hono_config(name: str, domain: str | None, pin: str | None = None) -> dict:
+    """wrangler config for a Hono worker site: the worker (src/index.ts) runs first
+    (`run_worker_first`), so it can add API routes, optionally gate behind a PIN, then serve
+    the static assets in ./public via the ASSETS binding. PIN is active iff `KO_PIN` is set."""
+    cfg: dict = {
+        "name": name,
+        "main": "src/index.ts",
+        "compatibility_date": COMPAT_DATE,
+        "assets": {
+            "directory": "./public",
+            "binding": "ASSETS",
+            "run_worker_first": True,
+            "not_found_handling": "404-page",
+        },
+    }
+    if pin:
+        cfg["vars"] = {"KO_PIN": pin}
+    if domain:
+        cfg["routes"] = [{"pattern": f"{name}.{domain}", "custom_domain": True}]
+    return cfg
+
+
 def _config_value(folder: Path, key: str) -> str | None:
     """Read a `"key": "value"` string from a folder's wrangler config (comment-safe regex)."""
     path = folder / WRANGLER_CONFIG
@@ -180,6 +213,15 @@ def config_name(folder: Path) -> str | None:
 def config_route(folder: Path) -> str | None:
     """The custom-domain route pattern from a folder's wrangler config, if it has one."""
     return _config_value(folder, "pattern")
+
+
+def config_pin(folder: Path) -> str | None:
+    """The PIN from a folder's wrangler config (`vars.KO_PIN`), if it's a gated site."""
+    path = folder / WRANGLER_CONFIG
+    if not path.exists():
+        return None
+    m = re.search(r'"KO_PIN"\s*:\s*"([^"]+)"', path.read_text())
+    return m.group(1) if m else None
 
 
 def resolve_name(folder: Path, name: str | None = None) -> str:
@@ -210,6 +252,19 @@ def ensure_config(folder: Path, name: str | None = None, spa: bool = True) -> st
         return slugify(folder.resolve().name)
     final = slugify(name) if name else slugify(folder.resolve().name)
     text = json.dumps(build_config(final, publish_domain(), spa=spa), indent=2) + "\n"
+    path.write_text(text)
+    return final
+
+
+def ensure_hono_config(folder: Path, name: str | None = None, pin: bool = False) -> str:
+    """Like ensure_config but for a Hono worker site. With `pin=True`, generates a random
+    6-digit PIN into `vars.KO_PIN` on creation. An existing config (and its PIN) is sticky."""
+    path = folder / WRANGLER_CONFIG
+    if path.exists() and not name:
+        return config_name(folder) or slugify(folder.resolve().name)
+    final = slugify(name) if name else slugify(folder.resolve().name)
+    pin_val = config_pin(folder) or (f"{secrets.randbelow(1000000):06d}" if pin else None)
+    text = json.dumps(build_hono_config(final, publish_domain(), pin_val), indent=2) + "\n"
     path.write_text(text)
     return final
 
@@ -286,7 +341,8 @@ def deploy(folder: Path, name: str | None = None, force: bool = False) -> str:
     folder = folder.resolve()
     if not folder.is_dir():
         raise RuntimeError(f"not a folder: {folder}")
-    if not any(folder.glob("*.html")):
+    is_worker = _config_value(folder, "main") is not None  # pin/Hono sites serve via a Worker
+    if not is_worker and not any(folder.glob("*.html")):
         raise RuntimeError(f"{folder} has no .html — run `ko publish new {folder}` first?")
 
     intended = resolve_name(folder, name)
@@ -300,6 +356,7 @@ def deploy(folder: Path, name: str | None = None, force: bool = False) -> str:
         )
 
     name = ensure_config(folder, name)
+    _npm_install(folder)  # worker sites (Hono) need deps bundled before deploy
     with tempfile.TemporaryDirectory() as td:
         out_file = Path(td) / "out.ndjson"
         proc = subprocess.run(
@@ -328,9 +385,14 @@ def deploy(folder: Path, name: str | None = None, force: bool = False) -> str:
 # --- scaffold ---
 
 
-def scaffold(folder: Path, title: str | None = None, mode: str = "static") -> list[Path]:
-    """Drop a starter into `folder` (incl. its wrangler config). Never clobbers existing
-    files. mode: 'static' (HTML+Alpine), 'md' (markdown doc), or 'bare' (just a CLAUDE.md)."""
+def scaffold(
+    folder: Path, title: str | None = None, mode: str = "static", pin: bool = False
+) -> list[Path]:
+    """Drop a starter into `folder` (incl. its wrangler config). Never clobbers existing files.
+
+    mode: 'static' (HTML+Alpine), 'md' (markdown doc), 'bare' (just a CLAUDE.md), or
+    'hono' (a Hono worker over the doc in ./public — backend-ready; `pin=True` gates it).
+    """
     folder.mkdir(parents=True, exist_ok=True)
     title = title or folder.resolve().name
     if mode == "md":
@@ -346,6 +408,17 @@ def scaffold(folder: Path, title: str | None = None, mode: str = "static") -> li
             "CLAUDE.md": _BARE_CLAUDE.replace("__TITLE__", title),
             ".gitignore": _GITIGNORE,
         }
+    elif mode == "hono":
+        # the doc/app lives in public/ (served via the ASSETS binding); the worker is src/
+        files = {
+            "public/README.md": _MD_README.replace("__TITLE__", title),
+            "public/index.html": _MD_INDEX.replace("__TITLE__", title),
+            "public/style.css": _MD_STYLE,
+            "src/index.ts": _HONO_INDEX,
+            "package.json": _HONO_PKG.replace("__NAME__", slugify(folder.resolve().name)),
+            "CLAUDE.md": _HONO_CLAUDE.replace("__TITLE__", title),
+            ".gitignore": _HONO_GITIGNORE,
+        }
     else:
         files = {
             "index.html": _INDEX_HTML.format(title=title),
@@ -357,10 +430,14 @@ def scaffold(folder: Path, title: str | None = None, mode: str = "static") -> li
     for fname, content in files.items():
         p = folder / fname
         if not p.exists():
+            p.parent.mkdir(parents=True, exist_ok=True)  # public/, src/
             p.write_text(content)
             written.append(p)
     if not (folder / WRANGLER_CONFIG).exists():
-        ensure_config(folder, spa=(mode != "md"))  # md fetches pages by name → real 404s
+        if mode == "hono":
+            ensure_hono_config(folder, pin=pin)
+        else:
+            ensure_config(folder, spa=(mode != "md"))  # md fetches pages by name → real 404s
         written.append(folder / WRANGLER_CONFIG)
     return written
 
@@ -416,6 +493,9 @@ _STYLE_CSS = """\
 
 _CLAUDE_MD = """\
 # {title} — a ko-published static site
+
+> Scaffolded by `ko publish`. **Make a genuinely useful site with what's here.** Need a
+> capability this scaffold lacks? Ask Ko to extend `ko publish` rather than working around it.
 
 Single-page static site, deployed to Cloudflare via `ko publish`. No build step.
 
@@ -607,6 +687,9 @@ body {
 _MD_CLAUDE = """\
 # __TITLE__ — a ko-published markdown site
 
+> Scaffolded by `ko publish`. **Make a genuinely useful doc with what's here.** Need a
+> capability this scaffold lacks? Ask Ko to extend `ko publish` rather than working around it.
+
 A static doc site: write markdown, it renders **client-side** (markdown-it) with a
 dark theme + right-sidebar TOC. No build step. Deployed to Cloudflare via `ko publish`.
 
@@ -629,6 +712,9 @@ dark theme + right-sidebar TOC. No build step. Deployed to Cloudflare via `ko pu
 _BARE_CLAUDE = """\
 # __TITLE__ — a ko-published site (bare scaffold)
 
+> Scaffolded by `ko publish`. **Make a genuinely useful site with what's here.** Need a
+> capability this scaffold lacks? Ask Ko to extend `ko publish` rather than working around it.
+
 An empty canvas, deployed to Cloudflare Workers as static assets via `ko publish`.
 Build whatever you want. You just need an **`index.html`** at the root (everything
 here is served at the site root); `ko publish` won't deploy until one exists.
@@ -644,7 +730,132 @@ here is served at the site root); `ko publish` won't deploy until one exists.
 - **markdown-it** (render markdown): `https://cdn.jsdelivr.net/npm/markdown-it/dist/markdown-it.min.js`
 - **Three.js** (3D — e.g. a robot-arm viz): `https://cdn.jsdelivr.net/npm/three@0.160/build/three.module.js` via an importmap
 
-## Going further (not yet wired)
-- Backend / API / DB or a PIN gate: a Hono Worker (`--hono`, later).
+## Going further
+- Backend / API / DB or a PIN gate: a Hono Worker — `ko publish new <dir> --hono` (add `--pin`).
   Refs: https://hono.dev/llms.txt · https://hono.dev/docs/getting-started/cloudflare-workers
+"""
+
+# --- hono template (a Worker over the doc in public/; backend-ready, optional PIN) ---
+
+_HONO_GITIGNORE = "node_modules/\n.wrangler/\n"
+
+_HONO_PKG = """\
+{
+  "name": "__NAME__",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "hono": "^4"
+  }
+}
+"""
+
+_HONO_INDEX = """\
+import { Hono } from "hono";
+import { getCookie, setCookie } from "hono/cookie";
+
+type Bindings = { ASSETS: Fetcher; KO_PIN?: string };
+const app = new Hono<{ Bindings: Bindings }>();
+
+// PIN gate — active only when KO_PIN is set (the `--pin` flag sets it). Remove the var to open up.
+app.use("*", async (c, next) => {
+  const pin = c.env.KO_PIN;
+  if (!pin || getCookie(c, "ko_pin") === pin) return next();
+  if (c.req.method === "POST") {
+    const body = await c.req.parseBody();
+    if (body.pin === pin) {
+      setCookie(c, "ko_pin", pin, {
+        httpOnly: true, secure: true, sameSite: "Lax", path: "/", maxAge: 60 * 60 * 24 * 30,
+      });
+      return c.redirect(new URL(c.req.url).pathname);
+    }
+  }
+  return c.html(pinPage(c.req.method === "POST"), 401);
+});
+
+// Your backend routes go here, e.g.:
+// app.get("/api/hello", (c) => c.json({ hello: "world" }));
+
+// Everything else → the static doc/app in ./public
+app.all("*", (c) => c.env.ASSETS.fetch(c.req.raw));
+
+export default app;
+
+function pinPage(wrong: boolean): string {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Enter PIN</title>
+<style>
+  body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0a0a0b;
+    color:#e4e4e7;font:16px/1.6 -apple-system,system-ui,sans-serif}
+  form{display:grid;gap:.9rem;width:min(20rem,90vw);text-align:center}
+  h1{font-size:1.3rem;margin:0}
+  input{padding:.7rem;border-radius:8px;border:1px solid #27272a;background:#18181b;
+    color:#e4e4e7;font-size:1.2rem;text-align:center;letter-spacing:.3em}
+  button{padding:.7rem;border:0;border-radius:8px;background:#6366f1;color:#fff;cursor:pointer}
+  .err{color:#f87171;font-size:.9rem;margin:0}
+</style></head><body>
+<form method="post"><h1>\\u{1F512} Enter PIN</h1>
+<input name="pin" inputmode="numeric" autocomplete="off" autofocus placeholder="\\u2022\\u2022\\u2022\\u2022\\u2022\\u2022">
+<button>Enter</button>${wrong ? '<p class="err">Wrong PIN \\u2014 try again.</p>' : ""}</form>
+</body></html>`;
+}
+"""
+
+_HONO_CLAUDE = """\
+# __TITLE__ — a ko-published Hono worker site
+
+> Scaffolded by `ko publish` — a ready-made tool to build & publish a site to Cloudflare.
+> **Goal: make a genuinely useful site with what's here.** If you want a capability this
+> scaffold doesn't have, ask Ko to extend the `ko publish` tool rather than working around it.
+
+A Cloudflare Worker (Hono) serving the doc/app in `public/`, deployed via `ko publish`.
+Backend-ready: add API routes, D1, R2 in `src/index.ts`. `ko publish` runs `npm install`
+(once) then `wrangler deploy` — no build config to manage.
+
+## Layout
+- `public/` — the static site (markdown doc by default: edit `public/README.md`, the nav hub;
+  link pages with `[Title](?page=other.md)`).
+- `src/index.ts` — the Hono worker. Order: PIN gate -> your routes -> serve `public/` assets.
+- `wrangler.jsonc` — `run_worker_first` so the worker sees every request before assets.
+
+## Hono cheat-sheet (Cloudflare Workers)
+```ts
+type Bindings = { ASSETS: Fetcher; KO_PIN?: string; DB?: D1Database };  // your bindings
+const app = new Hono<{ Bindings: Bindings }>();
+
+app.get("/api/items/:id", (c) => {
+  const id = c.req.param("id");          // path param
+  const q = c.req.query("q");            // ?q=
+  return c.json({ id, q });              // c.json / c.html / c.text / c.redirect / c.notFound
+});
+app.post("/api/x", async (c) => {
+  const body = await c.req.parseBody();  // form; or await c.req.json()
+  return c.text("ok");
+});
+app.use("*", async (c, next) => { /* before */ await next(); /* after */ });  // middleware
+// bindings: c.env.DB, c.env.BUCKET, c.env.KO_PIN  (typed via <Bindings>)
+// cookies:  import { getCookie, setCookie } from "hono/cookie"
+// assets:   app.all("*", (c) => c.env.ASSETS.fetch(c.req.raw))  // keep this LAST
+```
+
+## PIN gate
+- Active only when `vars.KO_PIN` is set in `wrangler.jsonc` (the `--pin` flag generates one).
+- A soft access code (share a link + PIN), not real auth. Remove the var to make it public.
+
+## Add a backend
+- API route: add `app.get("/api/...")` ABOVE the catch-all asset handler in `src/index.ts`.
+- D1 / R2 / KV: add the binding in `wrangler.jsonc`, use `c.env.<NAME>`.
+- Errors: `app.onError((e, c) => c.json({ error: String(e) }, 500))`.
+- Validate input with `@hono/zod-validator` once you have real API routes.
+
+## Best practices (hono.dev)
+- **Write handlers inline** with the route — extracting them to separate "controller"
+  functions breaks path-param type inference (use `createHandlers` from `hono/factory` if needed).
+- **Grow with `app.route()`** — feature files mounted onto the app, not one giant handler.
+- Don't write `app.head(...)` — Hono auto-derives HEAD from GET.
+
+## References
+- On Workers: https://hono.dev/docs/getting-started/cloudflare-workers
+- Best practices: https://hono.dev/docs/guides/best-practices
+- Agent docs: https://hono.dev/llms.txt (index) · https://hono.dev/llms-small.txt (tight) · https://hono.dev/llms-full.txt (full)
 """

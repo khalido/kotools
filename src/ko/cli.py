@@ -917,25 +917,30 @@ def publish_new(
     title: str = typer.Option(None, "--title", "-t", help="page title (default: folder name)"),
     md: bool = typer.Option(False, "--md", help="markdown doc site (write .md, README is the hub)"),
     bare: bool = typer.Option(False, "--bare", help="just a CLAUDE.md of hints; build from scratch"),
+    hono: bool = typer.Option(False, "--hono", help="Hono worker site — backend-ready (API routes, D1/R2)"),
+    pin: bool = typer.Option(False, "--pin", help="PIN-gate it (implies --hono; generates a 6-digit PIN)"),
 ) -> None:
-    """Scaffold a site to publish. Default: static (Tailwind + Alpine). `--md` or `--bare`."""
+    """Scaffold a site to publish. Default: static (Tailwind + Alpine). `--md` / `--bare` / `--hono`."""
     from pathlib import Path
 
-    if md and bare:
-        typer.echo("--md and --bare are mutually exclusive", err=True)
+    if pin:
+        hono = True
+    if sum([md, bare, hono]) > 1:
+        typer.echo("--md / --bare / --hono are mutually exclusive", err=True)
         raise typer.Exit(2)
-    mode = "md" if md else "bare" if bare else "static"
+    mode = "md" if md else "bare" if bare else "hono" if hono else "static"
     folder = Path(path)
-    written = publish_mod.scaffold(folder, title=title, mode=mode)
+    written = publish_mod.scaffold(folder, title=title, mode=mode, pin=pin)
     if written:
         for p in written:
             typer.echo(f"created {p}")
     else:
         typer.echo(f"{folder} already scaffolded (nothing overwritten)", err=True)
-    edit = "README.md" if mode == "md" else "index.html"
-    hint = f"edit {folder}/{edit}, then: ko publish {folder}"
+    edit = {"md": "README.md", "hono": "public/README.md"}.get(mode, "index.html")
     if mode == "bare":
         hint = f"build an index.html in {folder}, then: ko publish {folder}"
+    else:
+        hint = f"edit {folder}/{edit}, then: ko publish {folder}"
     typer.echo(f"\n{hint}", err=True)
 
 
@@ -959,13 +964,20 @@ def publish_up(
         raise typer.Exit(1) from None
     if url:
         typer.echo(url)  # stdout: the URL itself (pipeable)
+        gate_pin = publish_mod.config_pin(Path(path))
         code = publish_mod.check_url(url)  # sanity check: is it actually live?
-        if code == 200:
-            typer.echo("✓ live (HTTP 200)", err=True)
+        if gate_pin:
+            typer.echo(f"🔒 PIN: {gate_pin}", err=True)
+            note = "✓ live (PIN gate active)" if code in (200, 401) else (
+                f"⚠ deployed but HTTP {code}" if code else "⚠ deployed but not reachable yet"
+            )
+        elif code == 200:
+            note = "✓ live (HTTP 200)"
         elif code:
-            typer.echo(f"⚠ deployed but HTTP {code} (cert may still be provisioning)", err=True)
+            note = f"⚠ deployed but HTTP {code} (cert may still be provisioning)"
         else:
-            typer.echo("⚠ deployed but not reachable yet (cert may be provisioning)", err=True)
+            note = "⚠ deployed but not reachable yet (cert may be provisioning)"
+        typer.echo(note, err=True)
     else:
         typer.echo("deployed — couldn't parse the URL; run `wrangler deployments list`", err=True)
 

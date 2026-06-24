@@ -89,3 +89,21 @@ def test_scaffold_bare(monkeypatch, tmp_path):
     written = {p.name for p in publish.scaffold(folder, mode="bare")}
     assert written == {"CLAUDE.md", ".gitignore", "wrangler.jsonc"}
     assert not (folder / "index.html").exists()  # bare: the agent builds it
+
+
+def test_scaffold_hono(monkeypatch, tmp_path):
+    monkeypatch.setattr(publish, "publish_domain", lambda: None)
+    folder = tmp_path / "app"
+    written = {str(p.relative_to(folder)) for p in publish.scaffold(folder, mode="hono", pin=True)}
+    assert {"public/README.md", "src/index.ts", "package.json", "wrangler.jsonc"} <= written
+    cfg = (folder / "wrangler.jsonc").read_text()
+    assert '"main": "src/index.ts"' in cfg and "KO_PIN" in cfg
+    assert "hono" in (folder / "package.json").read_text()
+    assert publish.config_pin(folder) is not None  # --pin generated one
+
+
+def test_scaffold_hono_open_without_pin(monkeypatch, tmp_path):
+    monkeypatch.setattr(publish, "publish_domain", lambda: None)
+    folder = tmp_path / "open"
+    publish.scaffold(folder, mode="hono", pin=False)
+    assert publish.config_pin(folder) is None  # no gate unless --pin
