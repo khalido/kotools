@@ -32,7 +32,13 @@ from . import doc as doc_mod
 DOWNLOADS = Path.home() / "Downloads"
 UA = {"User-Agent": "ko-tools/0.1 (+https://github.com/khalido/ko-tools)"}
 
-_ARXIV_RE = re.compile(r"arxiv\.org/(?:abs|pdf|html)/(\d{4}\.\d{4,5})(?:v\d+)?")
+# /abs and /html → arxiv2md (LaTeX/HTML markdown beats a PDF parse — when it renders).
+# /pdf is deliberately excluded: those fall through to the PDF download path (full text),
+# because arxiv2md only scrapes the abstract page and returns a near-empty scaffold for
+# papers with no HTML render.
+_ARXIV_RE = re.compile(r"arxiv\.org/(?:abs|html)/(\d{4}\.\d{4,5})(?:v\d+)?")
+# Below this, arxiv2md's output is just a scaffold (no HTML render) → fall back to the PDF.
+_ARXIV_MIN_CHARS = 2000
 
 
 @dataclass
@@ -145,9 +151,18 @@ def fetch(
 ) -> Fetched:
     """One URL → markdown/text, routed by what it is. See module docstring."""
     if arxiv_id := _arxiv_id(url):
-        return Fetched(
-            text=arxiv_mod.fetch(arxiv_id), source="arxiv", note=f"arxiv {arxiv_id}"
-        )
+        md = arxiv_mod.fetch(arxiv_id)
+        if len(md) >= _ARXIV_MIN_CHARS:  # arxiv2md got a real render
+            return Fetched(text=md, source="arxiv", note=f"arxiv {arxiv_id}")
+        # only a scaffold came back (this paper has no HTML render) → parse the PDF instead
+        try:
+            resp = httpx.get(
+                f"https://arxiv.org/pdf/{arxiv_id}", headers=UA, timeout=30, follow_redirects=True
+            )
+            resp.raise_for_status()
+            return _pdf(resp.content, f"https://arxiv.org/pdf/{arxiv_id}", save)
+        except httpx.HTTPError:
+            return Fetched(text=md, source="arxiv", note=f"arxiv {arxiv_id} (scaffold; PDF unavailable)")
     if archive_is:
         return _archive_is(url)
     if archive:

@@ -8,7 +8,9 @@ from ko import fetch
 
 def test_arxiv_id_detection():
     assert fetch._arxiv_id("https://arxiv.org/abs/2412.20138") == "2412.20138"
-    assert fetch._arxiv_id("https://arxiv.org/pdf/2412.20138v2") == "2412.20138"
+    assert fetch._arxiv_id("https://arxiv.org/html/2412.20138v2") == "2412.20138"
+    # /pdf/ deliberately does NOT match — those fall through to the PDF parser
+    assert fetch._arxiv_id("https://arxiv.org/pdf/2412.20138v2") is None
     assert fetch._arxiv_id("https://example.com/paper.pdf") is None
 
 
