@@ -169,7 +169,14 @@ def fetch(
         return _wayback(url, date)
 
     try:
-        resp = httpx.get(url, headers=UA, timeout=30, follow_redirects=True)
+        # ask for markdown — agent-optimized servers (e.g. Cloudflare's markdown-for-agents)
+        # do content negotiation and hand back clean markdown; others ignore it and send HTML.
+        resp = httpx.get(
+            url,
+            headers={**UA, "Accept": "text/markdown, text/html;q=0.9"},
+            timeout=30,
+            follow_redirects=True,
+        )
         resp.raise_for_status()
     except httpx.HTTPError as e:
         # dead link → page is gone → Wayback is the historical archive (not paywall)
@@ -181,6 +188,10 @@ def fetch(
             ) from None
 
     content_type = resp.headers.get("content-type", "")
+    if "text/markdown" in content_type:  # the server already gave us clean markdown — use it
+        tokens = resp.headers.get("x-markdown-tokens")
+        note = f"text/markdown ({tokens} tokens)" if tokens else "text/markdown"
+        return Fetched(text=resp.text, source="live", note=note)
     if "application/pdf" in content_type or httpx.URL(url).path.lower().endswith(
         ".pdf"
     ):
