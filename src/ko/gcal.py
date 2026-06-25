@@ -40,6 +40,7 @@ class CalEvent:
     calendar_id: str
     calendar_name: str
     location: str | None = None
+    html_link: str | None = None
 
 
 class CalError(RuntimeError):
@@ -100,6 +101,7 @@ def _event(raw: dict, cal_id: str, cal_name: str) -> CalEvent:
         calendar_id=cal_id,
         calendar_name=cal_name,
         location=raw.get("location"),
+        html_link=raw.get("htmlLink"),
     )
 
 
@@ -144,6 +146,15 @@ def list_events(
                 break
     events.sort(key=lambda ev: ev.start)
     return events
+
+
+def search_events(query: str, days: int = 60, calendar_ids: list[str] | None = None) -> list[CalEvent]:
+    """Upcoming events whose summary contains `query` (case-insensitive substring), within the
+    next `days`. For "when's the next X" — substring keeps it simple (expand abbreviations upstream)."""
+    q = query.strip().lower()
+    if not q:
+        return []
+    return [e for e in list_events(days=days, calendar_ids=calendar_ids) if q in e.summary.lower()]
 
 
 def parse_when(s: str) -> tuple[bool, date | datetime]:

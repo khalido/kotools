@@ -61,6 +61,17 @@ def test_event_body_all_day_timed_and_coercion():
     assert b["start"]["timeZone"]
 
 
+def test_search_events_filters(monkeypatch):
+    fake = [
+        gcal.CalEvent("1", "Dentist appt", "2026-07-01", "2026-07-01", True, "c", "Cal"),
+        gcal.CalEvent("2", "Standup", "2026-07-01", "2026-07-01", True, "c", "Cal"),
+    ]
+    monkeypatch.setattr(gcal, "list_events", lambda **k: fake)
+    out = gcal.search_events("dentist")  # case-insensitive substring
+    assert len(out) == 1 and out[0].summary == "Dentist appt"
+    assert gcal.search_events("") == []  # empty query short-circuits
+
+
 def test_tz_name_default_and_override(monkeypatch):
     monkeypatch.setattr(gcal.config, "get", lambda *a, **k: None)
     assert gcal.tz_name() == "Australia/Sydney"

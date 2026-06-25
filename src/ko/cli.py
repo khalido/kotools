@@ -76,7 +76,7 @@ app.add_typer(gdocs_app, name="gdocs")
 cal_app = typer.Typer(
     help=(
         "Google Calendar: agenda + quick-add (same OAuth token as `ko gsheets`). "
-        "`ko cal` shows the next 7 days; also `cal day`, `cal add`, `cal cals`."
+        "`ko cal` shows the next 7 days; also `cal day`, `cal find`, `cal add`, `cal cals`."
     ),
 )
 app.add_typer(cal_app, name="cal")
@@ -929,6 +929,22 @@ def cal_add(
         raise typer.Exit(1) from None
     typer.echo(f"created: {ev.summary}  {ev.start}  [{ev.calendar_id}]", err=True)
     typer.echo(ev.id)
+
+
+@cal_app.command("find")
+def cal_find(
+    text: str = typer.Argument(..., help="match upcoming event titles (case-insensitive substring)"),
+    days: int = typer.Option(60, "--days", "-d", help="how far ahead to look (default 60)"),
+    as_json: bool = typer.Option(False, "--json", help="emit JSON"),
+) -> None:
+    """Find upcoming events whose title matches TEXT, e.g. `ko cal find dentist`."""
+    try:
+        events = gcal_mod.search_events(text, days=days)
+    except gcal_mod.CalError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1) from None
+    if not _emit_events(events, as_json):
+        typer.echo(f"no upcoming '{text}' in the next {days} day(s)", err=True)
 
 
 @cal_app.command("cals")
