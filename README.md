@@ -16,7 +16,7 @@ Current subcommands:
 - `ko x` — search recent X posts (via the official [XDK](https://docs.x.com/xdks/python/overview); needs a paid API tier for reads)
 - `ko tv` — movie/TV quick check: rating, overview, where to stream (AU default; via [TMDB](https://developer.themoviedb.org))
 - `ko tt` — TickTick lists + tasks (read-only) via its hosted MCP — `ko tt lists`, `ko tt items <list>`
-- `ko gsheets` — read Google Sheets via OAuth
+- `ko gsheets` — read **& write** Google Sheets via OAuth (`get`/`find` · `set`/`put`/`header`/`add-tab`/`new`/`clear`, with overwrite guards)
 - `ko agent` — pydantic-ai agents: `research` (web + papers + HN) and `tv` (what to watch in AU), with saved/resumable sessions
 - `ko models` — list model strings usable with `-m` (incl. the live OpenRouter catalog)
 - `ko publish` — scaffold a site (static / markdown / Hono worker, optional PIN gate) and deploy it to Cloudflare; `ko publish preview` runs it locally first
@@ -25,7 +25,7 @@ Current subcommands:
 ## Install
 
 ```bash
-uv tool install kotools     # or: pip install kotools
+uv tool install kotools     # or one-off, no install: uvx kotools
 ```
 
 The package is `kotools`; the command it installs is **`ko`**. Run `ko doctor` first to see what's set up.
@@ -94,28 +94,47 @@ ko exa get https://example.com/post       # URL → clean markdown (handles PDF 
 ko tv "dune"                    # rating + overview + where to stream in AU
 ko tv "the bear" --tv -c US     # TV only, US providers
 
-# Google Sheets — needs one-off OAuth (see below)
+# Google Sheets — read & write, needs one-off OAuth (see below)
 # (example ID is Google's public sample sheet)
 ko gsheets info 1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms
-ko gsheets get 1Bxi... 'Class Data!A1:F6'
 ko gsheets get 1Bxi... 'Class Data!A1:F6' --json
+ko gsheets find <id> "Smith"                    # search every tab → tab, ref, cell
+ko gsheets set <id> 'Sheet1!A1' '=SUM(B:B)'     # write a cell (formulas parse)
+echo '{"Sheet1!A1": [["Name","Score"],["Ann",9]]}' | ko gsheets put <id>   # bulk write
 ```
 
-## Google Sheets setup (one-off)
+## Google Sheets setup (one-off) — read & write
 
-`ko gsheets` runs as *you* against *your* Google account (OAuth user flow). Scopes are read-only by default.
+`ko gsheets` runs as *you* against *your* Google account (OAuth user flow, no service account). One
+token grants read **and** write; reads use the narrower read-only scope under the hood.
 
-1. **Create a Google Cloud project** (if you don't have one). https://console.cloud.google.com/projectcreate
+1. **Create a Google Cloud project.** https://console.cloud.google.com/projectcreate
 2. **Enable the APIs.** APIs & Services → Library → enable *Google Sheets API* and *Google Drive API*.
-3. **Create OAuth credentials.** APIs & Services → Credentials → Create Credentials → OAuth client ID → Application type: **Desktop app**. Download the JSON.
-4. **Save the JSON** to `~/.config/ko/google_client.json` (or set `KO_GOOGLE_CLIENT_FILE=<path>`).
-5. **Run `ko gsheets auth`.** A browser window opens; approve; you're done. The refresh token is cached at `~/.local/state/ko/google_token.json`.
+3. **Configure the OAuth consent screen** (APIs & Services → OAuth consent screen). This step decides
+   whether your refresh token lasts:
+   - **Workspace org?** Set **User type: Internal** — only your org's users, and **no token expiry**.
+   - **Personal Gmail (no org)?** User type must be **External**; add **yourself as a Test user**.
+     ⚠️ An External app left in *Testing* expires its refresh token after **7 days** (re-auth weekly).
+     To avoid that, **Publish** the app (consent screen → Publish — for a personal Desktop app you can
+     ignore Google's verification; "unverified app" is just a warning you click through).
+4. **Create OAuth credentials.** Credentials → Create Credentials → OAuth client ID → **Desktop app**. Download the JSON.
+5. **Save the JSON** to `~/.config/ko/google_client.json` (or set `KO_GOOGLE_CLIENT_FILE=<path>`).
+6. **Run `ko gsheets auth`.** A browser opens; approve. The refresh token caches at
+   `~/.local/state/ko/google_token.json` (relocatable via `KO_STATE_DIR`).
 
-Logout / re-auth: `ko gsheets auth --logout`.
+**Reuse on other machines:** that token file is portable — copy it to another machine's same path (or
+point `KO_STATE_DIR` at it) to reuse the auth with no re-consent.
 
-**Why OAuth and not a service account?** A service account needs every sheet explicitly shared with its email address — fine for bots, tedious for a personal read-anywhere CLI. OAuth gives you access to anything the signed-in Google account can see. If that's too broad, use a service account instead (future `ko gsheets` flag).
+**Already authed read-only?** `ko gsheets auth --logout`, then `ko gsheets auth` to upgrade to read+write.
 
-**Can I scope to one folder?** No — Google's OAuth scopes are per-API (`drive.readonly`), not per-resource. Service accounts with individual share grants are the workaround if you need tighter control.
+**Write safety.** `set` / `put` / `header` / `add-tab` / `new` / `clear` need the read+write grant. The
+shape-aware writers **refuse to overwrite non-empty cells** (the error lists exactly which) unless you
+pass `--overwrite` — including formulas that currently display blank.
+
+**Why OAuth, not a service account?** A service account needs every sheet explicitly shared with its
+email — fine for bots, tedious for a personal read/write-anywhere CLI. OAuth gives access to anything
+the signed-in account can see. **Scope to one folder?** No — OAuth scopes are per-API, not per-resource;
+use a service account with individual share grants if you need tighter control.
 
 ## Output conventions
 

@@ -5,7 +5,7 @@ Ko's personal opinionated CLI. Thin wrappers around SDKs I use often, built so b
 ## Subcommands
 - `ko exa search|get` — Exa semantic web search + URL → markdown
 - `ko arxiv search|fetch` — arxiv search + paper-to-markdown
-- `ko gsheets info|tabs|get|auth` — read Google Sheets via OAuth
+- `ko gsheets info|tabs|get|find | set|put|header|add-tab|new|clear|auth` — read **& write** Google Sheets via OAuth. Accepts a URL or bare ID. Reads use the readonly scope; writes need read+write (`ko gsheets auth` grants it by default). Shape-aware writers (`set`/`put`, library `write_values`/`write_ranges`/`write_df`) refuse to clobber non-empty cells unless `--overwrite` — the error lists them. `write_df` duck-types polars **or** pandas (neither is a dep). Generic port from the NibbleEdge `ne` tool; no project-specific shortcuts.
 - `ko doc <file>` — PDF/Office/image → plain text via liteparse (local, no models). Bare shortcut: `ko <file>` routes here when the arg is an existing file.
 - `ko fetch <url>` — URL → markdown, deterministic routing: arxiv→arxiv2md, PDF→~/Downloads+liteparse (`--no-save`), else trafilatura, dead/empty→Wayback (`--archive` forces). Bare shortcut: `ko <url>`.
 - `ko llm "<prompt>"` — one-shot LLM, stdin-aware, never has tools. Default `google:gemini-3.5-flash` (`KO_DEFAULT_MODEL`/`-m`; `-m` tab-completes models whose env key is set). OpenRouter's catalog is fetched from its public `/models` and cached at `~/.cache/ko/openrouter_models.json` (24h TTL) so `-m openrouter:<slug>` completes.
@@ -53,7 +53,8 @@ Ko's personal opinionated CLI. Thin wrappers around SDKs I use often, built so b
 
 ## Google auth (gsheets)
 - OAuth user flow (desktop app). First command triggers browser consent, token cached at `~/.local/state/ko/google_token.json`.
-- Scopes read-only by default: `spreadsheets.readonly` + `drive.readonly`.
+- `ko gsheets auth` grants **read+write** (`spreadsheets` + `drive`); reads use the narrower readonly scope, and the one token serves both. `--readonly` grants only read; upgrade an existing readonly token with `auth --logout` then `auth`.
+- Personal Gmail: an **External** app left in *Testing* expires the refresh token after **7 days** — set the consent screen to **Internal** (Workspace) or **Publish** the app. The token file is portable across machines (copy it, or share via `KO_STATE_DIR`).
 - **Scope is per-API, not per-folder.** Google OAuth can't be restricted to a single Drive folder. Access is "anything this Google account can see." If that's too broad, use a service account (separate tool) and share specific sheets with it.
 - Prereq: OAuth 2.0 Desktop client JSON at `~/.config/ko/google_client.json` (or set `KO_GOOGLE_CLIENT_FILE`). Full setup in README.
 
@@ -73,3 +74,4 @@ Ko's personal opinionated CLI. Thin wrappers around SDKs I use often, built so b
 - **`ko sessions summarize`** → local SQLite (`~/.local/state/ko/ko.db`): one-line summary + tags per session, as a lightweight memory + filter layer ("show me sessions about python/HN"). See WORKLOG Open.
 - **MCP server (`ko mcp`)** — `mcp_server.py` is scaffolded but not wired; expose the same module functions over MCP.
 - **default agent** (all toolsets) + **tmdb lists by id** in config. Full candidate list + priorities in `docs/ideas.md`.
+- **`ko gdocs`** — read a Google Doc as text/markdown + append/replace text. New scope `https://www.googleapis.com/auth/documents` on the existing google_auth split. Deferred from the gsheets read/write work to keep that focused.

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from dataclasses import asdict
 from pathlib import Path
 
@@ -50,7 +51,12 @@ hn_app = typer.Typer(
 app.add_typer(hn_app, name="hn")
 
 gsheets_app = typer.Typer(
-    help="Read Google Sheets. OAuth to your Google account on first run.",
+    help=(
+        "Read & write Google Sheets. OAuth to your Google account on first run "
+        "(`ko gsheets auth` grants read+write). Reads: info / tabs / get / find. "
+        "Writes (refuse to clobber non-empty cells unless --overwrite): set / put / "
+        "header / add-tab / new / clear."
+    ),
     no_args_is_help=True,
 )
 app.add_typer(gsheets_app, name="gsheets")
@@ -417,6 +423,31 @@ def _emit_rows(rows: list[list], as_json: bool) -> None:
         typer.echo("\t".join("" if c is None else str(c) for c in row))
 
 
+def _parse_cells(text: str) -> list[list]:
+    """CLI write data -> 2D values. A JSON array (1D -> one row, 2D -> as-is) if it
+    parses; else TSV (newlines = rows, tabs = cells); a bare scalar -> a single cell."""
+    text = text.strip()
+    if text[:1] in ("[", "{"):  # tuple, not substring — "" in "[{" is True
+        data = json.loads(text)
+        if isinstance(data, list):
+            if data and all(isinstance(r, list) for r in data):
+                return data
+            return [data]  # 1D list -> a single row
+        return [[data]]
+    if "\t" in text or "\n" in text:
+        return [line.split("\t") for line in text.splitlines()]  # drops trailing-newline row
+    return [[text]]
+
+
+def _norm_block(val) -> list[list]:
+    """A `ko gsheets put` value (scalar | row list | 2D list) -> 2D values."""
+    if isinstance(val, list):
+        if val and all(isinstance(r, list) for r in val):
+            return val
+        return [val]  # 1D list -> a single row
+    return [[val]]
+
+
 @gsheets_app.command("info")
 def gsheets_info(
     spreadsheet_id: str = typer.Argument(
@@ -471,19 +502,175 @@ def gsheets_get(
     _emit_rows(rows, as_json)
 
 
+@gsheets_app.command("set")
+def gsheets_set(
+    spreadsheet_id: str = typer.Argument(..., help="Google Sheet ID or URL"),
+    range_name: str = typer.Argument(..., help="target anchor, e.g. 'Tab!A2' (top-left cell)"),
+    data: str = typer.Argument(
+        None, help="value, TSV, or JSON 2D array (omit to read stdin)"
+    ),
+    raw: bool = typer.Option(
+        False, "--raw", help="write literally (default parses formulas/dates like typing)"
+    ),
+    overwrite: bool = typer.Option(False, "--overwrite", help="replace occupied cells"),
+) -> None:
+    """Write to a sheet from a top-left anchor; the range comes from the data shape.
+    Refuses to clobber non-empty cells unless --overwrite (the error lists them)."""
+    text = data if data is not None else sys.stdin.read()
+    anchor = range_name.split(":")[0]
+    try:
+        n = gsheets_mod.write_values(
+            gsheets_mod.sheet_id(spreadsheet_id),
+            anchor,
+            _parse_cells(text),
+            raw=raw,
+            overwrite=overwrite,
+        )
+    except (gsheets_mod.SheetsError, ValueError, json.JSONDecodeError) as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1) from None
+    typer.echo(f"{n} cell(s) updated", err=True)
+
+
+@gsheets_app.command("put")
+def gsheets_put(
+    spreadsheet_id: str = typer.Argument(..., help="Google Sheet ID or URL"),
+    json_file: Path = typer.Argument(
+        None, help="JSON {anchor: value} file (omit to read stdin)"
+    ),
+    raw: bool = typer.Option(
+        False, "--raw", help="write literally (default parses like typing)"
+    ),
+    overwrite: bool = typer.Option(False, "--overwrite", help="replace occupied cells"),
+) -> None:
+    """Bulk-write many ranges in ONE API call. JSON maps each top-left anchor to a value
+    (scalar | row list | 2D list): {"Tab!A1": [["h1","h2"],[1,2]], "Tab!E1": "note"}.
+    Same overwrite guard as `set`, checked across every target."""
+    raw_json = json_file.read_text() if json_file else sys.stdin.read()
+    try:
+        obj = json.loads(raw_json)
+        if not isinstance(obj, dict):
+            raise ValueError('`put` expects a JSON object: {"anchor": value, ...}')
+        data = [(anchor, _norm_block(val)) for anchor, val in obj.items()]
+        n = gsheets_mod.write_ranges(
+            gsheets_mod.sheet_id(spreadsheet_id), data, raw=raw, overwrite=overwrite
+        )
+    except (gsheets_mod.SheetsError, ValueError, json.JSONDecodeError) as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1) from None
+    typer.echo(f"{n} cell(s) updated", err=True)
+
+
+@gsheets_app.command("find")
+def gsheets_find(
+    spreadsheet_id: str = typer.Argument(..., help="Google Sheet ID or URL"),
+    text: str = typer.Argument(..., help="case-insensitive substring to find"),
+    formula: bool = typer.Option(
+        False, "--formula", help="search formulas, not displayed values"
+    ),
+    tab: list[str] = typer.Option(None, "--tab", help="limit to these tab(s); repeatable"),
+) -> None:
+    """Search every cell of every tab. TSV: tab, A1 ref, cell."""
+    try:
+        hits = gsheets_mod.find_cells(
+            gsheets_mod.sheet_id(spreadsheet_id), text, formula=formula, tabs=tab or None
+        )
+    except gsheets_mod.SheetsError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1) from None
+    if not hits:
+        typer.echo("no matches", err=True)
+        raise typer.Exit(0)
+    for t, ref, cell in hits:
+        typer.echo(f"{t}\t{ref}\t{cell}")
+
+
+@gsheets_app.command("header")
+def gsheets_header(
+    spreadsheet_id: str = typer.Argument(..., help="Google Sheet ID or URL"),
+    range_name: str = typer.Argument(..., help="header range, e.g. 'Tab!A3:T3'"),
+    no_bold: bool = typer.Option(False, "--no-bold", help="don't bold"),
+    no_fill: bool = typer.Option(False, "--no-fill", help="don't add a background fill"),
+    freeze: bool = typer.Option(
+        False, "--freeze", help="freeze rows up to and including this one (needs a bounded range)"
+    ),
+) -> None:
+    """Format a row as a header: bold + fill, optionally frozen."""
+    try:
+        gsheets_mod.format_header(
+            gsheets_mod.sheet_id(spreadsheet_id),
+            range_name,
+            bold=not no_bold,
+            bg=None if no_fill else gsheets_mod.DEFAULT_HEADER_BG,
+            freeze=freeze,
+        )
+    except (gsheets_mod.SheetsError, ValueError) as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1) from None
+    typer.echo("header formatted", err=True)
+
+
+@gsheets_app.command("add-tab")
+def gsheets_add_tab(
+    spreadsheet_id: str = typer.Argument(..., help="Google Sheet ID or URL"),
+    title: str = typer.Argument(..., help="new tab name"),
+) -> None:
+    """Add a tab; prints its sheetId (gid)."""
+    try:
+        gid = gsheets_mod.add_tab(gsheets_mod.sheet_id(spreadsheet_id), title)
+    except gsheets_mod.SheetsError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1) from None
+    typer.echo(str(gid))
+
+
+@gsheets_app.command("new")
+def gsheets_new(
+    title: str = typer.Argument(..., help="title for the new spreadsheet"),
+) -> None:
+    """Create a new spreadsheet; prints its ID (stdout) and URL (stderr)."""
+    try:
+        new_id = gsheets_mod.create_spreadsheet(title)
+    except gsheets_mod.SheetsError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1) from None
+    typer.echo(new_id)
+    typer.echo(f"https://docs.google.com/spreadsheets/d/{new_id}/edit", err=True)
+
+
+@gsheets_app.command("clear")
+def gsheets_clear(
+    spreadsheet_id: str = typer.Argument(..., help="Google Sheet ID or URL"),
+    range_name: str = typer.Argument(..., help="range to clear (values only; formatting survives)"),
+) -> None:
+    """Clear the values in a range. Formatting, notes, and validation survive."""
+    try:
+        cleared = gsheets_mod.clear_range(gsheets_mod.sheet_id(spreadsheet_id), range_name)
+    except gsheets_mod.SheetsError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1) from None
+    typer.echo(f"cleared {cleared}", err=True)
+
+
 @gsheets_app.command("auth")
 def gsheets_auth(
     out: bool = typer.Option(
         False, "--logout", help="remove the cached token and exit"
     ),
+    readonly: bool = typer.Option(
+        False, "--readonly", help="grant read-only scope (default grants read+write)"
+    ),
 ) -> None:
-    """Trigger or reset Google OAuth. Opens a browser on first run."""
+    """Trigger or reset Google OAuth. Opens a browser on first run. Default grants
+    read+write so the write commands work — the same token also serves reads. If you
+    previously authed read-only, `--logout` first, then re-run to upgrade the scope."""
     if out:
         removed = google_auth.logout()
         typer.echo("Signed out." if removed else "No cached token to remove.")
         return
-    google_auth.get_credentials(readonly=True)
-    typer.echo(f"Signed in. Token cached at {google_auth.TOKEN_FILE}.")
+    google_auth.get_credentials(readonly=readonly)
+    scope = "read-only" if readonly else "read+write"
+    typer.echo(f"Signed in ({scope}). Token cached at {google_auth.TOKEN_FILE}.")
 
 
 # --- doc ---
@@ -600,8 +787,6 @@ def llm_cmd(
     ),
 ) -> None:
     """One-shot LLM call, no tools: `ko hn item 123 | ko llm "summarize the debate"`."""
-    import sys
-
     llm_mod.refresh_openrouter_models()  # keeps -m autocomplete catalog fresh (once/day)
     stdin = None if sys.stdin.isatty() else sys.stdin.read()
     typer.echo(llm_mod.run(prompt, stdin=stdin, model=model, system=system))
