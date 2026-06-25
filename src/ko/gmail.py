@@ -51,7 +51,7 @@ def _fmt_date(raw: str) -> str:
     """RFC-2822 Date header -> local 'YYYY-MM-DD HH:MM'; pass through if unparseable."""
     try:
         return parsedate_to_datetime(raw).astimezone().strftime("%Y-%m-%d %H:%M")
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OSError):
         return raw
 
 
@@ -74,6 +74,8 @@ def search(query: str, n: int = 10) -> list[GmailMessage]:
     """Messages matching a Gmail query string (verbatim Gmail syntax). One metadata fetch per hit."""
     svc = get_gmail_service()
     try:
+        # maxResults is a single-page cap (Gmail tops out at 500); we don't paginate — this is a
+        # "first n" tool, so n stays small. Then one metadata fetch per hit for headers + snippet.
         resp = svc.users().messages().list(userId="me", q=query, maxResults=n).execute(num_retries=3)
         out = []
         for ref in resp.get("messages", []):
@@ -87,6 +89,7 @@ def search(query: str, n: int = 10) -> list[GmailMessage]:
         return out
     except HttpError as e:
         _handle(e, f"search {query!r}")
+        return []  # unreachable: _handle always raises (keeps the return type honest)
 
 
 def recent(n: int = 10, unread: bool = False, query: str = "in:inbox") -> list[GmailMessage]:
@@ -121,8 +124,9 @@ def get_message(msg_id: str) -> tuple[GmailMessage, str]:
     svc = get_gmail_service()
     try:
         m = svc.users().messages().get(userId="me", id=msg_id, format="full").execute(num_retries=3)
+        payload = m.get("payload", {})
+        body = _find_mime(payload, "text/plain") or _find_mime(payload, "text/html")
+        return _message(m), body
     except HttpError as e:
         _handle(e, msg_id)
-    payload = m.get("payload", {})
-    body = _find_mime(payload, "text/plain") or _find_mime(payload, "text/html")
-    return _message(m), body
+        raise  # unreachable: _handle always raises
