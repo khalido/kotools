@@ -21,6 +21,8 @@ from . import llm as llm_mod
 from . import tmdb as tmdb_mod
 from . import x as x_mod
 from . import gsheets as gsheets_mod
+from . import gdocs as gdocs_mod
+from . import gcal as gcal_mod
 from . import ticktick as ticktick_mod
 from . import publish as publish_mod
 from .agents import research_run, research_repl, tv_run, tv_repl
@@ -61,6 +63,23 @@ gsheets_app = typer.Typer(
     no_args_is_help=True,
 )
 app.add_typer(gsheets_app, name="gsheets")
+
+gdocs_app = typer.Typer(
+    help=(
+        "Read & write Google Docs (same OAuth token as `ko gsheets`). "
+        "Reads: get / info. Writes: append / replace / new."
+    ),
+    no_args_is_help=True,
+)
+app.add_typer(gdocs_app, name="gdocs")
+
+cal_app = typer.Typer(
+    help=(
+        "Google Calendar: agenda + quick-add (same OAuth token as `ko gsheets`). "
+        "`ko cal` shows the next 7 days; also `cal day`, `cal add`, `cal cals`."
+    ),
+)
+app.add_typer(cal_app, name="cal")
 
 x_app = typer.Typer(
     help="X (Twitter) posts via the official XDK (X_BEARER_TOKEN required, paid tier for reads).",
@@ -412,21 +431,49 @@ def hn_item(
             typer.echo(f"{pad}{line}" if line else "")
 
 
+# --- google auth (shared across gsheets / gdocs / cal — one token per account) ---
+
+
+def _set_account(account: str | None) -> None:
+    if account:
+        os.environ["KO_GOOGLE_ACCOUNT"] = account
+
+
+def _google_auth(out: bool, readonly: bool) -> None:
+    acct = google_auth.active_account()
+    if out:
+        removed = google_auth.logout()
+        typer.echo(f"Signed out of '{acct}'." if removed else f"No cached token for '{acct}'.")
+        return
+    google_auth.get_credentials(readonly=readonly)
+    scope = "read-only" if readonly else "read+write"
+    typer.echo(
+        f"Signed in as '{acct}' ({scope}). One token covers Sheets + Docs + Calendar. "
+        f"Cached at {google_auth.token_file()}."
+    )
+
+
+def _google_accounts() -> None:
+    active = google_auth.active_account()
+    authed = google_auth.list_accounts()
+    for name in sorted(set(authed) | {active}):
+        mark = "*" if name == active else " "
+        note = "" if name in authed else f"  (no token — `ko gsheets -a {name} auth`)"
+        typer.echo(f"{mark} {name}{note}")
+
+
 # --- gsheets ---
 
 
 @gsheets_app.callback()
 def _gsheets_account(
     account: str = typer.Option(
-        None,
-        "--account",
-        "-a",
+        None, "--account", "-a",
         help="Google account to use (else KO_GOOGLE_ACCOUNT / [google] account / 'default')",
     ),
 ) -> None:
-    """Pick the Google account for this command (set up accounts via `ko gsheets ... auth`)."""
-    if account:
-        os.environ["KO_GOOGLE_ACCOUNT"] = account
+    """Pick the Google account for this command (one token covers Sheets/Docs/Calendar)."""
+    _set_account(account)
 
 
 def _emit_rows(rows: list[list], as_json: bool) -> None:
@@ -677,27 +724,241 @@ def gsheets_auth(
     ),
 ) -> None:
     """Trigger or reset Google OAuth for the active account (`-a <name>` to pick). Opens a
-    browser on first run. Default grants read+write so the write commands work — the same
-    token also serves reads. Authed read-only before? `--logout` then re-run to upgrade."""
-    acct = google_auth.active_account()
-    if out:
-        removed = google_auth.logout()
-        typer.echo(f"Signed out of '{acct}'." if removed else f"No cached token for '{acct}'.")
-        return
-    google_auth.get_credentials(readonly=readonly)
-    scope = "read-only" if readonly else "read+write"
-    typer.echo(f"Signed in as '{acct}' ({scope}). Token cached at {google_auth.token_file()}.")
+    browser on first run. Default grants read+write (covers Sheets, Docs, and Calendar) so every
+    command works. Authed read-only or a narrower scope before? `--logout` then re-run to upgrade."""
+    _google_auth(out, readonly)
 
 
 @gsheets_app.command("accounts")
 def gsheets_accounts() -> None:
     """List Google accounts with a cached token; `*` marks the active one."""
-    active = google_auth.active_account()
-    authed = google_auth.list_accounts()
-    for name in sorted(set(authed) | {active}):
-        mark = "*" if name == active else " "
-        note = "" if name in authed else f"  (no token — `ko gsheets -a {name} auth`)"
-        typer.echo(f"{mark} {name}{note}")
+    _google_accounts()
+
+
+# --- gdocs ---
+
+
+@gdocs_app.callback()
+def _gdocs_account(
+    account: str = typer.Option(
+        None, "--account", "-a",
+        help="Google account to use (else KO_GOOGLE_ACCOUNT / [google] account / 'default')",
+    ),
+) -> None:
+    """Pick the Google account for this command (one token covers Sheets/Docs/Calendar)."""
+    _set_account(account)
+
+
+@gdocs_app.command("get")
+def gdocs_get(
+    doc: str = typer.Argument(..., help="Google Doc ID or URL"),
+    markdown: bool = typer.Option(False, "--md", help="light markdown (# headings, - bullets)"),
+) -> None:
+    """Print a doc's text. --md adds headings/bullets (light, not lossless)."""
+    try:
+        typer.echo(gdocs_mod.get_text(doc, markdown=markdown))
+    except gdocs_mod.DocsError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1) from None
+
+
+@gdocs_app.command("info")
+def gdocs_info(doc: str = typer.Argument(..., help="Google Doc ID or URL")) -> None:
+    """Show a doc's title (stdout) and id (stderr)."""
+    try:
+        info = gdocs_mod.get_info(doc)
+    except gdocs_mod.DocsError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1) from None
+    typer.echo(info.title)
+    typer.echo(info.id, err=True)
+
+
+@gdocs_app.command("append")
+def gdocs_append(
+    doc: str = typer.Argument(..., help="Google Doc ID or URL"),
+    text: str = typer.Argument(None, help="text to append (omit to read stdin)"),
+) -> None:
+    """Append text to the end of a doc."""
+    body = text if text is not None else sys.stdin.read()
+    try:
+        n = gdocs_mod.append_text(doc, body)
+    except gdocs_mod.DocsError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1) from None
+    typer.echo(f"appended {n} char(s)", err=True)
+
+
+@gdocs_app.command("replace")
+def gdocs_replace(
+    doc: str = typer.Argument(..., help="Google Doc ID or URL"),
+    find: str = typer.Argument(..., help="text to find"),
+    replace: str = typer.Argument(..., help="replacement text"),
+    match_case: bool = typer.Option(False, "--match-case", help="case-sensitive match"),
+) -> None:
+    """Replace every occurrence of FIND with REPLACE across the doc."""
+    try:
+        n = gdocs_mod.replace_text(doc, find, replace, match_case=match_case)
+    except gdocs_mod.DocsError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1) from None
+    typer.echo(f"replaced {n} occurrence(s)", err=True)
+
+
+@gdocs_app.command("new")
+def gdocs_new(title: str = typer.Argument(..., help="title for the new doc")) -> None:
+    """Create a new Google Doc; prints its ID (stdout) and URL (stderr)."""
+    try:
+        new_id = gdocs_mod.create_doc(title)
+    except gdocs_mod.DocsError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1) from None
+    typer.echo(new_id)
+    typer.echo(f"https://docs.google.com/document/d/{new_id}/edit", err=True)
+
+
+@gdocs_app.command("auth")
+def gdocs_auth(
+    out: bool = typer.Option(False, "--logout", help="remove the cached token and exit"),
+    readonly: bool = typer.Option(False, "--readonly", help="grant read-only scope"),
+) -> None:
+    """Google OAuth (shared token with gsheets/cal). Default grants read+write."""
+    _google_auth(out, readonly)
+
+
+@gdocs_app.command("accounts")
+def gdocs_accounts() -> None:
+    """List Google accounts with a cached token; `*` marks the active one."""
+    _google_accounts()
+
+
+# --- cal ---
+
+
+def _fmt_events(events) -> None:
+    """Print events grouped by day, human-readable, in the local zone."""
+    from datetime import datetime
+
+    zone = gcal_mod.tz()
+    last_day = None
+    for ev in events:
+        if ev.all_day:
+            day, when = ev.start, "all day"
+        else:
+            dt = datetime.fromisoformat(ev.start).astimezone(zone)
+            day, when = dt.date().isoformat(), dt.strftime("%H:%M")
+        if day != last_day:
+            header = datetime.strptime(day, "%Y-%m-%d").strftime("%a %d %b")
+            typer.echo(f"\n{header}")
+            last_day = day
+        loc = f"  @ {ev.location}" if ev.location else ""
+        typer.echo(f"  {when:>7}  {ev.summary}  [{ev.calendar_name}]{loc}")
+
+
+def _emit_events(events, as_json: bool) -> bool:
+    """JSON or grouped text. Returns False if there were no events (and not JSON)."""
+    if as_json:
+        typer.echo(json.dumps([asdict(e) for e in events], default=str))
+        return True
+    if not events:
+        return False
+    _fmt_events(events)
+    return True
+
+
+@cal_app.callback(invoke_without_command=True)
+def _cal_main(
+    ctx: typer.Context,
+    account: str = typer.Option(
+        None, "--account", "-a",
+        help="Google account to use (else KO_GOOGLE_ACCOUNT / [google] account / 'default')",
+    ),
+    days: int = typer.Option(7, "--days", "-d", help="days of agenda (default 7)"),
+    today: bool = typer.Option(False, "--today", help="just today"),
+    as_json: bool = typer.Option(False, "--json", help="emit JSON"),
+) -> None:
+    """Agenda across your calendars (bare `ko cal`). Subcommands: day / add / cals / auth."""
+    _set_account(account)
+    if ctx.invoked_subcommand is not None:
+        return
+    n = 1 if today else days
+    try:
+        events = gcal_mod.list_events(days=n)
+    except gcal_mod.CalError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1) from None
+    if not _emit_events(events, as_json):
+        typer.echo(f"nothing in the next {n} day(s)", err=True)
+
+
+@cal_app.command("day")
+def cal_day(
+    date_str: str = typer.Argument("today", help="YYYY-MM-DD, 'today', or 'tomorrow'"),
+    as_json: bool = typer.Option(False, "--json", help="emit JSON"),
+) -> None:
+    """All events for a single day."""
+    from datetime import datetime, timedelta
+
+    try:
+        _, val = gcal_mod.parse_when(date_str)
+        d = val.date() if isinstance(val, datetime) else val
+        start = datetime(d.year, d.month, d.day, tzinfo=gcal_mod.tz())
+        events = gcal_mod.list_events(time_min=start, time_max=start + timedelta(days=1))
+    except (gcal_mod.CalError, ValueError) as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1) from None
+    if not _emit_events(events, as_json):
+        typer.echo(f"nothing on {date_str}", err=True)
+
+
+@cal_app.command("add")
+def cal_add(
+    title: str = typer.Argument(..., help="event title"),
+    when: str = typer.Argument(
+        ..., help="'YYYY-MM-DDTHH:MM' (timed) or 'YYYY-MM-DD'/'today'/'tomorrow' (all-day)"
+    ),
+    end: str = typer.Option(None, "--end", help="end time/date (timed default: +--minutes)"),
+    minutes: int = typer.Option(60, "--minutes", "-m", help="duration for a timed event with no --end"),
+    cal: str = typer.Option("primary", "--cal", help="calendar id (default: primary)"),
+) -> None:
+    """Create an event. Timed if WHEN has a time (T), else all-day. Prints the event id."""
+    try:
+        ev = gcal_mod.create_event(title, when, end=end, calendar_id=cal, minutes=minutes)
+    except (gcal_mod.CalError, ValueError) as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1) from None
+    typer.echo(f"created: {ev.summary}  {ev.start}  [{ev.calendar_id}]", err=True)
+    typer.echo(ev.id)
+
+
+@cal_app.command("cals")
+def cal_cals(as_json: bool = typer.Option(False, "--json", help="emit JSON")) -> None:
+    """List calendars (TSV: id, name, role, primary)."""
+    try:
+        cals = gcal_mod.list_calendars()
+    except gcal_mod.CalError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1) from None
+    if as_json:
+        typer.echo(json.dumps([asdict(c) for c in cals]))
+        return
+    for c in cals:
+        typer.echo(f"{c.id}\t{c.name}\t{c.role}\t{'primary' if c.primary else ''}")
+
+
+@cal_app.command("auth")
+def cal_auth(
+    out: bool = typer.Option(False, "--logout", help="remove the cached token and exit"),
+    readonly: bool = typer.Option(False, "--readonly", help="grant read-only scope"),
+) -> None:
+    """Google OAuth (shared token with gsheets/gdocs). Default grants read+write."""
+    _google_auth(out, readonly)
+
+
+@cal_app.command("accounts")
+def cal_accounts() -> None:
+    """List Google accounts with a cached token; `*` marks the active one."""
+    _google_accounts()
 
 
 # --- doc ---

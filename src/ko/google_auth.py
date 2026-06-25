@@ -10,9 +10,9 @@ optional — you only need one when a single client can't authorize the account 
 Workspace "Internal" consent screen won't authorize a personal Gmail; give that account
 its own `google_client_<account>.json`).
 
-Scopes are per-API: `ko` requests only Sheets (read or read+write) — no Drive scope, so it can't
-browse your whole Drive, only the spreadsheets you address by ID. (Add a Docs/Calendar scope here
-when those land; each new API means one re-consent.) One-off setup: README → "Google Sheets setup".
+Scopes are per-API: `ko` requests Sheets + Docs + Calendar (read or read+write) — and deliberately
+NOT Drive, so it can't browse your whole Drive, only the docs/sheets you address by ID. One token
+per account covers all three. Adding another API later means one re-consent. Setup: README.
 """
 
 from __future__ import annotations
@@ -29,8 +29,17 @@ from googleapiclient.discovery import Resource, build
 from . import config
 from .dirs import config_dir, state_dir, state_file
 
-SCOPES_READONLY = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
-SCOPES_READWRITE = ["https://www.googleapis.com/auth/spreadsheets"]
+SCOPES_READONLY = [
+    "https://www.googleapis.com/auth/spreadsheets.readonly",
+    "https://www.googleapis.com/auth/documents.readonly",
+    "https://www.googleapis.com/auth/calendar.readonly",
+]
+SCOPES_READWRITE = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/documents",
+    "https://www.googleapis.com/auth/calendar.events",
+    "https://www.googleapis.com/auth/calendar.readonly",  # list calendars + read events
+]
 
 DEFAULT_ACCOUNT = "default"
 
@@ -138,6 +147,20 @@ def get_sheets_service(readonly: bool = True, account: str | None = None) -> Res
     )
 
 
+@lru_cache
+def get_docs_service(readonly: bool = True, account: str | None = None) -> Resource:
+    return build(
+        "docs", "v1", credentials=get_credentials(readonly, account), cache_discovery=False
+    )
+
+
+@lru_cache
+def get_calendar_service(readonly: bool = True, account: str | None = None) -> Resource:
+    return build(
+        "calendar", "v3", credentials=get_credentials(readonly, account), cache_discovery=False
+    )
+
+
 def logout(account: str | None = None) -> bool:
     """Remove an account's cached token (default: the active account). Returns True if removed."""
     tf = token_file(account)
@@ -145,5 +168,7 @@ def logout(account: str | None = None) -> bool:
         tf.unlink()
         get_credentials.cache_clear()
         get_sheets_service.cache_clear()
+        get_docs_service.cache_clear()
+        get_calendar_service.cache_clear()
         return True
     return False

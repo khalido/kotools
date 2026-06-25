@@ -645,6 +645,7 @@ dependencies = [
     { name = "pydantic-graph" },
     { name = "trafilatura" },
     { name = "typer" },
+    { name = "tzdata" },
     { name = "xdk" },
 ]
 
@@ -669,6 +670,7 @@ requires-dist = [
     { name = "pydantic-graph", specifier = ">=2.0.0b7,<3" },
     { name = "trafilatura", specifier = ">=2.1.0" },
     { name = "typer", specifier = ">=0.26.7" },
+    { name = "tzdata", specifier = ">=2025.1" },
     { name = "xdk", specifier = ">=0.9.0" },
 ]
 

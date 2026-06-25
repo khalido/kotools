@@ -17,6 +17,8 @@ Current subcommands:
 - `ko tv` — movie/TV quick check: rating, overview, where to stream (AU default; via [TMDB](https://developer.themoviedb.org))
 - `ko tt` — TickTick lists + tasks (read-only) via its hosted MCP — `ko tt lists`, `ko tt items <list>`
 - `ko gsheets` — read **& write** Google Sheets via OAuth (`get`/`find` · `set`/`put`/`header`/`add-tab`/`new`/`clear`, with overwrite guards)
+- `ko gdocs` — read **& write** Google Docs (same OAuth token): `get`/`info` · `append`/`replace`/`new`
+- `ko cal` — Google Calendar agenda + quick-add (same token): bare `ko cal` = next 7 days · `day`/`add`/`cals`
 - `ko agent` — pydantic-ai agents: `research` (web + papers + HN) and `tv` (what to watch in AU), with saved/resumable sessions
 - `ko models` — list model strings usable with `-m` (incl. the live OpenRouter catalog)
 - `ko publish` — scaffold a site (static / markdown / Hono worker, optional PIN gate) and deploy it to Cloudflare; `ko publish preview` runs it locally first
@@ -101,6 +103,9 @@ ko gsheets get 1Bxi... 'Class Data!A1:F6' --json
 ko gsheets find <id> "Smith"                    # search every tab → tab, ref, cell
 ko gsheets set <id> 'Sheet1!A1' '=SUM(B:B)'     # write a cell (formulas parse)
 echo '{"Sheet1!A1": [["Name","Score"],["Ann",9]]}' | ko gsheets put <id>   # bulk write
+ko gdocs get <id> --md                          # a Google Doc as markdown
+ko cal                                          # your next 7 days
+ko cal add "Dentist" 2026-07-01T14:00 -m 30     # add a 30-minute event
 ```
 
 ## Google Sheets setup (one-off) — read & write
@@ -109,8 +114,9 @@ echo '{"Sheet1!A1": [["Name","Score"],["Ann",9]]}' | ko gsheets put <id>   # bul
 token grants read **and** write; reads use the narrower read-only scope under the hood.
 
 1. **Create a Google Cloud project.** https://console.cloud.google.com/projectcreate
-2. **Enable the API.** APIs & Services → Library → enable *Google Sheets API*. (`ko` requests only
-   the Sheets scope — no Drive — so it can read/write spreadsheets by ID but can't browse your Drive.)
+2. **Enable the APIs** you'll use. APIs & Services → Library → enable *Google Sheets API*, plus
+   *Google Docs API* (for `ko gdocs`) and *Google Calendar API* (for `ko cal`). No Drive — `ko`
+   reads/writes docs and sheets by ID and can't browse your Drive. One token covers all three.
 3. **Configure the OAuth consent screen** (APIs & Services → OAuth consent screen). This step decides
    whether your refresh token lasts:
    - **Workspace org?** Set **User type: Internal** — only your org's users, and **no token expiry**.
