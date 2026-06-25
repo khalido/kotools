@@ -15,7 +15,7 @@ from email.utils import parsedate_to_datetime
 
 from googleapiclient.errors import HttpError
 
-from ko.google_auth import get_gmail_service
+from ko.google_auth import GoogleError, get_gmail_service, raise_for_status
 
 
 @dataclass
@@ -30,18 +30,18 @@ class GmailMessage:
     unread: bool
 
 
-class GmailError(RuntimeError):
+class GmailError(GoogleError):
     pass
 
 
 def _handle(e: HttpError, context: str) -> None:
-    if e.resp.status == 403:
-        raise GmailError(
-            f"Permission denied for {context}. Did you `ko gmail auth` (grants gmail.readonly)?"
-        ) from e
-    if e.resp.status == 404:
-        raise GmailError(f"Not found: {context}") from e
-    raise e
+    raise_for_status(
+        e,
+        context,
+        not_found=GmailError,
+        permission=GmailError,
+        hint="Did you `ko gmail auth` (grants gmail.readonly)?",
+    )
 
 
 _META_HEADERS = ["From", "To", "Subject", "Date"]

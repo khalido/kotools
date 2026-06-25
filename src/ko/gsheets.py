@@ -20,7 +20,7 @@ from dataclasses import dataclass
 
 from googleapiclient.errors import HttpError
 
-from ko.google_auth import get_sheets_service
+from ko.google_auth import GoogleError, get_sheets_service, id_from_url, raise_for_status
 
 
 @dataclass
@@ -30,7 +30,7 @@ class SheetInfo:
     tabs: list[str]
 
 
-class SheetsError(RuntimeError):
+class SheetsError(GoogleError):
     pass
 
 
@@ -47,14 +47,13 @@ class SheetsOverwriteError(SheetsError):
 
 
 def _handle(e: HttpError, context: str) -> None:
-    if e.resp.status == 403:
-        raise SheetsPermissionDenied(
-            f"Permission denied for {context}. Is the sheet accessible to the signed-in "
-            f"Google account — and for a write, did you `ko gsheets auth` (write scope)?"
-        ) from e
-    if e.resp.status == 404:
-        raise SheetsNotFound(f"Not found: {context}") from e
-    raise e
+    raise_for_status(
+        e,
+        context,
+        not_found=SheetsNotFound,
+        permission=SheetsPermissionDenied,
+        hint="Is the sheet accessible to the signed-in account, and for a write did you `ko gsheets auth`?",
+    )
 
 
 def _svc(write: bool = False):
@@ -64,13 +63,10 @@ def _svc(write: bool = False):
 
 # --- helpers ------------------------------------------------------------
 
-_SHEET_URL_RE = re.compile(r"/spreadsheets/d/([a-zA-Z0-9_-]+)")
-
 
 def sheet_id(value: str) -> str:
     """Accept a Google Sheets URL or a bare spreadsheet ID; return the ID."""
-    m = _SHEET_URL_RE.search(value)
-    return m.group(1) if m else value.strip()
+    return id_from_url(value, "spreadsheets")
 
 
 def col_letter(n: int) -> str:

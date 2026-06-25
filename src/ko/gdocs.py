@@ -10,12 +10,11 @@ the web editor's job. This is the "read it / append a note / swap some text" sur
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 
 from googleapiclient.errors import HttpError
 
-from ko.google_auth import get_docs_service
+from ko.google_auth import GoogleError, get_docs_service, id_from_url, raise_for_status
 
 
 @dataclass
@@ -24,7 +23,7 @@ class DocInfo:
     title: str
 
 
-class DocsError(RuntimeError):
+class DocsError(GoogleError):
     pass
 
 
@@ -37,23 +36,18 @@ class DocsPermissionDenied(DocsError):
 
 
 def _handle(e: HttpError, context: str) -> None:
-    if e.resp.status == 403:
-        raise DocsPermissionDenied(
-            f"Permission denied for {context}. Is the doc accessible to the signed-in Google "
-            f"account — and for a write, did you `ko gdocs auth` (read+write)?"
-        ) from e
-    if e.resp.status == 404:
-        raise DocsNotFound(f"Not found: {context}") from e
-    raise e
-
-
-_DOC_URL_RE = re.compile(r"/document/d/([a-zA-Z0-9_-]+)")
+    raise_for_status(
+        e,
+        context,
+        not_found=DocsNotFound,
+        permission=DocsPermissionDenied,
+        hint="Is the doc accessible to the signed-in account, and for a write did you `ko gdocs auth`?",
+    )
 
 
 def doc_id(value: str) -> str:
     """Accept a Google Docs URL or a bare document ID; return the ID."""
-    m = _DOC_URL_RE.search(value)
-    return m.group(1) if m else value.strip()
+    return id_from_url(value, "document")
 
 
 def _para_text(para: dict, markdown: bool) -> str:

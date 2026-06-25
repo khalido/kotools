@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo
 from googleapiclient.errors import HttpError
 
 from ko import config
-from ko.google_auth import get_calendar_service
+from ko.google_auth import GoogleError, get_calendar_service, raise_for_status
 
 DEFAULT_TZ = "Australia/Sydney"
 
@@ -43,18 +43,14 @@ class CalEvent:
     html_link: str | None = None
 
 
-class CalError(RuntimeError):
+class CalError(GoogleError):
     pass
 
 
 def _handle(e: HttpError, context: str) -> None:
-    if e.resp.status == 403:
-        raise CalError(
-            f"Permission denied for {context}. Did you `ko cal auth` (read+write)?"
-        ) from e
-    if e.resp.status == 404:
-        raise CalError(f"Not found: {context}") from e
-    raise e
+    raise_for_status(
+        e, context, not_found=CalError, permission=CalError, hint="Did you `ko cal auth` (read+write)?"
+    )
 
 
 def tz_name() -> str:

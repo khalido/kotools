@@ -18,13 +18,16 @@ by ID. One token per account covers them all. Adding another API later means one
 from __future__ import annotations
 
 import os
+import re
 from functools import lru_cache
 from pathlib import Path
+from typing import NoReturn
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import Resource, build
+from googleapiclient.errors import HttpError
 
 from . import config
 from .dirs import config_dir, state_dir, state_file
@@ -48,6 +51,48 @@ DEFAULT_ACCOUNT = "default"
 
 class AuthError(RuntimeError):
     pass
+
+
+# --- shared API helpers (errors, HTTP handling, id extraction) ---
+# gsheets / gdocs / gcal / gmail all hit Google APIs the same way: a 403/404 needs the same
+# mapping + an auth hint, and several take a URL-or-bare-ID. That spine lives here so each
+# domain module stays a thin wrapper. Modules subclass GoogleError so callers can catch a
+# specific type (`except SheetsError`) or anything Google (`except GoogleError`).
+
+
+class GoogleError(RuntimeError):
+    """Base for every ko Google-API error — catch this to catch any."""
+
+
+class GoogleNotFound(GoogleError):
+    pass
+
+
+class GooglePermissionDenied(GoogleError):
+    pass
+
+
+def raise_for_status(e: HttpError, context: str, *, not_found, permission, hint: str) -> NoReturn:
+    """Map a Google HttpError to a domain error: 403 -> `permission` (+ `hint`), 404 -> `not_found`,
+    anything else re-raised. `not_found`/`permission` are the calling module's error classes."""
+    status = e.resp.status
+    if status == 403:
+        raise permission(f"Permission denied for {context}. {hint}") from e
+    if status == 404:
+        raise not_found(f"Not found: {context}") from e
+    raise e
+
+
+_ID_RE = {
+    "spreadsheets": re.compile(r"/spreadsheets/d/([a-zA-Z0-9_-]+)"),
+    "document": re.compile(r"/document/d/([a-zA-Z0-9_-]+)"),
+}
+
+
+def id_from_url(value: str, kind: str) -> str:
+    """A Google file ID from a URL (`/spreadsheets/d/<id>`, `/document/d/<id>`) or a bare ID."""
+    m = _ID_RE[kind].search(value)
+    return m.group(1) if m else value.strip()
 
 
 def active_account() -> str:
