@@ -30,7 +30,7 @@ from . import doc as doc_mod
 
 
 DOWNLOADS = Path.home() / "Downloads"
-UA = {"User-Agent": "ko-tools/0.1 (+https://github.com/khalido/ko-tools)"}
+UA = {"User-Agent": "kotools/0.1 (+https://github.com/khalido/kotools)"}
 
 # /abs and /html → arxiv2md (LaTeX/HTML markdown beats a PDF parse — when it renders).
 # /pdf is deliberately excluded: those fall through to the PDF download path (full text),

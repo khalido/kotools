@@ -6,11 +6,15 @@ readme = "README.md"
 requires-python = ">=3.14"
 license = "GPL-3.0-or-later"
 license-files = ["LICENSE"]
-authors = [{ name = "Ko" }]
+authors = [{ name = "Ko", email = "khalid.omar@gmail.com" }]
+keywords = ["cli", "research", "arxiv", "hacker-news", "llm", "agents", "cloudflare"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
     "Programming Language :: Python :: 3.14",
+    "Topic :: Utilities",
 ]
 dependencies = [
     "arxiv>=4.0.0",
@@ -34,8 +38,9 @@ dependencies = [
 ]
 
 [project.urls]
-Repository = "https://github.com/khalido/ko-tools"
-Issues = "https://github.com/khalido/ko-tools/issues"
+Homepage = "https://github.com/khalido/kotools"
+Repository = "https://github.com/khalido/kotools"
+Issues = "https://github.com/khalido/kotools/issues"
 
 [project.scripts]
 ko = "ko.cli:main"
@@ -47,6 +52,11 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ko"]
+
+[tool.hatch.build.targets.sdist]
+# Keep node/IDE tooling out of the source distribution — wrangler is dev-only
+# (a pip-installed user falls back to `npx wrangler@4`).
+exclude = [".claude", "node_modules", "package.json", "package-lock.json"]
 
 [dependency-groups]
 dev = [

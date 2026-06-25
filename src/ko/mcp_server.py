@@ -1,4 +1,7 @@
-"""MCP server (stub).
+"""MCP server — design sketch (NOT wired yet).
+
+This module is intentionally just this docstring — there is no runnable code below,
+and `python -m ko.mcp_server` does nothing. It's the plan for when we build `ko mcp`.
 
 Planned: expose ko's core functions as MCP tools so AI agents (Claude Desktop,
 Cursor, Claude Code with MCP, Claude.ai custom connectors) can call them natively
@@ -67,8 +70,8 @@ Wiring sketch (uncomment when ready)
         transport = os.getenv("MCP_TRANSPORT", "stdio")
         mcp.run(transport=transport)  # stdio for local, "streamable-http" for remote
 
-Running
--------
+Running (once wired — none of these work yet; the block above is a sketch, not live code)
+-----------------------------------------------------------------------------------------
 - Local (Claude Desktop):  `python -m ko.mcp_server`  (stdio, default)
 - Dev + inspector:          `mcp dev src/ko/mcp_server.py`  (comes with mcp[cli])
 - Install to Claude Desktop:`mcp install src/ko/mcp_server.py`

@@ -19,18 +19,22 @@ Current subcommands:
 - `ko gsheets` — read Google Sheets via OAuth
 - `ko agent` — pydantic-ai agents: `research` (web + papers + HN) and `tv` (what to watch in AU), with saved/resumable sessions
 - `ko models` — list model strings usable with `-m` (incl. the live OpenRouter catalog)
+- `ko publish` — scaffold a site (static / markdown / Hono worker, optional PIN gate) and deploy it to Cloudflare; `ko publish preview` runs it locally first
+- `ko doctor` — every tool's setup status (keys, binaries, auth) — run this first
 
 ## Install
 
 ```bash
-# from the repo
-uv tool install --editable /path/to/ko
-
-# or one-off
-uvx --from /path/to/ko ko --help
+uv tool install kotools     # or: pip install kotools
 ```
 
-(Once published to PyPI: `uv tool install kotools` — the package is `kotools`, the command it installs is still `ko`.)
+The package is `kotools`; the command it installs is **`ko`**. Run `ko doctor` first to see what's set up.
+
+**For development** (editable clone):
+
+```bash
+uv tool install --editable /path/to/kotools   # or: uvx --from /path/to/kotools ko --help
+```
 
 ## API keys
 

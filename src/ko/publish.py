@@ -77,16 +77,21 @@ def _default_name(folder: Path) -> str:
 # --- wrangler resolution (repo-local pinned first) ---
 
 
-def _repo_wrangler() -> Path:
-    """The pinned wrangler from the repo's node_modules (present in dev/clone installs)."""
-    return Path(__file__).resolve().parents[2] / "node_modules" / ".bin" / "wrangler"
+def _repo_wrangler() -> Path | None:
+    """The pinned wrangler from the repo's node_modules — only in a dev/clone checkout. A
+    pip install has no node_modules here; the sibling `package.json` guard also stops a stray
+    node_modules above site-packages from masquerading as ours. None when not resolvable."""
+    root = Path(__file__).resolve().parents[2]
+    cand = root / "node_modules" / ".bin" / "wrangler"
+    return cand if (root / "package.json").exists() and cand.exists() else None
 
 
 def wrangler_source() -> str:
-    """Where wrangler resolves from — for `ko doctor`. 'env'|'local'|'path'|'npx'|'none'."""
+    """Where wrangler resolves from — for `ko doctor`. 'env'|'local'|'path'|'npx'|'none'.
+    A pip-installed user has no repo-local install → resolves to 'path' or 'npx wrangler@4'."""
     if os.environ.get("KO_WRANGLER"):
         return "env"
-    if _repo_wrangler().exists():
+    if _repo_wrangler():
         return "local"
     if shutil.which("wrangler"):
         return "path"
@@ -98,7 +103,7 @@ def _wrangler() -> list[str]:
     recommendation; avoids `npx` pulling 'latest'); fall back to PATH, then a pinned npx."""
     if override := os.environ.get("KO_WRANGLER"):
         return [override]
-    if (local := _repo_wrangler()).exists():
+    if local := _repo_wrangler():
         return [str(local)]
     if shutil.which("wrangler"):
         return ["wrangler"]
