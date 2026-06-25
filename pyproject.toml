@@ -40,6 +40,7 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://github.com/khalido/kotools"
+Documentation = "https://kotools.khalido.dev"
 Repository = "https://github.com/khalido/kotools"
 Issues = "https://github.com/khalido/kotools/issues"
 

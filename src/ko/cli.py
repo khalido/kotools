@@ -123,8 +123,20 @@ publish_app = typer.Typer(
 app.add_typer(publish_app, name="publish")
 
 
+def _version_callback(value: bool) -> None:
+    if value:
+        from importlib.metadata import version
+
+        typer.echo(f"ko {version('kotools')}")
+        raise typer.Exit()
+
+
 @app.callback()
-def _startup() -> None:
+def _startup(
+    version: bool = typer.Option(
+        None, "--version", "-V", callback=_version_callback, is_eager=True, help="show version and exit"
+    ),
+) -> None:
     """Runs before every command: make config.toml [keys] available as env vars."""
     from . import config
 
