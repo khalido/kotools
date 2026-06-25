@@ -65,8 +65,15 @@ def test_scaffold_static(monkeypatch, tmp_path):
     monkeypatch.setattr(publish, "publish_domain", lambda: None)
     folder = tmp_path / "site"
     written = {p.name for p in publish.scaffold(folder, title="Robot Arm", mode="static")}
-    assert {"index.html", "style.css", "CLAUDE.md", ".gitignore", "wrangler.jsonc"} <= written
-    assert "cdn.tailwindcss.com" in (folder / "index.html").read_text()
+    assert {"index.html", "style.css", "app.js", "CLAUDE.md", ".gitignore", ".assetsignore", "wrangler.jsonc"} <= written
+    # assets.directory is "." → meta/dev files must be excluded from the upload
+    assert ".wrangler" in (folder / ".assetsignore").read_text()
+    assert "wrangler.jsonc" in (folder / ".assetsignore").read_text()
+    index = (folder / "index.html").read_text()
+    assert "cdn.tailwindcss.com" in index
+    assert "Robot Arm" in index and "{title}" not in index  # title substituted, no stray braces
+    assert 'src="app.js"' in index  # heavy JS split into its own module
+    assert ".card" in (folder / "style.css").read_text()  # starter component classes shipped
     (folder / "index.html").write_text("MINE")
     publish.scaffold(folder, mode="static")
     assert (folder / "index.html").read_text() == "MINE"  # never clobbers
@@ -76,7 +83,7 @@ def test_scaffold_md(monkeypatch, tmp_path):
     monkeypatch.setattr(publish, "publish_domain", lambda: None)
     folder = tmp_path / "docs"
     written = {p.name for p in publish.scaffold(folder, title="Robot Arm", mode="md")}
-    assert {"README.md", "index.html", "style.css", "CLAUDE.md", "wrangler.jsonc"} <= written
+    assert {"README.md", "index.html", "style.css", "CLAUDE.md", ".assetsignore", "wrangler.jsonc"} <= written
     shell = (folder / "index.html").read_text()
     assert "markdown-it" in shell and "safePage" in shell
     assert "Robot Arm" in (folder / "README.md").read_text()
@@ -87,7 +94,7 @@ def test_scaffold_bare(monkeypatch, tmp_path):
     monkeypatch.setattr(publish, "publish_domain", lambda: None)
     folder = tmp_path / "blank"
     written = {p.name for p in publish.scaffold(folder, mode="bare")}
-    assert written == {"CLAUDE.md", ".gitignore", "wrangler.jsonc"}
+    assert written == {"CLAUDE.md", ".gitignore", ".assetsignore", "wrangler.jsonc"}
     assert not (folder / "index.html").exists()  # bare: the agent builds it
 
 
@@ -100,6 +107,8 @@ def test_scaffold_hono(monkeypatch, tmp_path):
     assert '"main": "src/index.ts"' in cfg and "KO_PIN" in cfg
     assert "hono" in (folder / "package.json").read_text()
     assert publish.config_pin(folder) is not None  # --pin generated one
+    worker = (folder / "src/index.ts").read_text()
+    assert "/api/data" in worker and "caches.default" in worker  # cached data endpoint example
 
 
 def test_scaffold_hono_open_without_pin(monkeypatch, tmp_path):
@@ -107,3 +116,88 @@ def test_scaffold_hono_open_without_pin(monkeypatch, tmp_path):
     folder = tmp_path / "open"
     publish.scaffold(folder, mode="hono", pin=False)
     assert publish.config_pin(folder) is None  # no gate unless --pin
+
+
+def test_run_worker_first_only_when_gated():
+    gated = publish.build_hono_config("a", None, pin="123456")
+    assert gated["assets"]["run_worker_first"] is True  # load-bearing: protects static assets
+    open_ = publish.build_hono_config("a", None, pin=None)
+    assert open_["assets"]["run_worker_first"] is False  # assets serve from edge, no worker hit
+
+
+def test_ensure_hono_config_rename_preserves_worker_and_pin(monkeypatch, tmp_path):
+    """Regression: renaming a Hono site must NOT rewrite it as a static config (which would
+    drop `main`/`./public`/KO_PIN and expose the repo root)."""
+    monkeypatch.setattr(publish, "publish_domain", lambda: None)
+    folder = tmp_path / "app"
+    publish.scaffold(folder, mode="hono", pin=True)
+    pin = publish.config_pin(folder)
+
+    publish.ensure_hono_config(folder, name="renamed")  # the --name path
+    cfg = (folder / "wrangler.jsonc").read_text()
+    assert '"main": "src/index.ts"' in cfg  # still a worker
+    assert '"directory": "./public"' in cfg  # still serves public/, not repo root
+    assert publish.config_pin(folder) == pin  # PIN carried forward
+    assert publish.config_name(folder) == "renamed"
+
+
+def test_set_pin_rotates_and_sets(monkeypatch, tmp_path):
+    monkeypatch.setattr(publish, "publish_domain", lambda: None)
+    folder = tmp_path / "app"
+    publish.scaffold(folder, mode="hono", pin=True)
+
+    new = publish.set_pin(folder, "new")
+    assert new.isdigit() and len(new) == 6 and publish.config_pin(folder) == new
+    assert publish.set_pin(folder, "424242") == "424242"
+    assert publish.config_pin(folder) == "424242"
+    assert '"main": "src/index.ts"' in (folder / "wrangler.jsonc").read_text()  # untouched
+
+
+def test_set_pin_adds_gate_to_open_site(monkeypatch, tmp_path):
+    monkeypatch.setattr(publish, "publish_domain", lambda: None)
+    folder = tmp_path / "open"
+    publish.scaffold(folder, mode="hono", pin=False)
+    assert publish.config_pin(folder) is None
+
+    publish.set_pin(folder, "111222")
+    assert publish.config_pin(folder) == "111222"
+    # adding the gate must flip run_worker_first on, else /README.md bypasses it
+    assert '"run_worker_first": true' in (folder / "wrangler.jsonc").read_text()
+
+
+def test_preview_runs_wrangler_dev(monkeypatch, tmp_path):
+    folder = tmp_path / "site"
+    folder.mkdir()
+    (folder / "wrangler.jsonc").write_text('{ "name": "x" }')
+    calls = {}
+    monkeypatch.setattr(publish, "_wrangler", lambda: ["wrangler"])
+
+    def fake_run(cmd, cwd, env):
+        calls["cmd"], calls["cwd"] = cmd, cwd
+        return type("R", (), {"returncode": 0})()
+
+    monkeypatch.setattr(publish.subprocess, "run", fake_run)
+    assert publish.preview(folder, port=4000) == 0
+    assert calls["cmd"] == ["wrangler", "dev", "--port", "4000"]
+    assert calls["cwd"] == str(folder)
+
+
+def test_preview_requires_config(tmp_path):
+    folder = tmp_path / "empty"
+    folder.mkdir()
+    try:
+        publish.preview(folder)
+        raise AssertionError("expected RuntimeError without wrangler.jsonc")
+    except RuntimeError:
+        pass
+
+
+def test_set_pin_requires_worker(monkeypatch, tmp_path):
+    monkeypatch.setattr(publish, "publish_domain", lambda: None)
+    folder = tmp_path / "static"
+    publish.scaffold(folder, mode="static")
+    try:
+        publish.set_pin(folder, "new")
+        raise AssertionError("expected RuntimeError on a non-worker folder")
+    except RuntimeError:
+        pass

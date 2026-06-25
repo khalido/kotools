@@ -61,6 +61,19 @@ def slugify(name: str) -> str:
     return s[:54] or "site"
 
 
+# generic publish-folder names → take the worker/domain from the PARENT project folder instead
+_GENERIC_FOLDER_NAMES = {"publish", "site", "html", "www", "public", "dist", "out", "build", "pub", "web"}
+
+
+def _default_name(folder: Path) -> str:
+    """Worker name from the folder — or its parent when the folder is generically named, so
+    `robot-arm/publish` → `robot-arm` (the project), not `publish`."""
+    folder = folder.resolve()
+    if folder.name.lower() in _GENERIC_FOLDER_NAMES and folder.parent.name:
+        return slugify(folder.parent.name)
+    return slugify(folder.name)
+
+
 # --- wrangler resolution (repo-local pinned first) ---
 
 
@@ -175,9 +188,15 @@ def build_config(name: str, domain: str | None, spa: bool = True) -> dict:
 
 
 def build_hono_config(name: str, domain: str | None, pin: str | None = None) -> dict:
-    """wrangler config for a Hono worker site: the worker (src/index.ts) runs first
-    (`run_worker_first`), so it can add API routes, optionally gate behind a PIN, then serve
-    the static assets in ./public via the ASSETS binding. PIN is active iff `KO_PIN` is set."""
+    """wrangler config for a Hono worker site: the worker (src/index.ts) serves API routes,
+    optionally gates behind a PIN, then falls through to the static assets in ./public via the
+    ASSETS binding. PIN is active iff `KO_PIN` is set.
+
+    `run_worker_first` is on ONLY for gated sites — it's load-bearing for the PIN: without it
+    Cloudflare serves a matching asset (e.g. /README.md) before the worker runs, bypassing the
+    gate. For an open site we leave it off so static assets serve straight from the edge (no
+    per-asset worker invocation); the worker still handles unmatched/`/api` routes via the catch-all.
+    """
     cfg: dict = {
         "name": name,
         "main": "src/index.ts",
@@ -185,7 +204,7 @@ def build_hono_config(name: str, domain: str | None, pin: str | None = None) -> 
         "assets": {
             "directory": "./public",
             "binding": "ASSETS",
-            "run_worker_first": True,
+            "run_worker_first": bool(pin),
             "not_found_handling": "404-page",
         },
     }
@@ -229,7 +248,7 @@ def resolve_name(folder: Path, name: str | None = None) -> str:
     `--name` wins (slugified), else the folder's existing config name, else a folder slug."""
     if name:
         return slugify(name)
-    return config_name(folder) or slugify(folder.resolve().name)
+    return config_name(folder) or _default_name(folder)
 
 
 def ensure_config(folder: Path, name: str | None = None, spa: bool = True) -> str:
@@ -249,24 +268,55 @@ def ensure_config(folder: Path, name: str | None = None, spa: bool = True) -> st
             "(pass --name to regenerate).",
             file=sys.stderr,
         )
-        return slugify(folder.resolve().name)
-    final = slugify(name) if name else slugify(folder.resolve().name)
+        return _default_name(folder)
+    final = slugify(name) if name else _default_name(folder)
     text = json.dumps(build_config(final, publish_domain(), spa=spa), indent=2) + "\n"
     path.write_text(text)
     return final
 
 
+def _gen_pin() -> str:
+    """A fresh random 6-digit gate PIN."""
+    return f"{secrets.randbelow(1000000):06d}"
+
+
 def ensure_hono_config(folder: Path, name: str | None = None, pin: bool = False) -> str:
     """Like ensure_config but for a Hono worker site. With `pin=True`, generates a random
-    6-digit PIN into `vars.KO_PIN` on creation. An existing config (and its PIN) is sticky."""
+    6-digit PIN into `vars.KO_PIN` on creation. An existing config (and its PIN) is sticky —
+    a rename (`--name`) regenerates the config but carries the existing PIN forward."""
     path = folder / WRANGLER_CONFIG
     if path.exists() and not name:
-        return config_name(folder) or slugify(folder.resolve().name)
-    final = slugify(name) if name else slugify(folder.resolve().name)
-    pin_val = config_pin(folder) or (f"{secrets.randbelow(1000000):06d}" if pin else None)
+        return config_name(folder) or _default_name(folder)
+    final = slugify(name) if name else _default_name(folder)
+    pin_val = config_pin(folder) or (_gen_pin() if pin else None)
     text = json.dumps(build_hono_config(final, publish_domain(), pin_val), indent=2) + "\n"
     path.write_text(text)
     return final
+
+
+def set_pin(folder: Path, pin: str) -> str:
+    """Set/rotate the gate PIN on a worker folder, rewriting `vars.KO_PIN` in place. `pin="new"`
+    generates a random 6-digit one; any other value is used literally. Returns the resulting PIN.
+
+    Only valid on a Hono/worker folder (one with `main` in its config). If the site has a
+    `KO_PIN` already we patch just that value (preserving any hand-added D1/R2/KV bindings);
+    otherwise we add the gate by regenerating the config from the template.
+    """
+    path = folder / WRANGLER_CONFIG
+    if not path.exists() or _config_value(folder, "main") is None:
+        raise RuntimeError(
+            f"{folder} isn't a worker site (no Hono config) — only `--hono` sites take a PIN."
+        )
+    value = _gen_pin() if pin == "new" else pin
+    text = path.read_text()
+    if '"KO_PIN"' in text:  # patch the value, leave everything else (bindings, routes) untouched
+        text = re.sub(r'("KO_PIN"\s*:\s*")[^"]*(")', lambda m: m.group(1) + value + m.group(2), text)
+        path.write_text(text)
+    else:  # no gate yet → rebuild from the template to add vars + flip run_worker_first on
+        name = config_name(folder) or _default_name(folder)
+        text = json.dumps(build_hono_config(name, publish_domain(), value), indent=2) + "\n"
+        path.write_text(text)
+    return value
 
 
 # --- registry (a cache for `ko publish list`; the folder config is authoritative) ---
@@ -355,7 +405,9 @@ def deploy(folder: Path, name: str | None = None, force: bool = False) -> str:
             f"Use --force to take it over, or --name <other> to pick a different subdomain."
         )
 
-    name = ensure_config(folder, name)
+    # route to the right config writer — a static rewrite over a Hono folder would drop
+    # `main`/`./public`/`KO_PIN` and expose the repo root (esp. on a `--name` rename).
+    name = ensure_hono_config(folder, name) if is_worker else ensure_config(folder, name)
     _npm_install(folder)  # worker sites (Hono) need deps bundled before deploy
     with tempfile.TemporaryDirectory() as td:
         out_file = Path(td) / "out.ndjson"
@@ -382,11 +434,34 @@ def deploy(folder: Path, name: str | None = None, force: bool = False) -> str:
     return url
 
 
+def preview(folder: Path, port: int | None = None) -> int:
+    """Run `wrangler dev` in `folder` — a local http preview that mirrors production: serves the
+    static assets and, for Hono sites, runs the real worker (PIN gate + `/api/*` included). This is
+    how to view a site as it builds — over http, so ES modules and `fetch()` work (a plain
+    `file://` open does not). Long-running and interactive (Ctrl-C to stop); inherits the terminal.
+    Returns wrangler's exit code.
+    """
+    folder = folder.resolve()
+    if not folder.is_dir():
+        raise RuntimeError(f"not a folder: {folder}")
+    if not (folder / WRANGLER_CONFIG).exists():
+        raise RuntimeError(f"{folder} has no {WRANGLER_CONFIG} — run `ko publish new {folder}` first?")
+    _npm_install(folder)  # worker sites (Hono) need deps before wrangler can bundle
+    cmd = [*_wrangler(), "dev"]
+    if port:
+        cmd += ["--port", str(port)]
+    return subprocess.run(cmd, cwd=str(folder), env=_cf_env()).returncode
+
+
 # --- scaffold ---
 
 
 def scaffold(
-    folder: Path, title: str | None = None, mode: str = "static", pin: bool = False
+    folder: Path,
+    title: str | None = None,
+    mode: str = "static",
+    pin: bool = False,
+    name: str | None = None,
 ) -> list[Path]:
     """Drop a starter into `folder` (incl. its wrangler config). Never clobbers existing files.
 
@@ -402,11 +477,13 @@ def scaffold(
             "style.css": _MD_STYLE,
             "CLAUDE.md": _MD_CLAUDE.replace("__TITLE__", title),
             ".gitignore": _GITIGNORE,
+            ".assetsignore": _ASSETSIGNORE,
         }
     elif mode == "bare":
         files = {
             "CLAUDE.md": _BARE_CLAUDE.replace("__TITLE__", title),
             ".gitignore": _GITIGNORE,
+            ".assetsignore": _ASSETSIGNORE,
         }
     elif mode == "hono":
         # the doc/app lives in public/ (served via the ASSETS binding); the worker is src/
@@ -415,16 +492,18 @@ def scaffold(
             "public/index.html": _MD_INDEX.replace("__TITLE__", title),
             "public/style.css": _MD_STYLE,
             "src/index.ts": _HONO_INDEX,
-            "package.json": _HONO_PKG.replace("__NAME__", slugify(folder.resolve().name)),
+            "package.json": _HONO_PKG.replace("__NAME__", _default_name(folder)),
             "CLAUDE.md": _HONO_CLAUDE.replace("__TITLE__", title),
             ".gitignore": _HONO_GITIGNORE,
         }
     else:
         files = {
-            "index.html": _INDEX_HTML.format(title=title),
+            "index.html": _INDEX_HTML.replace("__TITLE__", title),
             "style.css": _STYLE_CSS,
-            "CLAUDE.md": _CLAUDE_MD.format(title=title),
+            "app.js": _APP_JS,
+            "CLAUDE.md": _CLAUDE_MD.replace("__TITLE__", title),
             ".gitignore": _GITIGNORE,
+            ".assetsignore": _ASSETSIGNORE,
         }
     written = []
     for fname, content in files.items():
@@ -435,14 +514,26 @@ def scaffold(
             written.append(p)
     if not (folder / WRANGLER_CONFIG).exists():
         if mode == "hono":
-            ensure_hono_config(folder, pin=pin)
+            ensure_hono_config(folder, name=name, pin=pin)
         else:
-            ensure_config(folder, spa=(mode != "md"))  # md fetches pages by name → real 404s
+            ensure_config(folder, name=name, spa=(mode != "md"))  # md → real 404s
         written.append(folder / WRANGLER_CONFIG)
     return written
 
 
 _GITIGNORE = ".wrangler/\n"
+
+# static/md/bare serve `assets.directory: "."`, so without this wrangler would upload the dev +
+# meta files (the .wrangler preview dir, the config, CLAUDE.md) and serve them at the site root.
+# Same syntax as .gitignore. (Hono doesn't need it — its assets dir is ./public, meta files sit outside.)
+_ASSETSIGNORE = """\
+.assetsignore
+.gitignore
+.wrangler
+CLAUDE.md
+wrangler.jsonc
+node_modules
+"""
 
 # --- static template (HTML + Tailwind + Alpine) ---
 
@@ -452,65 +543,174 @@ _INDEX_HTML = """\
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>{title}</title>
-    <!-- Tailwind (Play CDN — prototype-grade, zero build) -->
+    <title>__TITLE__</title>
+    <!-- For the EXTRAS only: Tailwind utilities + Alpine for small interactivity. -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Alpine for sprinkles of interactivity: x-data / @click / x-text / x-show -->
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.9/dist/cdn.min.js"></script>
-    <!-- your own styles win over Tailwind (loaded last) -->
+    <!-- style.css sets clean base styles for plain HTML, and loads last so it wins. -->
     <link rel="stylesheet" href="style.css" />
   </head>
-  <body class="min-h-screen bg-zinc-950 text-zinc-100 antialiased">
-    <main class="mx-auto max-w-3xl px-6 py-16" x-data="{{ count: 0 }}">
-      <h1 class="text-4xl font-bold tracking-tight">{title}</h1>
-      <p class="mt-3 text-zinc-400">
-        Edit <code class="text-zinc-200">index.html</code>, then run
-        <code class="text-zinc-200">ko publish</code> to update — same URL every time.
+  <body>
+    <main>
+      <h1>__TITLE__</h1>
+      <p>
+        Write the page as clean, semantic HTML — <code>style.css</code> already styles
+        headings, text, links, tables and code. Add a Tailwind class or some Alpine only
+        where you want an <em>extra</em> (a coloured callout, a toggle, an accordion).
       </p>
-      <button @click="count++" class="btn mt-8 rounded-lg px-4 py-2 font-medium">
-        clicked <span x-text="count"></span> times
-      </button>
+      <p class="muted">
+        Edit <code>index.html</code>, then run <code>ko publish</code> to update — same URL every time.
+      </p>
+
+      <!-- Heavy / interactive JS lives in its own module file, mounted here, so this HTML
+           stays readable. app.js is a tiny working example — swap it for your real widget. -->
+      <div id="app" class="my-8"></div>
     </main>
+    <script type="module" src="app.js"></script>
   </body>
 </html>
 """
 
 _STYLE_CSS = """\
-/* Your styles. Tailwind handles utilities; put custom bits here — this file
-   loads after Tailwind, so it wins on conflicts. One knob to start: */
 :root {
-  --accent: #6366f1; /* indigo-500 */
+  --accent: #6366f1; /* indigo-500 — your one knob */
+  --bg: #0a0a0b;
+  --fg: #e4e4e7;
+  --muted: #a1a1aa;
+  --border: #27272a;
+  --code-bg: #18181b;
 }
 
+/* Minimal base styles so plain, semantic HTML already looks good — no class on every
+   element. Loads AFTER Tailwind, so these are the defaults and Tailwind utilities (or your
+   own classes) still win wherever you add them. Style with clean HTML; reach for Tailwind/
+   Alpine only for the extras. */
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 16px/1.7 -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+}
+main { max-width: 48rem; margin: 0 auto; padding: 3rem 1.25rem; }
+h1, h2, h3 { line-height: 1.2; margin: 1.6em 0 0.5em; }
+h1 { font-size: 2.25rem; margin-top: 0; letter-spacing: -0.02em; }
+h2 { font-size: 1.5rem; }
+a { color: var(--accent); }
+.muted, small { color: var(--muted); }
+code { background: var(--code-bg); padding: 0.15em 0.4em; border-radius: 4px; font-size: 0.9em; }
+pre { background: var(--code-bg); border: 1px solid var(--border); padding: 1rem; border-radius: 8px; overflow: auto; }
+pre code { background: none; padding: 0; }
+table { border-collapse: collapse; }
+th, td { border: 1px solid var(--border); padding: 0.4em 0.7em; }
+blockquote { margin: 1em 0; padding: 0.2em 1em; border-left: 3px solid var(--accent); color: var(--muted); }
+img { max-width: 100%; border-radius: 8px; }
+
+/* A ready-made "extra" — the button in app.js uses it. Add more of your own below. */
 .btn {
   background: var(--accent);
-  color: white;
+  color: #fff;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
 }
-.btn:hover {
-  filter: brightness(1.1);
+.btn:hover { filter: brightness(1.1); }
+
+/* Two building blocks — a panel and a pill. Use them, restyle them, or ignore them and build
+   something fully custom; they're a starting point, not a design system. The rule that keeps a
+   page readable: repeating a class string 3+ times → promote it to a class like these. */
+.card {
+  border: 1px solid var(--border);
+  background: rgba(24, 24, 27, 0.4);
+  border-radius: 12px;
+  padding: 1rem 1.2rem;
+}
+.pill {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 0.15em 0.7em;
+  font-size: 0.8rem;
+  background: rgba(99, 102, 241, 0.15); /* accent-tinted */
 }
 """
 
+# A tiny ES-module component — models the "keep index.html readable, heavy JS in its own file" pattern.
+_APP_JS = """\
+// app.js — your interactive / heavy code lives here, so index.html stays readable.
+//
+// The pattern for anything bigger than a few lines (a Three.js scene, a chart, a
+// robot-arm viz): write it as an ES module, mount it into a <div id> in index.html,
+// and load it with <script type="module" src="app.js">. Import libraries straight
+// from a CDN — no build step:
+//
+//   import * as THREE from "https://esm.sh/three@0.160.0";
+//
+// Replace the demo below with your component.
+
+function mount(el) {
+  let count = 0;
+  const btn = document.createElement("button");
+  btn.className = "btn px-4 py-2 font-medium";
+  const render = () => (btn.textContent = `clicked ${count} times`);
+  btn.addEventListener("click", () => {
+    count += 1;
+    render();
+  });
+  render();
+  el.appendChild(btn);
+}
+
+const el = document.getElementById("app");
+if (el) mount(el);
+"""
+
 _CLAUDE_MD = """\
-# {title} — a ko-published static site
+# __TITLE__ — a ko-published static site
 
 > Scaffolded by `ko publish`. **Make a genuinely useful site with what's here.** Need a
 > capability this scaffold lacks? Ask Ko to extend `ko publish` rather than working around it.
 
 Single-page static site, deployed to Cloudflare via `ko publish`. No build step.
 
-## Stack
-- **Tailwind** (Play CDN) — write utility classes directly in `class="..."`.
-- **Alpine.js** — interactivity inline: `x-data`, `@click`, `x-text`, `x-show`.
-- **style.css** — your own styles; loads after Tailwind so it wins. Tweak `--accent` first.
+## How to style it
+- **Write clean, semantic HTML.** `style.css` already styles headings, text, links, tables,
+  code and blockquotes (dark theme — tweak `--accent` first). You shouldn't need a class on
+  every element. **Keep body text on the bright default** — reserve grey (`.muted`, ~zinc-400)
+  for captions/footnotes; greying prose down to zinc-500/600 makes it hard to read.
+- **Tailwind** (Play CDN) — reach for utility classes only for the *extras*: layout, spacing,
+  a coloured callout, a blinking heading.
+- **Alpine.js** — small inline interactivity: `x-data`, `@click`, `x-show`, `x-text`
+  (a toggle, an accordion).
+- **A couple of helpers, not a framework** — `style.css` ships `.card` and `.pill` to get you
+  started; use them, restyle them, or ignore them and build something fully custom. The one rule
+  that keeps a page readable: repeating the same Tailwind class string 3+ times → promote it to a
+  class in `style.css` instead of pasting it again.
 
-## Deploy
+## Keep the page readable — split heavy JS out
+More than a few lines of JavaScript (a chart, a Three.js / robot-arm viz, anything stateful)?
+Don't inline it. Put it in its own ES-module file and mount it:
+```html
+<div id="viz"></div>
+<script type="module" src="viz.js"></script>
+```
+```js
+// viz.js — import libs straight from a CDN, no build step
+import * as THREE from "https://esm.sh/three@0.160.0";
+export function mount(el) { /* ...build the widget... */ }
+mount(document.getElementById("viz"));
+```
+`app.js` here is a tiny working example of exactly this — repurpose or delete it.
+
+## Preview & deploy
+- **Preview locally:** `npx wrangler dev` here → http://localhost:8787 (serves over http so
+  `app.js`/ES modules load; refresh on save). Double-clicking `index.html` (`file://`) won't run
+  ES modules — use the dev server.
 - `wrangler.jsonc` here describes this site. `ko publish` from this folder re-deploys to the **same URL**.
 - Everything here is served at the site root; keep asset paths relative (`./img/...`).
 
 ## Going further (not yet wired)
-- 3D / graphics: add **Three.js** via CDN + importmap (still no build).
-- Backend / API / DB or a PIN gate: a Hono Worker (`--hono`, later). Refs: https://hono.dev/llms.txt
+- 3D / graphics: **Three.js** via `https://esm.sh/three` in a module file (above) — still no build.
+- Backend / API / DB or a PIN gate: a Hono Worker (`--hono`). Refs: https://hono.dev/llms.txt
 """
 
 # --- md template (write markdown, rendered client-side) ---
@@ -519,14 +719,23 @@ _MD_README = """\
 # __TITLE__
 
 This is the homepage — edit `README.md`. It's also the nav **hub**: link other pages
-with query-param links, and create a matching `.md` file for each.
+with `[Title](?page=other.md)` and create a matching `.md` file for each.
 
 ## Pages
 - _example:_ `[Hardware](?page=hardware.md)` → then create `hardware.md`
 
+## Custom visuals
+Raw HTML/SVG renders inline (Tailwind + Alpine are loaded) — generate bespoke charts,
+diagrams, dashboards directly. More flexible than a chart library. Example:
+
+<div class="my-6 rounded-lg border border-zinc-700 p-4" x-data="{ n: 0 }">
+  <p>Clicked <span x-text="n"></span> times</p>
+  <button class="mt-2 rounded bg-indigo-600 px-3 py-1 text-white" @click="n++">+1</button>
+</div>
+
 ## Writing
-Write normal markdown. Every `##` / `###` heading shows up in the right-sidebar
-table of contents automatically. Images: keep paths relative (`./img/x.png`).
+Normal markdown for prose. `##`/`###` headings → the TOC; code blocks get syntax
+highlighting. Images: relative paths (`./img/x.png`).
 """
 
 _MD_INDEX = """\
@@ -536,9 +745,19 @@ _MD_INDEX = """\
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>__TITLE__</title>
+    <!-- Share-card preview — edit og:description for your pitch link. -->
+    <meta property="og:title" content="__TITLE__" />
+    <meta property="og:description" content="__TITLE__" />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary" />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📄</text></svg>" />
+    <link rel="stylesheet" href="style.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11/styles/github-dark.min.css" />
+    <!-- Tailwind (for inline HTML/SVG components you embed) + markdown-it (prose) -->
+    <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/markdown-it@14/dist/markdown-it.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/markdown-it-anchor@9/dist/markdownItAnchor.umd.js"></script>
-    <link rel="stylesheet" href="style.css" />
+    <script src="https://cdn.jsdelivr.net/npm/highlight.js@11/lib/common.min.js"></script>
   </head>
   <body>
     <header class="topbar">
@@ -549,42 +768,55 @@ _MD_INDEX = """\
       <article id="content" class="prose">loading&hellip;</article>
       <aside id="toc" class="toc"></aside>
     </div>
-    <script>
+    <script type="module">
+      import Alpine from "https://cdn.jsdelivr.net/npm/alpinejs@3.14.9/dist/module.esm.js";
+      window.Alpine = Alpine;
+
       // Only fetch a local *.md file (no URLs, no path traversal).
       function safePage(p) {
         if (!p) return "README.md";
         p = p.replace(/^[./\\\\]+/, "");
         return /^[\\w-]+(\\/[\\w-]+)*\\.md$/.test(p) ? p : "README.md";
       }
-      var page = safePage(new URLSearchParams(location.search).get("page"));
+      const page = safePage(new URLSearchParams(location.search).get("page"));
       if (page !== "README.md") document.getElementById("home").hidden = false;
 
-      var md = window.markdownit({ html: false, linkify: true, typographer: true })
-        .use(window.markdownItAnchor);
+      const md = window.markdownit({
+        html: true,  // embed custom HTML/SVG/Tailwind/Alpine components inline (you author the content)
+        linkify: true,
+        typographer: true,
+        highlight: (str, lang) => {
+          if (lang && window.hljs.getLanguage(lang)) {
+            try {
+              return '<pre><code class="hljs">' +
+                window.hljs.highlight(str, { language: lang }).value + "</code></pre>";
+            } catch (e) {}
+          }
+          return "";
+        },
+      }).use(window.markdownItAnchor);
 
-      fetch(page)
-        .then(function (r) { if (!r.ok) throw r.status; return r.text(); })
-        .then(function (text) {
-          var content = document.getElementById("content");
-          content.innerHTML = md.render(text);
-          buildToc(content);
-          var h1 = content.querySelector("h1");
-          if (h1) document.title = h1.textContent;
-        })
-        .catch(function () {
-          document.getElementById("content").innerHTML =
-            "<p>Couldn't load <code>" + page + "</code>.</p>";
-        });
+      const content = document.getElementById("content");
+      const res = await fetch(page).catch(() => null);
+      if (!res || !res.ok) {
+        content.innerHTML = "<p>Couldn't load <code>" + page + "</code>.</p>";
+      } else {
+        content.innerHTML = md.render(await res.text());
+        const h1 = content.querySelector("h1");
+        if (h1) document.title = h1.textContent;
+        buildToc(content);
+        Alpine.start();  // activate any inline Alpine (x-data) components in the rendered HTML
+      }
 
       // Right-sidebar TOC from rendered h2/h3 (ids added by markdown-it-anchor).
       function buildToc(content) {
-        var heads = content.querySelectorAll("h2[id], h3[id]");
+        const heads = content.querySelectorAll("h2[id], h3[id]");
         if (!heads.length) return;
-        var ul = document.createElement("ul");
-        heads.forEach(function (h) {
-          var li = document.createElement("li");
+        const ul = document.createElement("ul");
+        heads.forEach((h) => {
+          const li = document.createElement("li");
           li.className = h.tagName.toLowerCase();
-          var a = document.createElement("a");
+          const a = document.createElement("a");
           a.href = "#" + h.id;
           a.textContent = h.textContent;
           li.appendChild(a);
@@ -678,9 +910,35 @@ body {
   border-left: 2px solid transparent;
 }
 .toc a:hover { color: var(--fg); border-left-color: var(--accent); }
+/* Starter building blocks for inline custom HTML (use, restyle, or ignore). Repeat a class
+   string 3+ times in your markdown's HTML → promote it to a class like these. */
+.card {
+  border: 1px solid var(--border);
+  background: rgba(24, 24, 27, 0.4);
+  border-radius: 12px;
+  padding: 1rem 1.2rem;
+}
+.pill {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 0.15em 0.7em;
+  font-size: 0.8rem;
+  background: rgba(99, 102, 241, 0.15); /* accent-tinted */
+}
 @media (max-width: 760px) {
   .layout { grid-template-columns: 1fr; }
   .toc { display: none; }
+}
+
+/* Print / "Save as PDF" — drop the chrome, go black-on-white, avoid mid-heading breaks. */
+@media print {
+  .topbar, .toc { display: none !important; }
+  .layout { display: block; max-width: none; margin: 0; padding: 0; }
+  body { background: #fff; color: #111; }
+  .prose a { color: #111; text-decoration: underline; }
+  .prose pre, .prose code { background: #f4f4f5; color: #111; border-color: #ddd; }
+  .prose h1, .prose h2, .prose h3 { break-after: avoid; }
+  .prose pre, .mermaid, .prose img, .prose table { break-inside: avoid; }
 }
 """
 
@@ -694,17 +952,44 @@ A static doc site: write markdown, it renders **client-side** (markdown-it) with
 dark theme + right-sidebar TOC. No build step. Deployed to Cloudflare via `ko publish`.
 
 ## How it works
-- `index.html` is a **generic shell — don't edit it.** It reads `?page=<file>.md` from
-  the URL (default `README.md`), fetches that file, and renders it.
+- `index.html` is a **generic shell — don't edit it** (one exception below). It reads
+  `?page=<file>.md` from the URL (default `README.md`), fetches it, and renders it.
 - **`README.md` is the homepage + nav hub.** Link pages with `[Title](?page=other.md)`.
-- Add a page = drop `other.md` + link it from `README.md`. No HTML changes, ever.
+- Add a page = drop `other.md` + link it from `README.md`. No HTML changes.
 - `##`/`###` headings auto-populate the right-sidebar TOC.
-- `style.css` is the theme — tweak `--accent` etc.
+- `style.css` is the theme — tweak `--accent` etc. Keep body text bright; reserve grey (`.muted`,
+  ~zinc-400) for captions/footnotes — don't grey prose down to zinc-500/600 (too faint to read).
 
-## Publish
+## Visuals & frameworks (all loaded, no build — `html: true`, so embed HTML/SVG inline)
+- **Tailwind** — utility classes on any inline HTML you write: `class="flex gap-4 rounded-lg p-4"`.
+- **Alpine** — lightweight inline interactivity: `x-data`, `@click`, `x-show`, `x-text`.
+  Start here: https://alpinejs.dev/start-here
+- **Diagrams / infographics** (architecture, flows) → **hand-write inline `<svg>`**. No library —
+  most flexible, and the thing an agent is good at.
+- **Data charts** (bar/line/scatter/pie from real numbers) → **Chart.js, on that page only**:
+  `<script src="https://cdn.jsdelivr.net/npm/chart.js/dist/chart.umd.min.js"></script>`
+  then a `<canvas>` + `new Chart(ctx, {type, data, options})`. (Per-page keeps diagram pages lean.)
+- **Heavy / stateful JS** (a Three.js viz, a big interactive widget) → don't paste it into the
+  markdown. Put the code in its own file `viz.js`, and keep the prose clean with just a mount point:
+  `<div id="viz"></div>` then `<script type="module" src="viz.js"></script>` (import libs from a
+  CDN, e.g. `https://esm.sh/three`). Editing the doc's text then never means scrolling past the widget.
+
+## Also
+- **Starter classes** — `style.css` ships `.card` / `.pill` for inline custom HTML; repeat a
+  class string 3+ times → promote it to a class there (keeps the markdown readable). Not a
+  design system — restyle or ignore them.
+- **Syntax highlighting** on fenced code blocks (highlight.js).
+- **Print / PDF** — `style.css` has print rules; "Save as PDF" gives a clean, nav-free export.
+- **Share card** — the ONE `index.html` edit worth making: set `og:description` (+ add
+  `og:image`) so a shared link shows a title/description/preview.
+
+## Preview & publish
+- **Preview locally:** `npx wrangler dev` here → http://localhost:8787, then refresh on save.
+  The page uses `fetch()` to load `.md`, which browsers block on `file://` — so preview via the
+  dev server, not by double-clicking `index.html`.
 - `ko publish` from this folder re-deploys to the **same URL**.
 - Raw `.md` is also served (`/other.md`) — agent / markdown-for-agents friendly.
-- markdown-it reference: https://github.com/markdown-it/markdown-it
+- markdown-it: https://github.com/markdown-it/markdown-it
 """
 
 # --- bare template (just hints; the agent builds from scratch) ---
@@ -758,6 +1043,7 @@ type Bindings = { ASSETS: Fetcher; KO_PIN?: string };
 const app = new Hono<{ Bindings: Bindings }>();
 
 // PIN gate — active only when KO_PIN is set (the `--pin` flag sets it). Remove the var to open up.
+// (Prefer a native browser login? Swap this block for `hono/basic-auth` — no styling, no logout.)
 app.use("*", async (c, next) => {
   const pin = c.env.KO_PIN;
   if (!pin || getCookie(c, "ko_pin") === pin) return next();
@@ -765,7 +1051,8 @@ app.use("*", async (c, next) => {
     const body = await c.req.parseBody();
     if (body.pin === pin) {
       setCookie(c, "ko_pin", pin, {
-        httpOnly: true, secure: true, sameSite: "Lax", path: "/", maxAge: 60 * 60 * 24 * 30,
+        // 90 days — a soft gate, so favour not re-prompting returning visitors. Bump freely.
+        httpOnly: true, secure: true, sameSite: "Lax", path: "/", maxAge: 60 * 60 * 24 * 90,
       });
       return c.redirect(new URL(c.req.url).pathname);
     }
@@ -773,8 +1060,28 @@ app.use("*", async (c, next) => {
   return c.html(pinPage(c.req.method === "POST"), 401);
 });
 
-// Your backend routes go here, e.g.:
-// app.get("/api/hello", (c) => c.json({ hello: "world" }));
+// --- Cached data endpoint --------------------------------------------------
+// A route the frontend GETs for data, with the upstream API cached at Cloudflare's edge.
+// Lazy + access-driven: the upstream is hit at most once per TTL (per location) and refreshed
+// on the first request after it expires — no cron, no KV. Tune per route: 60 = 1 min,
+// 1800 = 30 min, 86400 = 1 day. Edit the fetch + reshape; point DATA_TTL at how fresh you need it.
+const DATA_TTL = 1800; // 30 minutes
+
+app.get("/api/data", async (c) => {
+  const cache = caches.default;
+  const key = new Request(new URL("/api/data", c.req.url)); // cache key = this URL
+  const hit = await cache.match(key);
+  if (hit) return hit;
+
+  // Fetch + reshape your upstream here. API key? `wrangler secret put NAME` (encrypted, not
+  // committed — unlike KO_PIN) and read c.env.NAME.
+  const upstream = await fetch("https://api.example.com/prices?days=30");
+  const data = await upstream.json();
+
+  const res = Response.json(data, { headers: { "cache-control": `public, max-age=${DATA_TTL}` } });
+  c.executionCtx.waitUntil(cache.put(key, res.clone())); // store without blocking the response
+  return res;
+});
 
 // Everything else → the static doc/app in ./public
 app.all("*", (c) => c.env.ASSETS.fetch(c.req.raw));
@@ -812,11 +1119,31 @@ A Cloudflare Worker (Hono) serving the doc/app in `public/`, deployed via `ko pu
 Backend-ready: add API routes, D1, R2 in `src/index.ts`. `ko publish` runs `npm install`
 (once) then `wrangler deploy` — no build config to manage.
 
+**Preview locally:** `npx wrangler dev` here → http://localhost:8787 — runs the real worker (PIN
+gate, `/api/*`) over http and reloads on save. Opening `public/index.html` via `file://` breaks the
+markdown shell's `fetch()` and ES modules, so always preview through the dev server.
+
 ## Layout
 - `public/` — the static site (markdown doc by default: edit `public/README.md`, the nav hub;
-  link pages with `[Title](?page=other.md)`).
+  link pages with `[Title](?page=other.md)`). Same client-side visuals as the `--md` scaffold:
+  Tailwind + Alpine + inline `<svg>` for diagrams + Chart.js (per-page) for data charts, plus
+  `.card`/`.pill` starter classes in `public/style.css`. Building fully custom HTML? Repeat a
+  Tailwind string 3+ times → make it a class in `public/style.css` (keeps the markup readable).
 - `src/index.ts` — the Hono worker. Order: PIN gate -> your routes -> serve `public/` assets.
-- `wrangler.jsonc` — `run_worker_first` so the worker sees every request before assets.
+- `wrangler.jsonc` — on a gated site `run_worker_first` is on so the worker sees every request
+  before assets (required, or `/README.md` would bypass the PIN); open sites serve assets from
+  the edge directly.
+
+## Client components (no build)
+The site in `public/` is no-build, so heavy client widgets are **plain ES modules**, not JSX.
+Split anything bigger than a few lines out of the markdown/HTML into its own file — keeps the
+page readable:
+```html
+<div id="viz"></div>
+<script type="module" src="viz.js"></script>
+```
+Import libs from a CDN (`import * as THREE from "https://esm.sh/three@0.160.0"`). `hono/jsx/dom`
+components need a bundler — only reach for them if you add a build step.
 
 ## Hono cheat-sheet (Cloudflare Workers)
 ```ts
@@ -840,7 +1167,27 @@ app.use("*", async (c, next) => { /* before */ await next(); /* after */ });  //
 
 ## PIN gate
 - Active only when `vars.KO_PIN` is set in `wrangler.jsonc` (the `--pin` flag generates one).
-- A soft access code (share a link + PIN), not real auth. Remove the var to make it public.
+- A soft access code (share a link + PIN), not real auth — it's a plaintext Worker var. Remove
+  the var to make it public.
+- **Change it:** `ko publish --pin new` (random) or `ko publish --pin 123456` (specific), then it
+  re-deploys with the new PIN. Safe to commit `KO_PIN` (private repo, soft gate).
+- Want a hard wall instead of the styled PIN page? `hono/basic-auth` is ~3 lines — but it's a
+  browser username/password dialog (unstyleable, no logout), so we default to the cookie/PIN gate.
+
+## Cached data (external API → chart)
+`src/index.ts` ships a ready `/api/data` route: it fetches an upstream API and caches the result
+at Cloudflare's edge. **Lazy + access-driven** — the upstream is hit at most once per `DATA_TTL`
+(per location) and refreshed on the first request after it expires. No cron, no KV binding. Point
+it at your API, reshape the JSON, set `DATA_TTL` (`60` = 1 min, `1800` = 30 min, `86400` = 1 day).
+- **API keys** → `wrangler secret put NAME` (encrypted, **not** committed — unlike `KO_PIN`), read `c.env.NAME`.
+- **Frontend** — fetch it, draw with Chart.js (see the visuals note):
+  ```js
+  const data = await (await fetch("/api/data")).json();
+  new Chart(canvas, { type: "line", data: toChart(data) });
+  ```
+- **Pure passthrough** (no reshape)? Skip the helper: `fetch(url, { cf: { cacheTtl: 1800, cacheEverything: true } })`.
+- **Need a global / cross-deploy cache?** Add a KV binding in `wrangler.jsonc` and use `c.env.<KV>` —
+  the edge cache above is per-location and clears on redeploy (fine for most dashboards).
 
 ## Add a backend
 - API route: add `app.get("/api/...")` ABOVE the catch-all asset handler in `src/index.ts`.

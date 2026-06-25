@@ -2,6 +2,29 @@
 
 Newest first. Big picture only — git commits have the detail; candidate ideas and decisions live in `docs/ideas.md`.
 
+## 2026-06-25
+
+- **`ko publish` hardening + scaffold polish** (post-Opus-review on the `--hono` tier):
+  - Fixed a real bug — `ko publish <hono-dir> --name foo` rewrote the worker's `wrangler.jsonc`
+    with the *static* config, dropping `main`/`./public`/`KO_PIN` (gated site → public, served repo
+    root). `deploy()` now routes to the hono config writer when the folder is a worker.
+  - `run_worker_first` is now `bool(pin)` — required for a gated site (else `/README.md` bypasses
+    the PIN), wasteful for an open one (assets serve from the edge).
+  - **PIN rotation** `ko publish --pin new|<digits>`; gate cookie bumped 30→90 days.
+  - **Scaffold styling**: static `style.css` now has a base element layer (so plain HTML looks
+    good) + `.card`/`.pill` starters; heavy JS split into its own `app.js` module (mount `<div>` +
+    `<script type=module>`); grey-text guard in the CLAUDE.md (keep prose ≥ zinc-400). Same
+    component-split guidance for `--md`/`--hono`.
+  - **Cached data endpoint** in the `--hono` scaffold: `/api/data` caches an upstream API at the
+    edge (Cache API, lazy/access-driven, `DATA_TTL`) — no cron, no KV. Keys stay server-side.
+  - **`ko publish preview [dir]`** — `wrangler dev` over real http (ES modules + `fetch()` work,
+    unlike `file://`); runs the real worker for `--hono`.
+  - **`.assetsignore`** for static/md/bare (assets dir is `.`) so the `.wrangler/` preview dir,
+    `wrangler.jsonc` and `CLAUDE.md` aren't served at the site root.
+  - Docs: Cloudflare setup-for-another-user (token template + DNS perm), preview/`file://` note,
+    and `docs/publish-ai.md` capturing the (deferred) "simple `ask(prompt)` on a published site"
+    plan — Workers AI (zero key) vs OpenRouter (secret-on-deploy).
+
 ## 2026-06-22
 
 - **Renamed `ko-tools` → `kotools`** (folder + PyPI name; command stays `ko`; `kotools` is free on PyPI). Recreated the venv — the folder rename orphaned console-script shebangs.

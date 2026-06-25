@@ -68,7 +68,21 @@ tt_app = typer.Typer(
 app.add_typer(tt_app, name="tt")
 
 publish_app = typer.Typer(
-    help="Publish a folder to Cloudflare as a static site (needs wrangler). `ko publish new <dir>` scaffolds; `ko publish [dir]` deploys.",
+    help=(
+        "Publish a folder to Cloudflare; re-publishing overwrites the same URL. "
+        "Two steps: scaffold a site, then deploy it.\n\n"
+        "Scaffold pathways (`ko publish new <dir> [flag]`) — each drops a CLAUDE.md with how-to:\n\n"
+        "• (default) static HTML page — Tailwind + Alpine, no build.\n\n"
+        "• --md   markdown doc site — write .md (README is the hub); raw HTML/SVG + Tailwind + "
+        "Alpine render inline for custom visuals; TOC, syntax highlighting, print/PDF.\n\n"
+        "• --bare  just a CLAUDE.md — the agent builds from scratch.\n\n"
+        "• --hono  a Hono worker — API routes, D1/R2, server-side code; add --pin to gate it "
+        "behind a 6-digit PIN.\n\n"
+        "Preview: `ko publish preview <dir>` → wrangler dev at http://localhost:8787 (real http, "
+        "so ES modules + fetch work; view it as you build).\n\n"
+        "Deploy: `ko publish <dir>` → <name>.khalido.dev (`--name` to set it, `--force` to take "
+        "over an existing name). Needs wrangler (`npm install`) + KO_CLOUDFLARE_API_TOKEN."
+    ),
     no_args_is_help=True,
 )
 app.add_typer(publish_app, name="publish")
@@ -919,6 +933,9 @@ def publish_new(
     bare: bool = typer.Option(False, "--bare", help="just a CLAUDE.md of hints; build from scratch"),
     hono: bool = typer.Option(False, "--hono", help="Hono worker site — backend-ready (API routes, D1/R2)"),
     pin: bool = typer.Option(False, "--pin", help="PIN-gate it (implies --hono; generates a 6-digit PIN)"),
+    name: str = typer.Option(
+        None, "--name", "-n", help="worker/subdomain name (default: folder, or parent if folder is generic)"
+    ),
 ) -> None:
     """Scaffold a site to publish. Default: static (Tailwind + Alpine). `--md` / `--bare` / `--hono`."""
     from pathlib import Path
@@ -930,7 +947,7 @@ def publish_new(
         raise typer.Exit(2)
     mode = "md" if md else "bare" if bare else "hono" if hono else "static"
     folder = Path(path)
-    written = publish_mod.scaffold(folder, title=title, mode=mode, pin=pin)
+    written = publish_mod.scaffold(folder, title=title, mode=mode, pin=pin, name=name)
     if written:
         for p in written:
             typer.echo(f"created {p}")
@@ -944,6 +961,23 @@ def publish_new(
     typer.echo(f"\n{hint}", err=True)
 
 
+@publish_app.command("preview")
+def publish_preview(
+    path: str = typer.Argument(".", help="folder to preview (default: current dir)"),
+    port: int = typer.Option(None, "--port", "-p", help="port (default: wrangler's 8787)"),
+) -> None:
+    """Preview a folder locally with `wrangler dev` (http://localhost:8787). Serves over http so ES
+    modules + fetch work (a `file://` open doesn't); for --hono it runs the real worker. Ctrl-C to stop."""
+    from pathlib import Path
+
+    try:
+        code = publish_mod.preview(Path(path), port=port)
+    except RuntimeError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1) from None
+    raise typer.Exit(code)
+
+
 @publish_app.command("up")
 def publish_up(
     path: str = typer.Argument(".", help="folder to publish (default: current dir)"),
@@ -953,11 +987,16 @@ def publish_up(
     force: bool = typer.Option(
         False, "--force", "-f", help="take over an existing subdomain/Worker name"
     ),
+    pin: str = typer.Option(
+        None, "--pin", help="set/rotate the gate PIN on a --hono site ('new' = random 6-digit)"
+    ),
 ) -> None:
     """Deploy a folder to Cloudflare. Prints the URL. Re-running overwrites the same URL."""
     from pathlib import Path
 
     try:
+        if pin is not None:
+            publish_mod.set_pin(Path(path), pin)  # rotate before deploy so the new PIN ships
         url = publish_mod.deploy(Path(path), name=name, force=force)
     except RuntimeError as e:
         typer.echo(str(e), err=True)
