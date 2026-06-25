@@ -49,7 +49,7 @@ class CalError(RuntimeError):
 def _handle(e: HttpError, context: str) -> None:
     if e.resp.status == 403:
         raise CalError(
-            f"Permission denied for {context}. Did you `ko gsheets auth` (read+write)?"
+            f"Permission denied for {context}. Did you `ko cal auth` (read+write)?"
         ) from e
     if e.resp.status == 404:
         raise CalError(f"Not found: {context}") from e
@@ -160,6 +160,30 @@ def parse_when(s: str) -> tuple[bool, date | datetime]:
     return True, date.fromisoformat(s)
 
 
+def _event_body(summary: str, when: str, end: str | None = None, minutes: int = 60) -> dict:
+    """Build the events.insert body. Pure (no API). All-day when -> all-day event; a timed event
+    with no end defaults to +`minutes`. Coerces a mismatched date/datetime end to the start's kind
+    so end.date is always a date and end.dateTime always a datetime."""
+    all_day, start_val = parse_when(when)
+    if all_day:
+        end_val = parse_when(end)[1] if end else start_val
+        end_date = end_val.date() if isinstance(end_val, datetime) else end_val
+        end_day = end_date + timedelta(days=1)  # end.date is exclusive
+        return {
+            "summary": summary,
+            "start": {"date": start_val.isoformat()},
+            "end": {"date": end_day.isoformat()},
+        }
+    end_dt = parse_when(end)[1] if end else (start_val + timedelta(minutes=minutes))
+    if not isinstance(end_dt, datetime):  # an all-day end given for a timed start -> midnight, local
+        end_dt = datetime(end_dt.year, end_dt.month, end_dt.day, tzinfo=tz())
+    return {
+        "summary": summary,
+        "start": {"dateTime": start_val.isoformat(), "timeZone": tz_name()},
+        "end": {"dateTime": end_dt.isoformat(), "timeZone": tz_name()},
+    }
+
+
 def create_event(
     summary: str,
     when: str,
@@ -169,21 +193,7 @@ def create_event(
 ) -> CalEvent:
     """Create an event. `when`/`end` per parse_when; a timed event with no end defaults to
     +`minutes`. All-day when -> all-day event. Returns the created CalEvent."""
-    all_day, start_val = parse_when(when)
-    if all_day:
-        end_day = (parse_when(end)[1] if end else start_val) + timedelta(days=1)  # end.date is exclusive
-        body = {
-            "summary": summary,
-            "start": {"date": start_val.isoformat()},
-            "end": {"date": end_day.isoformat()},
-        }
-    else:
-        end_dt = parse_when(end)[1] if end else (start_val + timedelta(minutes=minutes))
-        body = {
-            "summary": summary,
-            "start": {"dateTime": start_val.isoformat(), "timeZone": tz_name()},
-            "end": {"dateTime": end_dt.isoformat(), "timeZone": tz_name()},
-        }
+    body = _event_body(summary, when, end, minutes)
     try:
         raw = (
             get_calendar_service(readonly=False)

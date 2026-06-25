@@ -40,7 +40,7 @@ def _handle(e: HttpError, context: str) -> None:
     if e.resp.status == 403:
         raise DocsPermissionDenied(
             f"Permission denied for {context}. Is the doc accessible to the signed-in Google "
-            f"account — and for a write, did you `ko gsheets auth` (read+write)?"
+            f"account — and for a write, did you `ko gdocs auth` (read+write)?"
         ) from e
     if e.resp.status == 404:
         raise DocsNotFound(f"Not found: {context}") from e

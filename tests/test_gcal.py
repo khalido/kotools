@@ -45,6 +45,22 @@ def test_event_mapping_timed_and_all_day():
     assert allday.all_day is True and allday.summary == "(no title)" and allday.start == "2026-06-26"
 
 
+def test_event_body_all_day_timed_and_coercion():
+    # all-day: end.date is exclusive (+1 day)
+    b = gcal._event_body("Holiday", "2026-07-05")
+    assert b["start"] == {"date": "2026-07-05"} and b["end"] == {"date": "2026-07-06"}
+
+    # all-day start with a *timed* --end must still yield a date end (coerced), exclusive
+    b = gcal._event_body("Trip", "2026-07-05", end="2026-07-08T15:00")
+    assert b["end"]["date"] == "2026-07-09" and "dateTime" not in b["end"]
+
+    # timed: defaults to +minutes, timeZone set
+    b = gcal._event_body("Call", "2026-07-05T14:00", minutes=30)
+    assert b["start"]["dateTime"].startswith("2026-07-05T14:00")
+    assert b["end"]["dateTime"].startswith("2026-07-05T14:30")
+    assert b["start"]["timeZone"]
+
+
 def test_tz_name_default_and_override(monkeypatch):
     monkeypatch.setattr(gcal.config, "get", lambda *a, **k: None)
     assert gcal.tz_name() == "Australia/Sydney"
