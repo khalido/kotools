@@ -757,12 +757,12 @@ _MD_INDEX = """\
     <meta name="twitter:card" content="summary" />
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📄</text></svg>" />
     <link rel="stylesheet" href="style.css" />
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11/styles/github-dark.min.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11/styles/github-dark.min.css" />
     <!-- Tailwind (for inline HTML/SVG components you embed) + markdown-it (prose) -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/markdown-it@14/dist/markdown-it.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/markdown-it-anchor@9/dist/markdownItAnchor.umd.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/highlight.js@11/lib/common.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11/highlight.min.js"></script>
   </head>
   <body>
     <header class="topbar">
@@ -791,7 +791,8 @@ _MD_INDEX = """\
         linkify: true,
         typographer: true,
         highlight: (str, lang) => {
-          if (lang && window.hljs.getLanguage(lang)) {
+          // guard window.hljs so a CDN hiccup degrades to plain code, never a blank page
+          if (lang && window.hljs && window.hljs.getLanguage(lang)) {
             try {
               return '<pre><code class="hljs">' +
                 window.hljs.highlight(str, { language: lang }).value + "</code></pre>";

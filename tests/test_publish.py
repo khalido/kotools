@@ -86,6 +86,9 @@ def test_scaffold_md(monkeypatch, tmp_path):
     assert {"README.md", "index.html", "style.css", "CLAUDE.md", ".assetsignore", "wrangler.jsonc"} <= written
     shell = (folder / "index.html").read_text()
     assert "markdown-it" in shell and "safePage" in shell
+    # highlight.js must be the browser build — /lib/common.min.js is CommonJS (require()),
+    # which throws in-browser and hangs the page on "loading…".
+    assert "@highlightjs/cdn-assets" in shell and "highlight.js@11/lib/" not in shell
     assert "Robot Arm" in (folder / "README.md").read_text()
     assert '"not_found_handling": "404-page"' in (folder / "wrangler.jsonc").read_text()
 
