@@ -136,6 +136,24 @@ email — fine for bots, tedious for a personal read/write-anywhere CLI. OAuth g
 the signed-in account can see. **Scope to one folder?** No — OAuth scopes are per-API, not per-resource;
 use a service account with individual share grants if you need tighter control.
 
+### Multiple Google accounts (work + personal)
+
+`ko gsheets` supports several accounts — each keeps its own token, and you flip between them.
+
+- **Pick the active account** (in priority order): `--account`/`-a` on any command
+  (`ko gsheets -a personal info <id>`); the `KO_GOOGLE_ACCOUNT` env var; or `[google] account`
+  in `~/.config/ko/config.toml`. Unset = `"default"` (the single-account setup above, unchanged).
+- **Auth each once:** `ko gsheets -a work auth` then `ko gsheets -a personal auth`. Tokens cache
+  per account — `google_token_work.json`, `google_token_personal.json` (the `default` account keeps
+  the legacy `google_token.json`). `ko gsheets accounts` lists them (`*` = active).
+- **OAuth client (the subtle bit).** One Desktop client can authorize *multiple* accounts, so usually
+  a single `~/.config/ko/google_client.json` is all you need — just auth each account into it. The
+  exception: if your **work** account is a Workspace org with an **Internal** consent screen, that
+  client can't authorize a **personal** Gmail (and vice-versa). Then give that account its own client
+  from a separate GCP project, saved as `google_client_<account>.json` (e.g. `google_client_personal.json`);
+  `ko` uses the per-account file if present, else falls back to the shared `google_client.json`.
+- **Set your usual default** with `[google] account = "work"`, and reach for `-a personal` now and then.
+
 ## Output conventions
 
 - **Default output is human-readable** and designed to pipe (`ko gsheets get` emits TSV, `ko arxiv search` emits short line format).

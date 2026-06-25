@@ -123,8 +123,33 @@ def test_cli_parse_cells_and_norm_block():
     assert _norm_block([[1], [2]]) == [[1], [2]]  # 2D as-is
 
 
+def test_multi_account_paths(monkeypatch, tmp_path):
+    monkeypatch.setattr(google_auth.config, "get", lambda *a, **k: None)
+    monkeypatch.setattr(google_auth, "config_dir", lambda: tmp_path)
+    monkeypatch.delenv("KO_GOOGLE_CLIENT_FILE", raising=False)
+    monkeypatch.delenv("KO_GOOGLE_ACCOUNT", raising=False)
+
+    # default account → legacy filenames (back-compat)
+    assert google_auth.active_account() == "default"
+    assert google_auth.token_file().name == "google_token.json"
+    assert google_auth.client_file().name == "google_client.json"
+
+    # a named account → suffixed token; client falls back to the shared one until a
+    # per-account client file exists
+    monkeypatch.setenv("KO_GOOGLE_ACCOUNT", "work")
+    assert google_auth.active_account() == "work"
+    assert google_auth.token_file().name == "google_token_work.json"
+    assert google_auth.client_file().name == "google_client.json"
+    (tmp_path / "google_client_work.json").write_text("{}")
+    assert google_auth.client_file().name == "google_client_work.json"
+
+    # env beats config; KO_GOOGLE_CLIENT_FILE beats everything
+    monkeypatch.setenv("KO_GOOGLE_CLIENT_FILE", str(tmp_path / "custom.json"))
+    assert google_auth.client_file().name == "custom.json"
+
+
 @pytest.mark.skipif(
-    not google_auth.TOKEN_FILE.exists(),
+    not google_auth.token_file().exists(),
     reason="no cached google token; run `ko gsheets auth` first for live tests",
 )
 def test_get_info_on_public_sheet():

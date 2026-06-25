@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from dataclasses import asdict
 from pathlib import Path
@@ -414,6 +415,20 @@ def hn_item(
 # --- gsheets ---
 
 
+@gsheets_app.callback()
+def _gsheets_account(
+    account: str = typer.Option(
+        None,
+        "--account",
+        "-a",
+        help="Google account to use (else KO_GOOGLE_ACCOUNT / [google] account / 'default')",
+    ),
+) -> None:
+    """Pick the Google account for this command (set up accounts via `ko gsheets ... auth`)."""
+    if account:
+        os.environ["KO_GOOGLE_ACCOUNT"] = account
+
+
 def _emit_rows(rows: list[list], as_json: bool) -> None:
     if as_json:
         typer.echo(json.dumps(rows, default=str))
@@ -661,16 +676,28 @@ def gsheets_auth(
         False, "--readonly", help="grant read-only scope (default grants read+write)"
     ),
 ) -> None:
-    """Trigger or reset Google OAuth. Opens a browser on first run. Default grants
-    read+write so the write commands work — the same token also serves reads. If you
-    previously authed read-only, `--logout` first, then re-run to upgrade the scope."""
+    """Trigger or reset Google OAuth for the active account (`-a <name>` to pick). Opens a
+    browser on first run. Default grants read+write so the write commands work — the same
+    token also serves reads. Authed read-only before? `--logout` then re-run to upgrade."""
+    acct = google_auth.active_account()
     if out:
         removed = google_auth.logout()
-        typer.echo("Signed out." if removed else "No cached token to remove.")
+        typer.echo(f"Signed out of '{acct}'." if removed else f"No cached token for '{acct}'.")
         return
     google_auth.get_credentials(readonly=readonly)
     scope = "read-only" if readonly else "read+write"
-    typer.echo(f"Signed in ({scope}). Token cached at {google_auth.TOKEN_FILE}.")
+    typer.echo(f"Signed in as '{acct}' ({scope}). Token cached at {google_auth.token_file()}.")
+
+
+@gsheets_app.command("accounts")
+def gsheets_accounts() -> None:
+    """List Google accounts with a cached token; `*` marks the active one."""
+    active = google_auth.active_account()
+    authed = google_auth.list_accounts()
+    for name in sorted(set(authed) | {active}):
+        mark = "*" if name == active else " "
+        note = "" if name in authed else f"  (no token — `ko gsheets -a {name} auth`)"
+        typer.echo(f"{mark} {name}{note}")
 
 
 # --- doc ---
@@ -984,12 +1011,12 @@ def doctor() -> None:
         ),
         (
             "gsheets",
-            "read Google Sheets",
+            "read & write Google Sheets",
             "OAuth client + token",
-            ("✓ authed", "green")
-            if google_auth.TOKEN_FILE.exists()
+            (f"✓ authed ({google_auth.active_account()})", "green")
+            if google_auth.token_file().exists()
             else ("– run `ko gsheets auth`", "yellow")
-            if google_auth.CLIENT_FILE.exists()
+            if google_auth.client_file().exists()
             else ("✗ no client file", "red"),
         ),
     ]

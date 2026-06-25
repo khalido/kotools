@@ -1,18 +1,17 @@
-"""Google OAuth for a personal CLI.
+"""Google OAuth for a personal CLI — multi-account.
 
-First run opens a browser for consent; refresh token is cached locally. No
-service accounts — this tool runs as *you*, against *your* Google account.
+First run opens a browser for consent; refresh tokens cache locally, one file per
+account. No service accounts — this tool runs as *you*, against *your* Google account(s).
 
-Scopes are per-API, not per-folder. Drive's read-only scope lets the tool see
-anything your Google account can see. If that's too broad, use a service
-account in a separate tool and share specific files with it.
+**Accounts.** Pick the active one with `--account`/`-a` (on any `ko gsheets` command),
+the `KO_GOOGLE_ACCOUNT` env var, or `[google] account` in config.toml; the default is
+`"default"`. Each account caches its own token. A per-account OAuth *client* JSON is
+optional — you only need one when a single client can't authorize the account (e.g. a
+Workspace "Internal" consent screen won't authorize a personal Gmail; give that account
+its own `google_client_<account>.json`).
 
-Setup (one-off):
-1. Create a Google Cloud project and enable the Sheets API + Drive API
-2. APIs & Services → Credentials → Create Credentials → OAuth client ID → Desktop app
-3. Download the JSON and save it to ~/.config/ko/google_client.json
-   (or set KO_GOOGLE_CLIENT_FILE=<path>)
-4. Run `ko gsheets auth` — browser opens, approve, done
+Scopes are per-API, not per-folder: Drive's read-only scope lets the tool see anything the
+signed-in account can see. Full one-off setup is in the README → "Google Sheets setup".
 """
 
 from __future__ import annotations
@@ -26,15 +25,8 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import Resource, build
 
-from .dirs import config_dir, state_file
-
-
-CONFIG_DIR = config_dir()
-CLIENT_FILE = Path(
-    os.environ.get("KO_GOOGLE_CLIENT_FILE") or (CONFIG_DIR / "google_client.json")
-)
-# token is state, not config — lives in ~/.local/state/ko (auto-migrated)
-TOKEN_FILE = state_file("google_token.json")
+from . import config
+from .dirs import config_dir, state_dir, state_file
 
 SCOPES_READONLY = [
     "https://www.googleapis.com/auth/spreadsheets.readonly",
@@ -45,22 +37,62 @@ SCOPES_READWRITE = [
     "https://www.googleapis.com/auth/drive",
 ]
 
+DEFAULT_ACCOUNT = "default"
+
 
 class AuthError(RuntimeError):
     pass
+
+
+def active_account() -> str:
+    """The Google account to use: `--account` (via KO_GOOGLE_ACCOUNT) → config
+    `[google] account` → 'default'."""
+    return os.environ.get("KO_GOOGLE_ACCOUNT") or config.get("google", "account") or DEFAULT_ACCOUNT
+
+
+def client_file(account: str | None = None) -> Path:
+    """OAuth client JSON for an account. KO_GOOGLE_CLIENT_FILE wins; else a per-account
+    `google_client_<account>.json` if it exists; else the shared `google_client.json`."""
+    if override := os.environ.get("KO_GOOGLE_CLIENT_FILE"):
+        return Path(override)
+    account = account or active_account()
+    if account != DEFAULT_ACCOUNT:
+        specific = config_dir() / f"google_client_{account}.json"
+        if specific.exists():
+            return specific
+    return config_dir() / "google_client.json"
+
+
+def token_file(account: str | None = None) -> Path:
+    """Cached-token path for an account (state, not config). 'default' keeps the legacy
+    `google_token.json`; named accounts get `google_token_<account>.json`."""
+    account = account or active_account()
+    name = "google_token.json" if account == DEFAULT_ACCOUNT else f"google_token_{account}.json"
+    return state_file(name)
+
+
+def list_accounts() -> list[str]:
+    """Account names that have a cached token, sorted."""
+    out: list[str] = []
+    for p in state_dir().glob("google_token*.json"):
+        stem = p.stem
+        if stem == "google_token":
+            out.append(DEFAULT_ACCOUNT)
+        elif stem.startswith("google_token_"):
+            out.append(stem[len("google_token_") :])
+    return sorted(out)
 
 
 def _scopes(readonly: bool) -> list[str]:
     return SCOPES_READONLY if readonly else SCOPES_READWRITE
 
 
-def _load_cached(readonly: bool) -> Credentials | None:
-    if not TOKEN_FILE.exists():
+def _load_cached(readonly: bool, account: str) -> Credentials | None:
+    tf = token_file(account)
+    if not tf.exists():
         return None
     try:
-        creds = Credentials.from_authorized_user_file(
-            str(TOKEN_FILE), _scopes(readonly)
-        )
+        creds = Credentials.from_authorized_user_file(str(tf), _scopes(readonly))
     except Exception:
         return None
     if creds.valid:
@@ -68,56 +100,61 @@ def _load_cached(readonly: bool) -> Credentials | None:
     if creds.expired and creds.refresh_token:
         try:
             creds.refresh(Request())
-            TOKEN_FILE.write_text(creds.to_json())
+            tf.write_text(creds.to_json())
             return creds
         except Exception:
             return None
     return None
 
 
-def _run_flow(readonly: bool) -> Credentials:
-    if not CLIENT_FILE.exists():
-        raise AuthError(
-            f"Google OAuth client file not found at {CLIENT_FILE}.\n"
-            f"Create an OAuth 2.0 Desktop client at "
-            f"https://console.cloud.google.com/apis/credentials and save the JSON "
-            f"there, or set KO_GOOGLE_CLIENT_FILE=<path>. See README for full setup."
+def _run_flow(readonly: bool, account: str) -> Credentials:
+    cf = client_file(account)
+    if not cf.exists():
+        want = "google_client.json" if account == DEFAULT_ACCOUNT else (
+            f"google_client_{account}.json (or the shared google_client.json)"
         )
-    flow = InstalledAppFlow.from_client_secrets_file(
-        str(CLIENT_FILE), _scopes(readonly)
-    )
+        raise AuthError(
+            f"Google OAuth client file not found for account {account!r} (looked at {cf}).\n"
+            f"Create an OAuth 2.0 Desktop client at "
+            f"https://console.cloud.google.com/apis/credentials and save the JSON to "
+            f"~/.config/ko/{want}, or set KO_GOOGLE_CLIENT_FILE=<path>. See README for full setup."
+        )
+    flow = InstalledAppFlow.from_client_secrets_file(str(cf), _scopes(readonly))
     creds = flow.run_local_server(port=0)
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    TOKEN_FILE.write_text(creds.to_json())
+    tf = token_file(account)
+    tf.parent.mkdir(parents=True, exist_ok=True)
+    tf.write_text(creds.to_json())
     return creds
 
 
 @lru_cache
-def get_credentials(readonly: bool = True) -> Credentials:
-    creds = _load_cached(readonly)
+def get_credentials(readonly: bool = True, account: str | None = None) -> Credentials:
+    account = account or active_account()
+    creds = _load_cached(readonly, account)
     if creds is not None:
         return creds
-    return _run_flow(readonly)
+    return _run_flow(readonly, account)
 
 
 @lru_cache
-def get_sheets_service(readonly: bool = True) -> Resource:
+def get_sheets_service(readonly: bool = True, account: str | None = None) -> Resource:
     return build(
-        "sheets", "v4", credentials=get_credentials(readonly), cache_discovery=False
+        "sheets", "v4", credentials=get_credentials(readonly, account), cache_discovery=False
     )
 
 
 @lru_cache
-def get_drive_service(readonly: bool = True) -> Resource:
+def get_drive_service(readonly: bool = True, account: str | None = None) -> Resource:
     return build(
-        "drive", "v3", credentials=get_credentials(readonly), cache_discovery=False
+        "drive", "v3", credentials=get_credentials(readonly, account), cache_discovery=False
     )
 
 
-def logout() -> bool:
-    """Remove cached token. Returns True if a token was removed."""
-    if TOKEN_FILE.exists():
-        TOKEN_FILE.unlink()
+def logout(account: str | None = None) -> bool:
+    """Remove an account's cached token (default: the active account). Returns True if removed."""
+    tf = token_file(account)
+    if tf.exists():
+        tf.unlink()
         get_credentials.cache_clear()
         get_sheets_service.cache_clear()
         get_drive_service.cache_clear()
