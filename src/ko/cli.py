@@ -85,7 +85,7 @@ app.add_typer(cal_app, name="cal")
 gmail_app = typer.Typer(
     help=(
         "Read Gmail (read-only; same OAuth token as `ko gsheets`). Bare `ko gmail` = recent "
-        "inbox; also `search` (Gmail query syntax), `from <who>`, `view <id>`."
+        "inbox; also `search` (Gmail query syntax), `from <who>`, `view <id>`, `thread <id>`."
     ),
 )
 app.add_typer(gmail_app, name="gmail")
@@ -1089,6 +1089,34 @@ def gmail_view(
     typer.echo(body if full else body[:1500])
     if not full and len(body) > 1500:
         typer.echo(f"\n… {len(body) - 1500} more chars — pass --full", err=True)
+
+
+@gmail_app.command("thread")
+def gmail_thread(
+    thread_id: str = typer.Argument(..., help="thread id (a message's thread_id from a list row)"),
+    full: bool = typer.Option(
+        False, "--full", help="print each whole body (default: first ~800 chars per message)"
+    ),
+) -> None:
+    """Read a whole conversation: every message in the thread, oldest first."""
+    try:
+        msgs = gmail_mod.get_thread(thread_id)
+    except gmail_mod.GmailError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1) from None
+    if not msgs:
+        typer.echo("no messages", err=True)
+        return
+    cap = 800
+    for i, (meta, body) in enumerate(msgs):
+        if i:
+            typer.echo("\n" + "─" * 40 + "\n")
+        typer.echo(f"From:    {meta.from_}")
+        typer.echo(f"Date:    {meta.date}")
+        typer.echo(f"Subject: {meta.subject}\n")
+        typer.echo(body if full else body[:cap])
+        if not full and len(body) > cap:
+            typer.echo(f"\n… {len(body) - cap} more chars — pass --full", err=True)
 
 
 @gmail_app.command("auth")

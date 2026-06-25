@@ -3,7 +3,8 @@
 Concise by design (less verbose than the Gmail MCP): a list is one line per message
 (id, date, from, subject, snippet); a view is headers + the plain-text body. Pass Gmail's
 own search syntax verbatim — `from:`, `to:`, `subject:`, `newer_than:7d`, `is:unread`,
-`has:attachment`. Read-only: sending, labels, and drafts are the web client's job.
+`has:attachment`. `view` reads one message; `thread` reads a whole conversation. Read-only:
+sending, labels, and drafts are the web client's job.
 """
 
 from __future__ import annotations
@@ -119,14 +120,30 @@ def _find_mime(payload: dict, mime: str) -> str:
     return ""
 
 
+def _message_body(m: dict) -> str:
+    """Plain-text body of a full message dict (falls back to text/html)."""
+    payload = m.get("payload", {})
+    return _find_mime(payload, "text/plain") or _find_mime(payload, "text/html")
+
+
 def get_message(msg_id: str) -> tuple[GmailMessage, str]:
     """A single message: (metadata, plain-text body). Falls back to text/html if no plain part."""
     svc = get_gmail_service()
     try:
         m = svc.users().messages().get(userId="me", id=msg_id, format="full").execute(num_retries=3)
-        payload = m.get("payload", {})
-        body = _find_mime(payload, "text/plain") or _find_mime(payload, "text/html")
-        return _message(m), body
+        return _message(m), _message_body(m)
     except HttpError as e:
         _handle(e, msg_id)
+        raise  # unreachable: _handle always raises
+
+
+def get_thread(thread_id: str) -> list[tuple[GmailMessage, str]]:
+    """A whole conversation: every message as (metadata, plain-text body), oldest first.
+    Pass a thread id (a message's thread_id, or the same id Gmail shows for single-message threads)."""
+    svc = get_gmail_service()
+    try:
+        t = svc.users().threads().get(userId="me", id=thread_id, format="full").execute(num_retries=3)
+        return [(_message(m), _message_body(m)) for m in t.get("messages", [])]
+    except HttpError as e:
+        _handle(e, thread_id)
         raise  # unreachable: _handle always raises

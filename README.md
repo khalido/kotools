@@ -19,7 +19,7 @@ Current subcommands:
 - `ko gsheets` — read **& write** Google Sheets via OAuth (`get`/`find` · `set`/`put`/`header`/`add-tab`/`new`/`clear`, with overwrite guards)
 - `ko gdocs` — read **& write** Google Docs (same OAuth token): `get`/`info` · `append`/`replace`/`new`
 - `ko cal` — Google Calendar agenda + quick-add (same token): bare `ko cal` = next 7 days · `day`/`find`/`add`/`cals`
-- `ko gmail` — read Gmail (read-only, same token): bare = recent inbox · `search "<gmail query>"` · `from <who>` · `view <id>`
+- `ko gmail` — read Gmail (read-only, same token): bare = recent inbox · `search "<gmail query>"` · `from <who>` · `view <id>` · `thread <id>` (whole conversation)
 - `ko agent` — pydantic-ai agents: `research` (web + papers + HN) and `tv` (what to watch in AU), with saved/resumable sessions
 - `ko models` — list model strings usable with `-m` (incl. the live OpenRouter catalog)
 - `ko publish` — scaffold a site (static / markdown / Hono worker, optional PIN gate) and deploy it to Cloudflare; `ko publish preview` runs it locally first

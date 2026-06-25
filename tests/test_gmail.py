@@ -60,6 +60,14 @@ def test_message_from_metadata():
     assert "2026" in msg.date
 
 
+def test_message_body_plain_then_html():
+    plain = {"payload": {"mimeType": "text/plain", "body": {"data": _b64("the body")}}}
+    assert gmail._message_body(plain) == "the body"
+    html_only = {"payload": {"mimeType": "text/html", "body": {"data": _b64("<p>hi</p>")}}}
+    assert gmail._message_body(html_only) == "<p>hi</p>"  # falls back to html
+    assert gmail._message_body({}) == ""
+
+
 def test_short_from_helper():
     from ko.cli import _short_from
 
