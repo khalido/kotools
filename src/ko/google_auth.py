@@ -10,9 +10,9 @@ optional — you only need one when a single client can't authorize the account 
 Workspace "Internal" consent screen won't authorize a personal Gmail; give that account
 its own `google_client_<account>.json`).
 
-Scopes are per-API: `ko` requests Sheets + Docs + Calendar (read or read+write) — and deliberately
-NOT Drive, so it can't browse your whole Drive, only the docs/sheets you address by ID. One token
-per account covers all three. Adding another API later means one re-consent. Setup: README.
+Scopes are per-API: `ko` requests Sheets + Docs + Calendar (read or read+write) + Gmail (read-only)
+— and deliberately NOT Drive, so it can't browse your whole Drive, only the docs/sheets you address
+by ID. One token per account covers them all. Adding another API later means one re-consent. README.
 """
 
 from __future__ import annotations
@@ -33,12 +33,14 @@ SCOPES_READONLY = [
     "https://www.googleapis.com/auth/spreadsheets.readonly",
     "https://www.googleapis.com/auth/documents.readonly",
     "https://www.googleapis.com/auth/calendar.readonly",
+    "https://www.googleapis.com/auth/gmail.readonly",
 ]
 SCOPES_READWRITE = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/documents",
     "https://www.googleapis.com/auth/calendar.events",
     "https://www.googleapis.com/auth/calendar.readonly",  # list calendars + read events
+    "https://www.googleapis.com/auth/gmail.readonly",  # Gmail is read-only in ko (no send/modify)
 ]
 
 DEFAULT_ACCOUNT = "default"
@@ -161,6 +163,13 @@ def get_calendar_service(readonly: bool = True, account: str | None = None) -> R
     )
 
 
+@lru_cache
+def get_gmail_service(readonly: bool = True, account: str | None = None) -> Resource:
+    return build(
+        "gmail", "v1", credentials=get_credentials(readonly, account), cache_discovery=False
+    )
+
+
 def logout(account: str | None = None) -> bool:
     """Remove an account's cached token (default: the active account). Returns True if removed."""
     tf = token_file(account)
@@ -170,5 +179,6 @@ def logout(account: str | None = None) -> bool:
         get_sheets_service.cache_clear()
         get_docs_service.cache_clear()
         get_calendar_service.cache_clear()
+        get_gmail_service.cache_clear()
         return True
     return False

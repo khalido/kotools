@@ -72,6 +72,16 @@ def test_search_events_filters(monkeypatch):
     assert gcal.search_events("") == []  # empty query short-circuits
 
 
+def test_search_events_past_is_most_recent_first(monkeypatch):
+    fake = [  # list_events returns ascending by start
+        gcal.CalEvent("1", "Dentist Jan", "2026-01-01", "2026-01-01", True, "c", "Cal"),
+        gcal.CalEvent("2", "Dentist Jun", "2026-06-01", "2026-06-01", True, "c", "Cal"),
+    ]
+    monkeypatch.setattr(gcal, "list_events", lambda **k: fake)
+    out = gcal.search_events("dentist", past=True)
+    assert [e.summary for e in out] == ["Dentist Jun", "Dentist Jan"]  # most recent first
+
+
 def test_tz_name_default_and_override(monkeypatch):
     monkeypatch.setattr(gcal.config, "get", lambda *a, **k: None)
     assert gcal.tz_name() == "Australia/Sydney"

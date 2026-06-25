@@ -23,6 +23,7 @@ from . import x as x_mod
 from . import gsheets as gsheets_mod
 from . import gdocs as gdocs_mod
 from . import gcal as gcal_mod
+from . import gmail as gmail_mod
 from . import ticktick as ticktick_mod
 from . import publish as publish_mod
 from .agents import research_run, research_repl, tv_run, tv_repl
@@ -80,6 +81,14 @@ cal_app = typer.Typer(
     ),
 )
 app.add_typer(cal_app, name="cal")
+
+gmail_app = typer.Typer(
+    help=(
+        "Read Gmail (read-only; same OAuth token as `ko gsheets`). Bare `ko gmail` = recent "
+        "inbox; also `search` (Gmail query syntax), `from <who>`, `view <id>`."
+    ),
+)
+app.add_typer(gmail_app, name="gmail")
 
 x_app = typer.Typer(
     help="X (Twitter) posts via the official XDK (X_BEARER_TOKEN required, paid tier for reads).",
@@ -933,18 +942,21 @@ def cal_add(
 
 @cal_app.command("find")
 def cal_find(
-    text: str = typer.Argument(..., help="match upcoming event titles (case-insensitive substring)"),
-    days: int = typer.Option(60, "--days", "-d", help="how far ahead to look (default 60)"),
+    text: str = typer.Argument(..., help="match event titles (case-insensitive substring)"),
+    days: int = typer.Option(60, "--days", "-d", help="how far to look (default 60)"),
+    past: bool = typer.Option(
+        False, "--past", "-p", help="search the past, not the future ('when was my last X')"
+    ),
     as_json: bool = typer.Option(False, "--json", help="emit JSON"),
 ) -> None:
-    """Find upcoming events whose title matches TEXT, e.g. `ko cal find dentist`."""
+    """Find events whose title matches TEXT. Forward by default; `--past` for 'when was my last X'."""
     try:
-        events = gcal_mod.search_events(text, days=days)
+        events = gcal_mod.search_events(text, days=days, past=past)
     except gcal_mod.CalError as e:
         typer.echo(str(e), err=True)
         raise typer.Exit(1) from None
     if not _emit_events(events, as_json):
-        typer.echo(f"no upcoming '{text}' in the next {days} day(s)", err=True)
+        typer.echo(f"no {'past' if past else 'upcoming'} '{text}' within {days} day(s)", err=True)
 
 
 @cal_app.command("cals")
@@ -973,6 +985,123 @@ def cal_auth(
 
 @cal_app.command("accounts")
 def cal_accounts() -> None:
+    """List Google accounts with a cached token; `*` marks the active one."""
+    _google_accounts()
+
+
+# --- gmail (read-only) ---
+
+
+def _short_from(raw: str) -> str:
+    """'Name <email>' -> Name (or the email if unnamed)."""
+    raw = raw.strip()
+    if "<" in raw:
+        name = raw.split("<", 1)[0].strip().strip('"')
+        return name or raw.split("<", 1)[1].rstrip(">")
+    return raw
+
+
+def _emit_messages(msgs, as_json: bool) -> None:
+    if as_json:
+        typer.echo(json.dumps([asdict(m) for m in msgs], default=str))
+        return
+    if not msgs:
+        typer.echo("no messages", err=True)
+        return
+    for m in msgs:
+        mark = "●" if m.unread else " "
+        typer.echo(f"{mark} {m.id}  {m.date}  {_short_from(m.from_)}  —  {m.subject}")
+        if m.snippet:
+            typer.echo(f"    {m.snippet[:160]}")
+
+
+@gmail_app.callback(invoke_without_command=True)
+def _gmail_main(
+    ctx: typer.Context,
+    account: str = typer.Option(
+        None, "--account", "-a", help="Google account (else env / config / 'default')"
+    ),
+    n: int = typer.Option(10, "-n", "--max", help="how many messages (default 10)"),
+    unread: bool = typer.Option(False, "--unread", help="only unread"),
+    as_json: bool = typer.Option(False, "--json", help="emit JSON"),
+) -> None:
+    """Recent inbox messages (bare `ko gmail`). Subcommands: search / from / view."""
+    _set_account(account)
+    if ctx.invoked_subcommand is not None:
+        return
+    try:
+        msgs = gmail_mod.recent(n=n, unread=unread)
+    except gmail_mod.GmailError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1) from None
+    _emit_messages(msgs, as_json)
+
+
+@gmail_app.command("search")
+def gmail_search(
+    query: list[str] = typer.Argument(..., help="Gmail query, e.g. from:alice newer_than:7d"),
+    n: int = typer.Option(10, "-n", "--max", help="how many (default 10)"),
+    unread: bool = typer.Option(False, "--unread", help="only unread"),
+    as_json: bool = typer.Option(False, "--json", help="emit JSON"),
+) -> None:
+    """Search with Gmail's own query syntax (passed verbatim): `ko gmail search is:unread newer_than:2d`."""
+    q = " ".join(query) + (" is:unread" if unread else "")
+    try:
+        msgs = gmail_mod.search(q, n=n)
+    except gmail_mod.GmailError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1) from None
+    _emit_messages(msgs, as_json)
+
+
+@gmail_app.command("from")
+def gmail_from(
+    who: str = typer.Argument(..., help="sender name or email"),
+    n: int = typer.Option(10, "-n", "--max", help="how many (default 10)"),
+    unread: bool = typer.Option(False, "--unread", help="only unread"),
+    as_json: bool = typer.Option(False, "--json", help="emit JSON"),
+) -> None:
+    """Recent mail from a person (shortcut for `search from:<who>`)."""
+    try:
+        msgs = gmail_mod.from_sender(who, n=n, unread=unread)
+    except gmail_mod.GmailError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1) from None
+    _emit_messages(msgs, as_json)
+
+
+@gmail_app.command("view")
+def gmail_view(
+    msg_id: str = typer.Argument(..., help="message id (from a list/search row)"),
+    full: bool = typer.Option(
+        False, "--full", help="print the whole body (default: first ~1500 chars)"
+    ),
+) -> None:
+    """Read one message: headers + plain-text body."""
+    try:
+        meta, body = gmail_mod.get_message(msg_id)
+    except gmail_mod.GmailError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1) from None
+    typer.echo(f"From:    {meta.from_}")
+    typer.echo(f"Date:    {meta.date}")
+    typer.echo(f"Subject: {meta.subject}\n")
+    typer.echo(body if full else body[:1500])
+    if not full and len(body) > 1500:
+        typer.echo(f"\n… {len(body) - 1500} more chars — pass --full", err=True)
+
+
+@gmail_app.command("auth")
+def gmail_auth(
+    out: bool = typer.Option(False, "--logout", help="remove the cached token and exit"),
+    readonly: bool = typer.Option(False, "--readonly", help="grant read-only scope"),
+) -> None:
+    """Google OAuth (shared token with gsheets/gdocs/cal). Default grants read+write."""
+    _google_auth(out, readonly)
+
+
+@gmail_app.command("accounts")
+def gmail_accounts() -> None:
     """List Google accounts with a cached token; `*` marks the active one."""
     _google_accounts()
 

@@ -148,12 +148,23 @@ def list_events(
     return events
 
 
-def search_events(query: str, days: int = 60, calendar_ids: list[str] | None = None) -> list[CalEvent]:
-    """Upcoming events whose summary contains `query` (case-insensitive substring), within the
-    next `days`. For "when's the next X" — substring keeps it simple (expand abbreviations upstream)."""
+def search_events(
+    query: str, days: int = 60, past: bool = False, calendar_ids: list[str] | None = None
+) -> list[CalEvent]:
+    """Events whose summary contains `query` (case-insensitive substring), within `days` of now.
+    Forward by default ("when's the next X"); past=True searches backward and returns most-recent
+    first ("when was my last X"). Substring keeps it simple — expand abbreviations upstream."""
     q = query.strip().lower()
     if not q:
         return []
+    if past:
+        now = datetime.now(tz())
+        events = list_events(
+            time_min=now - timedelta(days=days), time_max=now, calendar_ids=calendar_ids
+        )
+        matches = [e for e in events if q in e.summary.lower()]
+        matches.reverse()  # list_events sorts ascending; most recent first for "last X"
+        return matches
     return [e for e in list_events(days=days, calendar_ids=calendar_ids) if q in e.summary.lower()]
 
 

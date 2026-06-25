@@ -19,6 +19,7 @@ Current subcommands:
 - `ko gsheets` — read **& write** Google Sheets via OAuth (`get`/`find` · `set`/`put`/`header`/`add-tab`/`new`/`clear`, with overwrite guards)
 - `ko gdocs` — read **& write** Google Docs (same OAuth token): `get`/`info` · `append`/`replace`/`new`
 - `ko cal` — Google Calendar agenda + quick-add (same token): bare `ko cal` = next 7 days · `day`/`find`/`add`/`cals`
+- `ko gmail` — read Gmail (read-only, same token): bare = recent inbox · `search "<gmail query>"` · `from <who>` · `view <id>`
 - `ko agent` — pydantic-ai agents: `research` (web + papers + HN) and `tv` (what to watch in AU), with saved/resumable sessions
 - `ko models` — list model strings usable with `-m` (incl. the live OpenRouter catalog)
 - `ko publish` — scaffold a site (static / markdown / Hono worker, optional PIN gate) and deploy it to Cloudflare; `ko publish preview` runs it locally first
@@ -106,6 +107,9 @@ echo '{"Sheet1!A1": [["Name","Score"],["Ann",9]]}' | ko gsheets put <id>   # bul
 ko gdocs get <id> --md                          # a Google Doc as markdown
 ko cal                                          # your next 7 days
 ko cal add "Dentist" 2026-07-01T14:00 -m 30     # add a 30-minute event
+ko cal find dentist --past                      # when was my last dentist appointment?
+ko gmail from alice -n 5                         # recent mail from alice
+ko gmail search "is:unread newer_than:2d"        # unread, last 2 days
 ```
 
 ## Google Sheets setup (one-off) — read & write
@@ -115,8 +119,8 @@ token grants read **and** write; reads use the narrower read-only scope under th
 
 1. **Create a Google Cloud project.** https://console.cloud.google.com/projectcreate
 2. **Enable the APIs** you'll use. APIs & Services → Library → enable *Google Sheets API*, plus
-   *Google Docs API* (for `ko gdocs`) and *Google Calendar API* (for `ko cal`). No Drive — `ko`
-   reads/writes docs and sheets by ID and can't browse your Drive. One token covers all three.
+   *Google Docs API* (`ko gdocs`), *Google Calendar API* (`ko cal`), and *Gmail API* (`ko gmail`,
+   read-only). No Drive — `ko` works by ID and can't browse your Drive. One token covers them all.
 3. **Configure the OAuth consent screen** (APIs & Services → OAuth consent screen). This step decides
    whether your refresh token lasts:
    - **Workspace org?** Set **User type: Internal** — only your org's users, and **no token expiry**.
