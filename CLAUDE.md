@@ -53,10 +53,10 @@ Ko's personal opinionated CLI. Thin wrappers around SDKs I use often, built so b
 
 ## Google auth (gsheets)
 - OAuth user flow (desktop app). First command triggers browser consent, token cached at `~/.local/state/ko/google_token.json`.
-- `ko gsheets auth` grants **read+write** (`spreadsheets` + `drive`); reads use the narrower readonly scope, and the one token serves both. `--readonly` grants only read; upgrade an existing readonly token with `auth --logout` then `auth`.
+- `ko gsheets auth` grants **read+write** (`spreadsheets` only — no Drive scope, so it can't browse your Drive, only spreadsheets addressed by ID); reads use the narrower `spreadsheets.readonly`, and the one token serves both. `--readonly` grants only read; upgrade an existing readonly token with `auth --logout` then `auth`. Adding a Docs/Calendar scope later means one re-consent.
 - Personal Gmail: an **External** app left in *Testing* expires the refresh token after **7 days** — set the consent screen to **Internal** (Workspace) or **Publish** the app. The token file is portable across machines (copy it, or share via `KO_STATE_DIR`).
 - **Multi-account.** Active account = `-a/--account` (any `ko gsheets` cmd, sets `KO_GOOGLE_ACCOUNT`) → `[google] account` → `"default"`. Per-account token `google_token_<account>.json` (legacy `google_token.json` for `default`); per-account client `google_client_<account>.json` falls back to the shared `google_client.json` (only needed when one OAuth client can't authorize an account, e.g. a Workspace-Internal consent screen + a personal Gmail). `ko gsheets accounts` lists authed accounts. All paths via `google_auth.token_file()/client_file()/active_account()`.
-- **Scope is per-API, not per-folder.** Google OAuth can't be restricted to a single Drive folder. Access is "anything this Google account can see." If that's too broad, use a service account (separate tool) and share specific sheets with it.
+- **Scope is per-API, not per-folder.** OAuth grants the tool *your* access within the scope (now Sheets only). It can't be limited to specific folders/files; true per-file scoping needs a service account (share files with its email) — a separate model not used here.
 - Prereq: OAuth 2.0 Desktop client JSON at `~/.config/ko/google_client.json` (or set `KO_GOOGLE_CLIENT_FILE`). Full setup in README.
 
 ## Directories (`src/ko/dirs.py`)

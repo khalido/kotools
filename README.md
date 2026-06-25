@@ -109,7 +109,8 @@ echo '{"Sheet1!A1": [["Name","Score"],["Ann",9]]}' | ko gsheets put <id>   # bul
 token grants read **and** write; reads use the narrower read-only scope under the hood.
 
 1. **Create a Google Cloud project.** https://console.cloud.google.com/projectcreate
-2. **Enable the APIs.** APIs & Services → Library → enable *Google Sheets API* and *Google Drive API*.
+2. **Enable the API.** APIs & Services → Library → enable *Google Sheets API*. (`ko` requests only
+   the Sheets scope — no Drive — so it can read/write spreadsheets by ID but can't browse your Drive.)
 3. **Configure the OAuth consent screen** (APIs & Services → OAuth consent screen). This step decides
    whether your refresh token lasts:
    - **Workspace org?** Set **User type: Internal** — only your org's users, and **no token expiry**.
