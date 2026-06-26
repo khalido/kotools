@@ -1,0 +1,418 @@
+"""AI/meta/tools cluster CLI commands: llm, models, prompt, agent, mcp, publish, tt."""
+
+from __future__ import annotations
+
+import json
+import sys
+from dataclasses import asdict
+from pathlib import Path
+
+import typer
+
+from . import llm as llm_mod
+from . import mcp_client as mcp_client_mod
+from . import prompt as prompt_mod
+from . import publish as publish_mod
+from . import ticktick as ticktick_mod
+from .agents import research_run, research_repl, tv_run, tv_repl
+from ._cli_shared import _die, _emit_json, _no_results, app
+
+# --- sub-apps ---
+
+mcp_app = typer.Typer(
+    help="Test/inspect MCP servers (ko is itself an MCP client). `ko mcp test <url>`.",
+    no_args_is_help=True,
+)
+app.add_typer(mcp_app, name="mcp")
+
+tt_app = typer.Typer(
+    help="TickTick lists/tasks, read-only via its hosted MCP (TICKTICK_API_KEY). Manage tasks in TickTick itself.",
+    no_args_is_help=True,
+)
+app.add_typer(tt_app, name="tt")
+
+publish_app = typer.Typer(
+    help=(
+        "Publish a folder to Cloudflare; re-publishing overwrites the same URL. "
+        "Two steps: scaffold a site, then deploy it.\n\n"
+        "Scaffold pathways (`ko publish new <dir> [flag]`) — each drops a CLAUDE.md with how-to:\n\n"
+        "• (default) static HTML page — Tailwind + Alpine, no build.\n\n"
+        "• --md   markdown doc site — write .md (README is the hub); raw HTML/SVG + Tailwind + "
+        "Alpine render inline for custom visuals; TOC, syntax highlighting, print/PDF.\n\n"
+        "• --bare  just a CLAUDE.md — the agent builds from scratch.\n\n"
+        "• --hono  a Hono worker — API routes, D1/R2, server-side code; add --pin to gate it "
+        "behind a 6-digit PIN.\n\n"
+        "Preview: `ko publish preview <dir>` → wrangler dev at http://localhost:8787 (real http, "
+        "so ES modules + fetch work; view it as you build).\n\n"
+        "Deploy: `ko publish <dir>` → <name>.khalido.dev (`--name` to set it, `--force` to take "
+        "over an existing name). Needs wrangler (`npm install`) + KO_CLOUDFLARE_API_TOKEN."
+    ),
+    no_args_is_help=True,
+)
+app.add_typer(publish_app, name="publish")
+
+agent_app = typer.Typer(help="AI agents powered by pydantic-ai.", no_args_is_help=True)
+app.add_typer(agent_app, name="agent")
+app.add_typer(agent_app, name="a", hidden=True)  # shortcut: `ko a research`
+
+
+# --- llm commands ---
+
+
+@app.command("llm")
+def llm_cmd(
+    prompt: str = typer.Argument(
+        ..., help="what to do; piped stdin becomes the input text"
+    ),
+    model: str = typer.Option(
+        None,
+        "--model",
+        "-m",
+        help=f"model string, e.g. {llm_mod.FALLBACK_MODEL} (default: KO_DEFAULT_MODEL or that)",
+        autocompletion=llm_mod.available_models,
+    ),
+    system: str = typer.Option(
+        None, "--system", "-s", help="replace the default system prompt"
+    ),
+) -> None:
+    """One-shot LLM call, no tools: `ko hn item 123 | ko llm "summarize the debate"`."""
+    llm_mod.refresh_openrouter_models()  # keeps -m autocomplete catalog fresh (once/day)
+    stdin = None if sys.stdin.isatty() else sys.stdin.read()
+    typer.echo(llm_mod.run(prompt, stdin=stdin, model=model, system=system))
+
+
+@app.command("models")
+def models_cmd(
+    refresh: bool = typer.Option(
+        False,
+        "--refresh",
+        help="force re-fetch the OpenRouter catalog, ignoring the 24h cache",
+    ),
+) -> None:
+    """List model strings usable with -m, one per line — filtered to providers whose key is set."""
+    llm_mod.refresh_openrouter_models(force=refresh)
+    for name in sorted(llm_mod.available_models()):
+        typer.echo(name)
+
+
+# --- agent commands ---
+
+
+@agent_app.command("research")
+def agent_research(
+    prompt: str = typer.Argument(
+        None, help="research prompt; omit to enter interactive mode"
+    ),
+    model: str = typer.Option(
+        None, "--model", "-m", help="model override, e.g. openrouter:anthropic/claude-sonnet-4"
+    ),
+    resume: str = typer.Option(
+        None, "--resume", "-r", help="resume a saved session id (enters interactive mode)"
+    ),
+) -> None:
+    """Research agent across web (exa), papers (arxiv, hf), and HN. No prompt = interactive REPL."""
+    if prompt:
+        research_run(prompt, model=model, resume=resume)  # prints itself; resume continues a session
+    else:
+        research_repl(model=model, resume=resume)
+
+
+@agent_app.command("tv")
+def agent_tv(
+    prompt: str = typer.Argument(
+        None, help="what you're in the mood for; omit to enter interactive mode"
+    ),
+    model: str = typer.Option(None, "--model", "-m", help="model override"),
+    resume: str = typer.Option(
+        None, "--resume", "-r", help="resume a saved session id (enters interactive mode)"
+    ),
+) -> None:
+    """TV/movie agent — what to watch in Australia, tuned to Ko. No prompt = interactive REPL."""
+    if prompt:
+        tv_run(prompt, model=model, resume=resume)
+    else:
+        tv_repl(model=model, resume=resume)
+
+
+@agent_app.command("sessions")
+def agent_sessions(
+    as_json: bool = typer.Option(False, "--json", help="emit JSON instead of TSV"),
+) -> None:
+    """List saved agent sessions, newest first (TSV: id, agent, model, title)."""
+    from ko import sessions
+
+    rows = sessions.listing()
+    if not rows:
+        _no_results("no sessions yet", as_json)
+    if as_json:
+        typer.echo(json.dumps(rows, default=str))
+        return
+    for s in rows:
+        typer.echo(f"{s['id']}\t{s['agent']}\t{s['model']}\t{s['title']}")
+
+
+# --- ticktick commands ---
+
+
+@tt_app.command("lists")
+def tt_lists(
+    json_out: bool = typer.Option(False, "--json", help="JSON instead of TSV"),
+) -> None:
+    """List your TickTick lists (TSV: id, name)."""
+    projects = ticktick_mod.list_projects()
+    if json_out:
+        _emit_json(projects)
+        return
+    if not projects:
+        typer.echo("no lists", err=True)
+        raise typer.Exit(0)
+    for p in projects:
+        typer.echo(f"{p.id}\t{p.name}")
+
+
+@tt_app.command("items")
+def tt_items(
+    list_name: str = typer.Argument(..., help="list name (substring ok) or id"),
+    json_out: bool = typer.Option(False, "--json", help="JSON instead of TSV"),
+) -> None:
+    """Open tasks in a list (TSV: priority, due, title). `ko tt <list>` is a shortcut."""
+    proj = ticktick_mod.resolve_list(list_name)
+    if not proj:
+        typer.echo(f"no list matching {list_name!r}", err=True)
+        raise typer.Exit(1)
+    tasks = ticktick_mod.get_tasks(proj.id)
+    if json_out:
+        _emit_json(tasks)
+        return
+    if not tasks:
+        typer.echo(f"{proj.name}: no open tasks", err=True)
+        raise typer.Exit(0)
+    for t in tasks:
+        typer.echo(f"{t.priority}\t{t.due or '—'}\t{t.title}")
+
+
+# --- publish commands ---
+
+
+@publish_app.command("new")
+def publish_new(
+    path: str = typer.Argument(..., help="folder to scaffold (created if missing)"),
+    title: str = typer.Option(None, "--title", "-t", help="page title (default: folder name)"),
+    md: bool = typer.Option(False, "--md", help="markdown doc site (write .md, README is the hub)"),
+    bare: bool = typer.Option(False, "--bare", help="just a CLAUDE.md of hints; build from scratch"),
+    hono: bool = typer.Option(False, "--hono", help="Hono worker site — backend-ready (API routes, D1/R2)"),
+    pin: bool = typer.Option(False, "--pin", help="PIN-gate it (implies --hono; generates a 6-digit PIN)"),
+    name: str = typer.Option(
+        None, "--name", "-n", help="worker/subdomain name (default: folder, or parent if folder is generic)"
+    ),
+) -> None:
+    """Scaffold a site to publish. Default: static (Tailwind + Alpine). `--md` / `--bare` / `--hono`."""
+    if pin:
+        hono = True
+    if sum([md, bare, hono]) > 1:
+        typer.echo("--md / --bare / --hono are mutually exclusive", err=True)
+        raise typer.Exit(2)
+    mode = "md" if md else "bare" if bare else "hono" if hono else "static"
+    folder = Path(path)
+    written = publish_mod.scaffold(folder, title=title, mode=mode, pin=pin, name=name)
+    if written:
+        for p in written:
+            typer.echo(f"created {p}")
+    else:
+        typer.echo(f"{folder} already scaffolded (nothing overwritten)", err=True)
+    edit = {"md": "README.md", "hono": "public/README.md"}.get(mode, "index.html")
+    if mode == "bare":
+        hint = f"build an index.html in {folder}, then: ko publish {folder}"
+    else:
+        hint = f"edit {folder}/{edit}, then: ko publish {folder}"
+    typer.echo(f"\n{hint}", err=True)
+
+
+@publish_app.command("preview")
+def publish_preview(
+    path: str = typer.Argument(".", help="folder to preview (default: current dir)"),
+    port: int = typer.Option(None, "--port", "-p", help="port (default: wrangler's 8787)"),
+) -> None:
+    """Preview a folder locally with `wrangler dev` (http://localhost:8787). Serves over http so ES
+    modules + fetch work (a `file://` open doesn't); for --hono it runs the real worker. Ctrl-C to stop."""
+    try:
+        code = publish_mod.preview(Path(path), port=port)
+    except RuntimeError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1) from None
+    raise typer.Exit(code)
+
+
+@publish_app.command("up")
+def publish_up(
+    path: str = typer.Argument(".", help="folder to publish (default: current dir)"),
+    name: str = typer.Option(
+        None, "--name", "-n", help="subdomain/name (default: derived from folder, sticky)"
+    ),
+    force: bool = typer.Option(
+        False, "--force", "-f", help="take over an existing subdomain/Worker name"
+    ),
+    pin: str = typer.Option(
+        None, "--pin", help="set/rotate the gate PIN on a --hono site ('new' = random 6-digit)"
+    ),
+) -> None:
+    """Deploy a folder to Cloudflare. Prints the URL. Re-running overwrites the same URL."""
+    try:
+        if pin is not None:
+            publish_mod.set_pin(Path(path), pin)  # rotate before deploy so the new PIN ships
+        url = publish_mod.deploy(Path(path), name=name, force=force)
+    except RuntimeError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1) from None
+    if url:
+        typer.echo(url)  # stdout: the URL itself (pipeable)
+        gate_pin = publish_mod.config_pin(Path(path))
+        code = publish_mod.check_url(url)  # sanity check: is it actually live?
+        if gate_pin:
+            typer.echo(f"🔒 PIN: {gate_pin}", err=True)
+            note = "✓ live (PIN gate active)" if code in (200, 401) else (
+                f"⚠ deployed but HTTP {code}" if code else "⚠ deployed but not reachable yet"
+            )
+        elif code == 200:
+            note = "✓ live (HTTP 200)"
+        elif code:
+            note = f"⚠ deployed but HTTP {code} (cert may still be provisioning)"
+        else:
+            note = "⚠ deployed but not reachable yet (cert may be provisioning)"
+        typer.echo(note, err=True)
+    else:
+        typer.echo("deployed — couldn't parse the URL; run `wrangler deployments list`", err=True)
+
+
+@publish_app.command("list")
+def publish_list(
+    as_json: bool = typer.Option(False, "--json", help="emit JSON instead of TSV"),
+) -> None:
+    """List everything published (TSV: name, url, folder)."""
+    rows = publish_mod.published()
+    if not rows:
+        _no_results("nothing published yet", as_json)
+    if as_json:
+        _emit_json(rows)
+        return
+    for p in rows:
+        typer.echo(f"{p.name}\t{p.url}\t{p.folder}")
+
+
+# --- prompt helpers ---
+
+
+def _prompt_names(incomplete: str) -> list[str]:
+    return [n for n in prompt_mod.names() if n.startswith(incomplete)]
+
+
+def _copy_clipboard(text: str) -> None:
+    import subprocess
+
+    try:
+        subprocess.run(["pbcopy"], input=text.encode(), check=True)
+    except (OSError, subprocess.CalledProcessError) as e:
+        _die(f"couldn't copy to clipboard (pbcopy): {e}")
+
+
+# --- prompt command ---
+
+
+@app.command("prompt")
+def prompt_cmd(
+    name: str = typer.Argument(
+        None, help="brief to print; omit to list all", autocompletion=_prompt_names
+    ),
+    as_json: bool = typer.Option(False, "--json", help="emit JSON instead of text"),
+    copy: bool = typer.Option(False, "--copy", help="copy the brief to the clipboard (pbcopy)"),
+) -> None:
+    """Kickoff briefs — my opinionated 'how I build X' notes to load into an agent.
+
+    Bare `ko prompt` lists them (TSV: name, description); `ko prompt <name>` prints one.
+    Add your own in ~/.config/ko/prompts/*.md — a file there overrides a packaged brief of
+    the same name. `--copy` puts the brief on the clipboard; `--json` for structured output.
+    """
+    if name is None:
+        prompts = prompt_mod.list_prompts()
+        if not prompts:
+            _no_results("no briefs found", as_json)
+        if as_json:
+            typer.echo(
+                json.dumps(
+                    [
+                        {"name": p.name, "description": p.description, "source": p.source}
+                        for p in prompts
+                    ]
+                )
+            )
+            return
+        for p in prompts:
+            typer.echo(f"{p.name}\t{p.description}")
+        return
+    try:
+        p = prompt_mod.get_prompt(name)
+    except KeyError:
+        avail = ", ".join(prompt_mod.names()) or "(none)"
+        _die(f"no brief named {name!r}. Available: {avail}", as_json=as_json, code="not_found")
+    if copy:
+        _copy_clipboard(p.body)
+        typer.echo(f"Copied '{p.name}' to the clipboard ({len(p.body):,} chars).", err=True)
+        return
+    if as_json:
+        typer.echo(json.dumps(asdict(p)))
+        return
+    typer.echo(p.body)
+
+
+# --- mcp commands ---
+
+
+@mcp_app.command("test")
+def mcp_test(
+    url: str = typer.Argument(
+        ..., help="MCP server URL (Streamable HTTP), e.g. http://localhost:5180/mcp"
+    ),
+    header: list[str] = typer.Option(
+        None, "--header", "-H",
+        help="extra header 'Key: Value' (e.g. 'Authorization: Bearer ...'); repeatable",
+    ),
+    call: str = typer.Option(None, "--call", help="after listing, call this tool"),
+    arg: list[str] = typer.Option(None, "--arg", help="k=value argument for --call; repeatable"),
+    as_json: bool = typer.Option(False, "--json", help="emit JSON"),
+) -> None:
+    """Connect to an MCP server, list its tools, optionally call one. On failure it prints the
+    server's real HTTP status + body — so a 503 'not configured' tells you it's a server-side issue,
+    not your client. Tools go to stdout (pipeable); the server banner to stderr.
+    """
+    try:
+        headers = mcp_client_mod.parse_headers(header)
+    except mcp_client_mod.MCPTestError as e:
+        _die(str(e), as_json=as_json, code="usage")
+    if call:
+        args: dict = {}
+        for a in arg or []:
+            k, sep, v = a.partition("=")
+            if not sep:
+                _die(f"bad --arg {a!r}; expected k=value", as_json=as_json, code="usage")
+            args[k.strip()] = v.strip()
+        try:
+            out = mcp_client_mod.call(url, call, args, headers)
+        except mcp_client_mod.MCPTestError as e:
+            _die(str(e), as_json=as_json, code="call")
+        typer.echo(json.dumps({"tool": call, "result": out}) if as_json else out)
+        return
+    try:
+        info = mcp_client_mod.inspect(url, headers)
+    except mcp_client_mod.MCPTestError as e:
+        _die(str(e), as_json=as_json, code="connect")
+    if as_json:
+        typer.echo(json.dumps(asdict(info), default=str))
+        return
+    typer.echo(f"✓ {info.name} v{info.version}  (protocol {info.protocol})", err=True)
+    typer.echo(f"  capabilities: {', '.join(info.capabilities) or '(none)'}", err=True)
+    if not info.tools:
+        typer.echo("  (no tools)", err=True)
+        return
+    for t in info.tools:
+        sig = f"({', '.join(t.required)})" if t.required else "()"
+        typer.echo(f"{t.name}{sig}  —  {t.description}" if t.description else f"{t.name}{sig}")
