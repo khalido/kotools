@@ -29,6 +29,23 @@ class ToolInfo:
     name: str
     description: str
     required: list[str] = field(default_factory=list)
+    schema: dict = field(default_factory=dict)  # full inputSchema — surfaced by `--tool`
+
+
+@dataclass
+class ResourceInfo:
+    uri: str
+    name: str
+    description: str
+    mime_type: str
+    template: bool = False  # a parameterized resource template vs a concrete resource
+
+
+@dataclass
+class PromptInfo:
+    name: str
+    description: str
+    arguments: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -36,8 +53,11 @@ class ServerInfo:
     name: str
     version: str
     protocol: str
+    instructions: str
     capabilities: list[str]
     tools: list[ToolInfo]
+    resources: list[ResourceInfo]
+    prompts: list[PromptInfo]
 
 
 def _unwrap(exc: BaseException) -> BaseException:
@@ -65,6 +85,10 @@ def _probe(url: str, headers: dict[str, str]) -> str:
     return f"HTTP {r.status_code}: {snippet}" if snippet else f"HTTP {r.status_code}"
 
 
+def _first_line(text: str | None) -> str:
+    return (text or "").strip().split("\n")[0]
+
+
 async def _inspect(url: str, headers: dict[str, str]) -> ServerInfo:
     async with streamablehttp_client(url, headers=headers or None) as (read, write, _):
         async with ClientSession(read, write) as session:
@@ -79,13 +103,42 @@ async def _inspect(url: str, headers: dict[str, str]) -> ServerInfo:
                 if val is not None
             ]
             tools: list[ToolInfo] = []
+            resources: list[ResourceInfo] = []
+            prompts: list[PromptInfo] = []
+            # Each surface is fetched only if advertised, and wrapped so a server that advertises
+            # a capability but errors listing it doesn't sink the whole inspect.
             if init.capabilities.tools is not None:
-                for t in (await session.list_tools()).tools:
-                    req = list((t.inputSchema or {}).get("required", []) or [])
-                    desc = (t.description or "").strip().split("\n")[0]
-                    tools.append(ToolInfo(t.name, desc, req))
+                try:
+                    for t in (await session.list_tools()).tools:
+                        schema = t.inputSchema or {}
+                        req = list(schema.get("required", []) or [])
+                        tools.append(ToolInfo(t.name, _first_line(t.description), req, schema))
+                except Exception:
+                    pass
+            if init.capabilities.resources is not None:
+                try:
+                    for r in (await session.list_resources()).resources:
+                        resources.append(
+                            ResourceInfo(str(r.uri), r.name or "", _first_line(r.description), r.mimeType or "")
+                        )
+                    for tpl in (await session.list_resource_templates()).resourceTemplates:
+                        resources.append(
+                            ResourceInfo(tpl.uriTemplate, tpl.name or "", _first_line(tpl.description), "", template=True)
+                        )
+                except Exception:
+                    pass
+            if init.capabilities.prompts is not None:
+                try:
+                    for p in (await session.list_prompts()).prompts:
+                        args = [a.name for a in (p.arguments or [])]
+                        prompts.append(PromptInfo(p.name, _first_line(p.description), args))
+                except Exception:
+                    pass
             si = init.serverInfo
-            return ServerInfo(si.name, si.version, init.protocolVersion, caps, tools)
+            return ServerInfo(
+                si.name, si.version, init.protocolVersion, (init.instructions or "").strip(),
+                caps, tools, resources, prompts,
+            )
 
 
 def inspect(url: str, headers: dict[str, str] | None = None) -> ServerInfo:

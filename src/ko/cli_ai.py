@@ -20,7 +20,7 @@ from ._cli_shared import _die, _emit_json, _no_results, app
 # --- sub-apps ---
 
 mcp_app = typer.Typer(
-    help="Test/inspect MCP servers (ko is itself an MCP client). `ko mcp test <url>`.",
+    help="Inspect/call MCP servers (ko is itself an MCP client). `ko mcp inspect <url>` · `ko mcp call`.",
     no_args_is_help=True,
 )
 app.add_typer(mcp_app, name="mcp")
@@ -367,8 +367,18 @@ def prompt_cmd(
 # --- mcp commands ---
 
 
-@mcp_app.command("test")
-def mcp_test(
+def _mcp_args(arg: list[str] | None, as_json: bool) -> dict:
+    args: dict = {}
+    for a in arg or []:
+        k, sep, v = a.partition("=")
+        if not sep:
+            _die(f"bad --arg {a!r}; expected k=value", as_json=as_json, code="usage")
+        args[k.strip()] = v.strip()
+    return args
+
+
+@mcp_app.command("inspect")
+def mcp_inspect(
     url: str = typer.Argument(
         ..., help="MCP server URL (Streamable HTTP), e.g. http://localhost:5180/mcp"
     ),
@@ -376,43 +386,77 @@ def mcp_test(
         None, "--header", "-H",
         help="extra header 'Key: Value' (e.g. 'Authorization: Bearer ...'); repeatable",
     ),
-    call: str = typer.Option(None, "--call", help="after listing, call this tool"),
-    arg: list[str] = typer.Option(None, "--arg", help="k=value argument for --call; repeatable"),
+    tool: str = typer.Option(None, "--tool", help="print one tool's full JSON input schema and exit"),
     as_json: bool = typer.Option(False, "--json", help="emit JSON"),
 ) -> None:
-    """Connect to an MCP server, list its tools, optionally call one. On failure it prints the
-    server's real HTTP status + body — so a 503 'not configured' tells you it's a server-side issue,
-    not your client. Tools go to stdout (pipeable); the server banner to stderr.
+    """Investigate an MCP server: its tools, resources, and prompts (+ capabilities and any server
+    instructions). `--tool <name>` dumps that tool's full input schema. On failure it prints the
+    server's real HTTP status + body — so a 503 'not configured' is clearly a server issue, not your
+    client. Listings go to stdout (pipeable); the server banner to stderr.
     """
     try:
         headers = mcp_client_mod.parse_headers(header)
     except mcp_client_mod.MCPTestError as e:
         _die(str(e), as_json=as_json, code="usage")
-    if call:
-        args: dict = {}
-        for a in arg or []:
-            k, sep, v = a.partition("=")
-            if not sep:
-                _die(f"bad --arg {a!r}; expected k=value", as_json=as_json, code="usage")
-            args[k.strip()] = v.strip()
-        try:
-            out = mcp_client_mod.call(url, call, args, headers)
-        except mcp_client_mod.MCPTestError as e:
-            _die(str(e), as_json=as_json, code="call")
-        typer.echo(json.dumps({"tool": call, "result": out}) if as_json else out)
-        return
     try:
         info = mcp_client_mod.inspect(url, headers)
     except mcp_client_mod.MCPTestError as e:
         _die(str(e), as_json=as_json, code="connect")
+    if tool:
+        match = next((t for t in info.tools if t.name == tool), None)
+        if match is None:
+            avail = ", ".join(t.name for t in info.tools) or "(none)"
+            _die(f"no tool named {tool!r}. Tools: {avail}", as_json=as_json, code="not_found")
+        typer.echo(json.dumps(match.schema, indent=2, default=str))
+        return
     if as_json:
         typer.echo(json.dumps(asdict(info), default=str))
         return
     typer.echo(f"✓ {info.name} v{info.version}  (protocol {info.protocol})", err=True)
     typer.echo(f"  capabilities: {', '.join(info.capabilities) or '(none)'}", err=True)
-    if not info.tools:
-        typer.echo("  (no tools)", err=True)
-        return
-    for t in info.tools:
-        sig = f"({', '.join(t.required)})" if t.required else "()"
-        typer.echo(f"{t.name}{sig}  —  {t.description}" if t.description else f"{t.name}{sig}")
+    if info.instructions:
+        typer.echo(f"  instructions: {info.instructions[:200]}", err=True)
+
+    def _section(title: str, items: list, render) -> None:
+        if items:
+            typer.echo(f"\n{title} ({len(items)}):")
+            for it in items:
+                typer.echo("  " + render(it))
+
+    _section(
+        "TOOLS", info.tools,
+        lambda t: f"{t.name}({', '.join(t.required)})" + (f"  —  {t.description}" if t.description else ""),
+    )
+    _section(
+        "RESOURCES", info.resources,
+        lambda r: f"{r.uri}" + (" [template]" if r.template else "") + (f"  —  {r.description}" if r.description else ""),
+    )
+    _section(
+        "PROMPTS", info.prompts,
+        lambda p: f"{p.name}({', '.join(p.arguments)})" + (f"  —  {p.description}" if p.description else ""),
+    )
+    if not (info.tools or info.resources or info.prompts):
+        typer.echo("(server exposes no tools, resources, or prompts)", err=True)
+
+
+@mcp_app.command("call")
+def mcp_call(
+    url: str = typer.Argument(..., help="MCP server URL (Streamable HTTP)"),
+    tool: str = typer.Argument(..., help="tool name to call (see `ko mcp inspect`)"),
+    arg: list[str] = typer.Option(None, "--arg", help="k=value argument; repeatable"),
+    header: list[str] = typer.Option(
+        None, "--header", "-H", help="extra header 'Key: Value' (e.g. auth); repeatable"
+    ),
+    as_json: bool = typer.Option(False, "--json", help="emit JSON"),
+) -> None:
+    """Call one tool on an MCP server and print its result to stdout."""
+    try:
+        headers = mcp_client_mod.parse_headers(header)
+    except mcp_client_mod.MCPTestError as e:
+        _die(str(e), as_json=as_json, code="usage")
+    args = _mcp_args(arg, as_json)
+    try:
+        out = mcp_client_mod.call(url, tool, args, headers)
+    except mcp_client_mod.MCPTestError as e:
+        _die(str(e), as_json=as_json, code="call")
+    typer.echo(json.dumps({"tool": tool, "result": out}) if as_json else out)
