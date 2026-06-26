@@ -71,7 +71,7 @@ def top(n: int = DEFAULT_TOP_N, days: int = 1) -> list[Story]:
         "search",  # no query + popularity ranking ≈ points; we re-sort to guarantee it
         {
             "tags": "story",
-            "numericFilters": f"created_at_i>{cutoff}",
+            "numericFilters": [f"created_at_i>{cutoff}"],
             "hitsPerPage": n,
         },
     )
@@ -95,7 +95,9 @@ def search(
         filters.append(f"num_comments>={min_comments}")
     params = {"query": query, "tags": "story", "hitsPerPage": n}
     if filters:
-        params["numericFilters"] = ",".join(filters)
+        # Algolia wants numericFilters as repeated params (httpx encodes a list that way);
+        # a single comma-joined string 400s once there's more than one filter.
+        params["numericFilters"] = filters
     data = _get("search_by_date" if by_date else "search", params)
     return [_story(h) for h in data["hits"]]
 

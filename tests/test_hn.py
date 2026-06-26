@@ -31,6 +31,24 @@ def test_walk_depth_first_with_cap():
     assert len(capped) == 2
 
 
+def test_search_passes_numeric_filters_as_list(monkeypatch):
+    """Regression: Algolia 400s on a comma-joined numericFilters string once there's >1 filter;
+    httpx must send a list (repeated params). Guards the `created_at_i + num_comments` combo."""
+    captured = {}
+
+    def fake_get(path, params):
+        captured["path"] = path
+        captured["params"] = params
+        return {"hits": []}
+
+    monkeypatch.setattr(hn, "_get", fake_get)
+    hn.search("rust", since_months=12, min_comments=30)
+    nf = captured["params"]["numericFilters"]
+    assert isinstance(nf, list) and len(nf) == 2  # NOT a comma-joined string
+    assert any(f.startswith("created_at_i>") for f in nf)
+    assert "num_comments>=30" in nf
+
+
 def test_story_from_hit():
     s = hn._story(
         {
