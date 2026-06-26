@@ -27,6 +27,7 @@ from . import gcal as gcal_mod
 from . import gmail as gmail_mod
 from . import ticktick as ticktick_mod
 from . import publish as publish_mod
+from . import prompt as prompt_mod
 from .agents import research_run, research_repl, tv_run, tv_repl
 
 
@@ -1795,6 +1796,68 @@ def publish_list(
         return
     for p in rows:
         typer.echo(f"{p.name}\t{p.url}\t{p.folder}")
+
+
+# --- prompt (kickoff briefs) ---
+
+
+def _prompt_names(incomplete: str) -> list[str]:
+    return [n for n in prompt_mod.names() if n.startswith(incomplete)]
+
+
+def _copy_clipboard(text: str) -> None:
+    import subprocess
+
+    try:
+        subprocess.run(["pbcopy"], input=text.encode(), check=True)
+    except (OSError, subprocess.CalledProcessError) as e:
+        _die(f"couldn't copy to clipboard (pbcopy): {e}")
+
+
+@app.command("prompt")
+def prompt_cmd(
+    name: str = typer.Argument(
+        None, help="brief to print; omit to list all", autocompletion=_prompt_names
+    ),
+    as_json: bool = typer.Option(False, "--json", help="emit JSON instead of text"),
+    copy: bool = typer.Option(False, "--copy", help="copy the brief to the clipboard (pbcopy)"),
+) -> None:
+    """Kickoff briefs — my opinionated 'how I build X' notes to load into an agent.
+
+    Bare `ko prompt` lists them (TSV: name, description); `ko prompt <name>` prints one.
+    Add your own in ~/.config/ko/prompts/*.md — a file there overrides a packaged brief of
+    the same name. `--copy` puts the brief on the clipboard; `--json` for structured output.
+    """
+    if name is None:
+        prompts = prompt_mod.list_prompts()
+        if not prompts:
+            _no_results("no briefs found", as_json)
+        if as_json:
+            typer.echo(
+                json.dumps(
+                    [
+                        {"name": p.name, "description": p.description, "source": p.source}
+                        for p in prompts
+                    ]
+                )
+            )
+            return
+        for p in prompts:
+            typer.echo(f"{p.name}\t{p.description}")
+        return
+    try:
+        p = prompt_mod.get_prompt(name)
+    except KeyError:
+        avail = ", ".join(prompt_mod.names()) or "(none)"
+        _die(f"no brief named {name!r}. Available: {avail}", as_json=as_json, code="not_found")
+    if copy:
+        _copy_clipboard(p.body)
+        typer.echo(f"Copied '{p.name}' to the clipboard ({len(p.body):,} chars).", err=True)
+        return
+    if as_json:
+        typer.echo(json.dumps(asdict(p)))
+        return
+    typer.echo(p.body)
 
 
 def main() -> None:

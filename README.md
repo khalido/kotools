@@ -21,6 +21,7 @@ Current subcommands:
 - `ko cal` — Google Calendar agenda + quick-add (same token): bare `ko cal` = next 7 days · `day`/`find`/`add`/`cals`
 - `ko gmail` — read Gmail (read-only, same token): bare = recent inbox · `search "<gmail query>"` · `from <who>` · `view <id>` · `thread <id>` (whole conversation)
 - `ko agent` — pydantic-ai agents: `research` (web + papers + HN) and `tv` (what to watch in AU), with saved/resumable sessions
+- `ko prompt [name]` — kickoff briefs: my "how I build X" notes, pulled by name to load into an agent or copy-paste. Bare lists; `ko prompt <name>` prints. Add your own in `~/.config/ko/prompts/*.md`
 - `ko models` — list model strings usable with `-m` (incl. the live OpenRouter catalog)
 - `ko publish` — scaffold a site (static / markdown / Hono worker, optional PIN gate) and deploy it to Cloudflare; `ko publish preview` runs it locally first
 - `ko doctor` — every tool's setup status (keys, binaries, auth) — run this first
