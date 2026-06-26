@@ -119,7 +119,15 @@ Two separate artifacts per tool — don't conflate them:
 ## Infra
 
 - [ ] PyPI trusted publisher + tag-push GitHub Action (plan in WORKLOG 2026-04-22).
-- [ ] MCP server exposing the same modules (`mcp_server.py` stub has the wiring sketch). CLI for humans + bash; MCP for native agent calls. Maybe Railway-hosted later.
+- [ ] MCP server exposing the same modules (`mcp_server.py` stub has the wiring sketch). CLI for humans + bash; MCP for native agent calls. **Use FastMCP** ([gofastmcp.com](https://gofastmcp.com)) — it does **stdio** (local: Claude Code/Desktop on the Mac) *and* **HTTP** (remote: a server on the home box that the laptop connects to) from one definition. Progressive disclosure for the tool surface — one argv-style `ko` tool, not one per subcommand (see Research scan 2026-06-26). Home-server hosting ties in below.
+
+## Two front-ends on one core (design note, 2026-06-26)
+
+Once `ko ai` exists, ko grows two surfaces over the same Layer-1 tools + agent — don't build either before `ko ai`:
+
+- [ ] **MCP (FastMCP)** — for *agents* to call ko natively. Local stdio + remote HTTP (home server). The "let my main agent use all my tools" pathway.
+- [ ] **Telegram bridge** — for *me* to talk to a ko agent from my phone. Thin: long-poll Telegram → run `ko ai` (all tools) → reply. Composes with the brief: `ko brief --notify telegram` on a cron = ambient morning push. The "ambient agent on the home server" idea (research scan: proactive heartbeat). Front-end, not core.
+- [ ] **`ko note "..."`** — append to a configured "research log" Google Doc, a thin wrapper over `gdocs.append_text` (`[note] doc = <id>`). This is the real answer to "push interesting research to a note" — see the Google Keep skip below.
 
 ## Skip (considered, not a fit)
 
@@ -129,3 +137,4 @@ Two separate artifacts per tool — don't conflate them:
 - Tavily / Brave search / Firecrawl / IPinfo / CoinGecko wrappers — official CLIs now exist (checked 2026-06)
 - newspaper3k (dead since 2018), every Python HN wrapper (unmaintained), docling-for-HTML
 - Big famous tools generally (rg, fzf, jq…) — wrap only API/SDK-shaped things that *lack* a good CLI (the Exa rule)
+- **Google Keep** (considered 2026-06-26) — the official API has **no update/append** (create/get/list/delete only), is **Workspace-only** via a **service account + domain-wide delegation** (a different, heavier auth than ko's user-OAuth, and it can't touch a personal account's notes). `gkeepapi` (unofficial, reverse-engineered) works on personal accounts but is fragile + ToS-risky. The actual want ("append my research to a note") is served far better by `ko gdocs append` / a `ko note` wrapper — a Doc is a real append-target, personal+workspace, readable anywhere.
