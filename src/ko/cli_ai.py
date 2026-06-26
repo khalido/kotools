@@ -9,6 +9,7 @@ from pathlib import Path
 
 import typer
 
+from . import billing as billing_mod
 from . import llm as llm_mod
 from . import mcp_client as mcp_client_mod
 from . import prompt as prompt_mod
@@ -463,6 +464,25 @@ def mcp_call(
     except mcp_client_mod.MCPTestError as e:
         _die(str(e), as_json=as_json, code="call")
     typer.echo(json.dumps({"tool": tool, "result": out}) if as_json else out)
+
+
+@app.command("billing")
+def billing(
+    as_json: bool = typer.Option(False, "--json", help="emit JSON"),
+) -> None:
+    """Balance + recent usage across paid services (read-only). v1: OpenRouter credits."""
+    balances = [fn() for fn in billing_mod.PROVIDERS]
+    if as_json:
+        typer.echo(json.dumps([asdict(b) for b in balances], default=str))
+        return
+    for b in balances:
+        if b.error:
+            typer.echo(f"{b.provider:12} {b.error}", err=True)
+            continue
+        left = f"${b.remaining:.2f} left" if b.remaining is not None else "—"
+        of = f"  (of ${b.total:.0f}; ${b.used:.2f} used)" if b.total is not None else ""
+        trend = f"  · {b.trend}" if b.trend else ""
+        typer.echo(f"{b.provider:12} {left}{of}{trend}")
 
 
 @mcp_app.command("servers")

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -199,9 +200,22 @@ def call(spec: dict, tool: str, args: dict) -> str:
 # --- server registry (~/.config/ko/mcp.json, standard `mcpServers` shape) ---
 
 
+def _expand_env(obj):
+    """Recursively expand `$VAR` / `${VAR}` in string values from the environment — so a
+    checked-in mcp.json holds `"Bearer ${EXA_API_KEY}"`, never the secret itself. ko has already
+    loaded config.toml [keys] into the environment by the time this runs."""
+    if isinstance(obj, str):
+        return os.path.expandvars(obj)
+    if isinstance(obj, dict):
+        return {k: _expand_env(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_expand_env(v) for v in obj]
+    return obj
+
+
 def load_servers() -> dict[str, dict]:
     """Configured servers from ~/.config/ko/mcp.json. Accepts `{"mcpServers": {...}}` (standard) or
-    a bare `{name: spec}` object. Returns {} if the file is absent."""
+    a bare `{name: spec}` object; expands `${ENV_VAR}` placeholders. Returns {} if the file is absent."""
     path = dirs.config_dir() / "mcp.json"
     if not path.exists():
         return {}
@@ -209,7 +223,7 @@ def load_servers() -> dict[str, dict]:
         data = json.loads(path.read_text())
     except json.JSONDecodeError as e:
         raise MCPTestError(f"{path} is not valid JSON: {e}") from e
-    return data.get("mcpServers", data) or {}
+    return _expand_env(data.get("mcpServers", data) or {})
 
 
 def _normalize(name: str, cfg: dict) -> dict:

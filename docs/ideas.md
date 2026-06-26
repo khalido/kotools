@@ -81,6 +81,11 @@ Disambiguation rule: **a verb that takes `<url>` acts on someone else's server (
 - [ ] **`ko mcp serve [--http]`** — run ko's OWN server (the FastMCP task, later). The no-url verb.
 - [ ] **`inspect` = all surfaces, not just tools.** Use the raw `ClientSession` to also `list_resources` (+ `list_resource_templates`) and `list_prompts`, shown only if advertised. Surface the full `initialize` response — protocol, capabilities, and the server's **`instructions`** field. `--tool <name>` dumps one tool's full JSON Schema. Keep the raw-503 error fallback (the best part). Optional: `ko mcp ping <url>` via `session.send_ping()` for liveness+timing.
 
+### MCP registry → agent + bundled servers (2026-06-27)
+- [ ] **`ko ai` consumes mcp.json servers.** pydantic-ai v2 has `pydantic_ai.mcp` (`MCPServerStreamableHTTP`/`MCPServerStdio`/`MCPServerSSE`). Build the toolset list from `mcp_client.load_servers()` — map each spec to the matching class — and pass to `Agent(toolsets=[...])`. Needs the `pydantic-ai-slim[mcp]` extra (pulls fastmcp; add at agent time). The registry we shipped is the foundation.
+- [ ] **Bundled default servers**, `ko prompt` pattern: a curated set shipped in the repo + `~/.config/ko/mcp.json` override. Secrets via **`${ENV_VAR}`** placeholders (expansion already in `load_servers`), so the checked-in file holds no credentials. Candidates: **railway**, **context7** (docs). Skip **exa** — we have the native lib/tool, no MCP needed. Only bundle servers that earn it.
+- [ ] **`ko billing` — more providers.** v1 is OpenRouter (`/api/v1/credits` balance + `/key` usage). Add a provider = a function returning `Balance`. Check which others expose a simple balance/usage endpoint (Anthropic/OpenAI usage APIs are org/admin-key gated; OpenRouter is the easy aggregate win since it fronts many models). Exa/TMDB/X likely have no public balance endpoint — confirm before adding.
+
 ### Infra note
 - **Progressive disclosure for `ko mcp`** — when the MCP server lands, expose **one** `ko` tool taking an argv array (agent calls `--help`, drills in, executes) rather than one MCP tool per subcommand. Measured ~91% token cut vs flat tool lists as the CLI grows. [solo.io/blog/keeping-context-and-tokens-low-with-progressive-disclosure-in-agentgateway](https://www.solo.io/blog/keeping-context-and-tokens-low-with-progressive-disclosure-in-agentgateway)
 

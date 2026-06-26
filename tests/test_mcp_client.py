@@ -45,6 +45,16 @@ def test_resolve_url_passthrough_and_unknown(monkeypatch, tmp_path):
         mcp_client.resolve("not-a-url-or-name")
 
 
+def test_load_servers_expands_env(monkeypatch, tmp_path):
+    monkeypatch.setenv("KO_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("MY_TOKEN", "secret123")
+    (tmp_path / "mcp.json").write_text(
+        '{"mcpServers": {"s": {"url": "http://x/mcp", "headers": {"Authorization": "Bearer ${MY_TOKEN}"}}}}'
+    )
+    servers = mcp_client.load_servers()
+    assert servers["s"]["headers"]["Authorization"] == "Bearer secret123"  # secret never in the file
+
+
 def test_load_and_resolve_by_name_with_header_override(monkeypatch, tmp_path):
     monkeypatch.setenv("KO_CONFIG_DIR", str(tmp_path))
     (tmp_path / "mcp.json").write_text(
