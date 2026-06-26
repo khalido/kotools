@@ -44,6 +44,7 @@ they're present. If a command fails with an auth/key error, `ko doctor` tells yo
 - `ko <url>` → `ko fetch <url>` (URL → markdown)
 - `ko <file>` → `ko doc <file>` (PDF/Office/image → text), when the arg is an existing file
 - `ko x <name>` → `ko x list <name>` (anything after `x` that isn't an x subcommand is a list name)
+- `ko <anything> help` → `ko <anything> --help` (trailing `help` prints help at any level: `ko help`, `ko exa help`, `ko exa search help`)
 
 ## Auth
 

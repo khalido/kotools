@@ -1896,6 +1896,12 @@ def main() -> None:
     import sys
 
     args = sys.argv[1:]
+    # `help` as a trailing word == --help, so you can slap it on any command:
+    # `ko help`, `ko exa help`, `ko exa search help`. (To *search* for the literal word
+    # "help", use the flag form for help instead — `ko exa search --help` is help.)
+    if args and args[-1] == "help" and "--help" not in args and "-h" not in args:
+        sys.argv[-1] = "--help"
+        args = sys.argv[1:]
     if args and not args[0].startswith("-"):
         known = {g.name for g in app.registered_groups} | {
             c.name for c in app.registered_commands
