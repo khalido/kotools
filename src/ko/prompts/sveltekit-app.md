@@ -15,7 +15,8 @@ Better Auth, Vitest, ESLint/Prettier). Then add: shadcn-svelte, TanStack Table, 
 - **Svelte 5 runes only** (`$state`/`$derived`/`$effect`/`$props`). No stores for component state.
 - **Tailwind 4** via `@tailwindcss/vite` (no PostCSS config). `tw-animate-css`, not `tailwindcss-animate`.
 - **shadcn-svelte** for every UI primitive — never hand-roll a `<table>`/button/dialog.
-  `baseColor: slate`, then override to my palette in oklch CSS vars in `routes/layout.css`.
+  **Load the `shadcn-svelte` skill** — it carries the component docs + CLI; lean on it, don't
+  reinvent. `baseColor: slate`, then override to my palette in oklch CSS vars in `routes/layout.css`.
 - **Drizzle + better-sqlite3.** SQLite file, single source of schema.
 - **Better Auth** (email+password). Role hierarchy lives in `$lib/auth-roles.ts`, one map.
 - **LayerChart v2** for charts (NOT ECharts — legacy). `mode-watcher` for dark mode. Lucide icons.
@@ -43,14 +44,13 @@ Better Auth, Vitest, ESLint/Prettier). Then add: shadcn-svelte, TanStack Table, 
 Railway Volume. `start.sh` chowns the volume as root then drops to `node`. `railway.toml`:
 `startCommand = ""`, healthcheck `/health` running `SELECT 1`. Full guide: `everx/docs/railway.md`.
 
-## Docs to load
-- shadcn-svelte charts: https://shadcn-svelte.com/charts/
-- LayerChart v2 llms: https://next.layerchart.com/docs/llms.txt
-- Use Context7 for fresh Drizzle / Better Auth / shadcn-svelte docs; pin the Svelte MCP and run
-  svelte-autofixer on components.
+## Skills (load these — don't reinvent)
+- **`shadcn-svelte`** — components, the CLI, design-system presets. The first thing to load for any UI work.
+- **`use-railway`** — deploy/infra. **`code-review`** before commit.
 
-## Skills
-- `shadcn-svelte` (add/compose components), `use-railway` (deploy/infra), `code-review` before commit.
+## Docs to load
+- LayerChart v2 llms: https://next.layerchart.com/docs/llms.txt · shadcn charts: https://shadcn-svelte.com/charts/
+- Context7 for fresh Drizzle / Better Auth docs; pin the Svelte MCP and run svelte-autofixer on components.
 
 ## Voice (client-facing copy)
 Direct, declarative, concrete. No "leverage", "robust", "seamlessly". Reference: `~/code/khalido.dev`.
