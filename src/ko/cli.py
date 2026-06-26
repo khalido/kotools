@@ -28,6 +28,7 @@ from . import gmail as gmail_mod
 from . import ticktick as ticktick_mod
 from . import publish as publish_mod
 from . import prompt as prompt_mod
+from . import mcp_client as mcp_client_mod
 from .agents import research_run, research_repl, tv_run, tv_repl
 
 
@@ -95,6 +96,12 @@ gmail_app = typer.Typer(
     ),
 )
 app.add_typer(gmail_app, name="gmail")
+
+mcp_app = typer.Typer(
+    help="Test/inspect MCP servers (ko is itself an MCP client). `ko mcp test <url>`.",
+    no_args_is_help=True,
+)
+app.add_typer(mcp_app, name="mcp")
 
 x_app = typer.Typer(
     help="X (Twitter) posts via the official XDK (X_BEARER_TOKEN required, paid tier for reads).",
@@ -1886,6 +1893,60 @@ def prompt_cmd(
         typer.echo(json.dumps(asdict(p)))
         return
     typer.echo(p.body)
+
+
+# --- mcp (test MCP servers) ---
+
+
+@mcp_app.command("test")
+def mcp_test(
+    url: str = typer.Argument(
+        ..., help="MCP server URL (Streamable HTTP), e.g. http://localhost:5180/mcp"
+    ),
+    header: list[str] = typer.Option(
+        None, "--header", "-H",
+        help="extra header 'Key: Value' (e.g. 'Authorization: Bearer ...'); repeatable",
+    ),
+    call: str = typer.Option(None, "--call", help="after listing, call this tool"),
+    arg: list[str] = typer.Option(None, "--arg", help="k=value argument for --call; repeatable"),
+    as_json: bool = typer.Option(False, "--json", help="emit JSON"),
+) -> None:
+    """Connect to an MCP server, list its tools, optionally call one. On failure it prints the
+    server's real HTTP status + body — so a 503 'not configured' tells you it's a server-side issue,
+    not your client. Tools go to stdout (pipeable); the server banner to stderr.
+    """
+    try:
+        headers = mcp_client_mod.parse_headers(header)
+    except mcp_client_mod.MCPTestError as e:
+        _die(str(e), as_json=as_json, code="usage")
+    if call:
+        args: dict = {}
+        for a in arg or []:
+            k, sep, v = a.partition("=")
+            if not sep:
+                _die(f"bad --arg {a!r}; expected k=value", as_json=as_json, code="usage")
+            args[k.strip()] = v.strip()
+        try:
+            out = mcp_client_mod.call(url, call, args, headers)
+        except mcp_client_mod.MCPTestError as e:
+            _die(str(e), as_json=as_json, code="call")
+        typer.echo(json.dumps({"tool": call, "result": out}) if as_json else out)
+        return
+    try:
+        info = mcp_client_mod.inspect(url, headers)
+    except mcp_client_mod.MCPTestError as e:
+        _die(str(e), as_json=as_json, code="connect")
+    if as_json:
+        typer.echo(json.dumps(asdict(info), default=str))
+        return
+    typer.echo(f"✓ {info.name} v{info.version}  (protocol {info.protocol})", err=True)
+    typer.echo(f"  capabilities: {', '.join(info.capabilities) or '(none)'}", err=True)
+    if not info.tools:
+        typer.echo("  (no tools)", err=True)
+        return
+    for t in info.tools:
+        sig = f"({', '.join(t.required)})" if t.required else "()"
+        typer.echo(f"{t.name}{sig}  —  {t.description}" if t.description else f"{t.name}{sig}")
 
 
 def main() -> None:
