@@ -7,6 +7,7 @@ import os
 import sys
 from dataclasses import asdict
 from pathlib import Path
+from typing import NoReturn
 
 import typer
 
@@ -32,6 +33,10 @@ from .agents import research_run, research_repl, tv_run, tv_repl
 app = typer.Typer(
     help="ko — Ko's opinionated CLI (exa, arxiv, gsheets, doc, agent).",
     no_args_is_help=True,
+    # Agents drive ko over bash: a clean one-line error on stderr + exit 1 is parseable;
+    # Typer's default colorized multi-frame traceback box is not. We catch expected errors
+    # in each command and emit them via _die(); this kills the pretty-traceback fallback.
+    pretty_exceptions_enable=False,
 )
 
 arxiv_app = typer.Typer(help="arxiv search + paper fetch.", no_args_is_help=True)
@@ -148,6 +153,25 @@ def _emit_json(items: list) -> None:
     typer.echo(json.dumps([asdict(i) for i in items], default=str))
 
 
+def _die(msg: str, *, as_json: bool = False, code: str = "error") -> NoReturn:
+    """Runtime-error exit: a JSON error object to stderr under --json, else plain text; exit 1.
+    Keeps stdout clean so a downstream `... | jq` never sees a half-message."""
+    if as_json:
+        typer.echo(json.dumps({"error": msg, "code": code}), err=True)
+    else:
+        typer.echo(msg, err=True)
+    raise typer.Exit(1)
+
+
+def _no_results(note: str, as_json: bool) -> NoReturn:
+    """Empty-result exit (exit 0, not an error): under --json emit `[]` to stdout so the pipe
+    stays valid JSON; the human-readable note always goes to stderr, never stdout."""
+    if as_json:
+        typer.echo("[]")
+    typer.echo(note, err=True)
+    raise typer.Exit(0)
+
+
 # --- arxiv ---
 
 
@@ -164,12 +188,18 @@ def arxiv_search(
         arxiv_mod.DEFAULT_MAX_RESULTS, "--n", help="max results to return"
     ),
     long: bool = typer.Option(False, "--long", "-l", help="include abstract summary"),
+    as_json: bool = typer.Option(False, "--json", help="emit JSON instead of text"),
 ) -> None:
     """Search arxiv, newest first. Defaults to the last 18 months."""
-    results = arxiv_mod.search(query, since_months=since, max_results=n)
+    try:
+        results = arxiv_mod.search(query, since_months=since, max_results=n)
+    except Exception as e:
+        _die(str(e), as_json=as_json)
     if not results:
-        typer.echo(f"No results for '{query}' in the last {since} months.")
-        raise typer.Exit(0)
+        _no_results(f"No results for '{query}' in the last {since} months.", as_json)
+    if as_json:
+        _emit_json(results)
+        return
     for r in results:
         date = r.published.strftime("%Y-%m-%d")
         authors = ", ".join(r.authors[:3]) + (" et al." if len(r.authors) > 3 else "")
@@ -193,7 +223,10 @@ def arxiv_fetch(
     ),
 ) -> None:
     """Fetch a paper as markdown (via arxiv2md)."""
-    content = arxiv_mod.fetch(arxiv_id)
+    try:
+        content = arxiv_mod.fetch(arxiv_id)
+    except Exception as e:
+        _die(str(e))
     if out is None:
         typer.echo(content)
     else:
@@ -240,21 +273,27 @@ def exa_search(
         False, "--no-text", help="skip content retrieval (faster; title + url only)"
     ),
     long: bool = typer.Option(False, "--long", "-l", help="show text excerpts"),
+    as_json: bool = typer.Option(False, "--json", help="emit JSON instead of text"),
 ) -> None:
     """Semantic search. For labs/faculty use --domains .edu; for uni pages use --domains <uni>."""
-    results = exa_mod.search(
-        query,
-        n=n,
-        include_domains=_parse_domains(domains),
-        exclude_domains=_parse_domains(exclude),
-        since_months=since,
-        start_published_date=start_date,
-        end_published_date=end_date,
-        with_text=not no_text,
-    )
+    try:
+        results = exa_mod.search(
+            query,
+            n=n,
+            include_domains=_parse_domains(domains),
+            exclude_domains=_parse_domains(exclude),
+            since_months=since,
+            start_published_date=start_date,
+            end_published_date=end_date,
+            with_text=not no_text,
+        )
+    except Exception as e:
+        _die(str(e), as_json=as_json)
     if not results:
-        typer.echo(f"No results for '{query}'.")
-        raise typer.Exit(0)
+        _no_results(f"No results for '{query}'.", as_json)
+    if as_json:
+        _emit_json(results)
+        return
     for r in results:
         date = r.published_date or "-"
         typer.echo(f"{r.score:.2f}  {date}  {r.title}")
@@ -273,7 +312,10 @@ def exa_get(
     ),
 ) -> None:
     """Fetch clean markdown for known URLs. Prints concatenated markdown to stdout by default."""
-    contents = exa_mod.get_contents(urls)
+    try:
+        contents = exa_mod.get_contents(urls)
+    except Exception as e:
+        _die(str(e))
     sections = [f"# {url}\n\n{text}" for url, text in contents.items()]
     combined = "\n\n---\n\n".join(sections)
     if out is None:
@@ -310,7 +352,11 @@ def hf_top(
     as_json: bool = typer.Option(False, "--json", help="emit JSON instead of text"),
 ) -> None:
     """Daily Papers by upvotes (trending). First column is the arxiv id — feeds `ko hf info|get` and `ko arxiv fetch`."""
-    _echo_papers(hf_mod.top(n=n, date=date), as_json, long)
+    try:
+        papers = hf_mod.top(n=n, date=date)
+    except Exception as e:
+        _die(str(e), as_json=as_json)
+    _echo_papers(papers, as_json, long)
 
 
 @hf_app.command("search")
@@ -321,10 +367,12 @@ def hf_search(
     as_json: bool = typer.Option(False, "--json", help="emit JSON instead of text"),
 ) -> None:
     """Search AI papers on hf.co/papers (covers title, authors, content)."""
-    results = hf_mod.search(query, n=n)
+    try:
+        results = hf_mod.search(query, n=n)
+    except Exception as e:
+        _die(str(e), as_json=as_json)
     if not results:
-        typer.echo(f"No results for '{query}'.")
-        raise typer.Exit(0)
+        _no_results(f"No results for '{query}'.", as_json)
     _echo_papers(results, as_json, long)
 
 
@@ -334,7 +382,10 @@ def hf_info(
     as_json: bool = typer.Option(False, "--json", help="emit JSON instead of text"),
 ) -> None:
     """One paper's metadata: upvotes, github + stars, AI summary, linked models/datasets/spaces."""
-    p = hf_mod.info(ref)
+    try:
+        p = hf_mod.info(ref)
+    except Exception as e:
+        _die(str(e), as_json=as_json)
     if as_json:
         typer.echo(json.dumps(asdict(p), default=str))
         return
@@ -366,7 +417,10 @@ def hf_get(
     ),
 ) -> None:
     """Fetch a paper as markdown. Only papers indexed on hf.co/papers; else use `ko arxiv fetch`."""
-    content = hf_mod.get(ref)
+    try:
+        content = hf_mod.get(ref)
+    except Exception as e:
+        _die(str(e))
     if out is None:
         typer.echo(content)
     else:
@@ -400,7 +454,11 @@ def hn_top(
     as_json: bool = typer.Option(False, "--json", help="emit JSON instead of text"),
 ) -> None:
     """Top stories by points, last 24h by default. First column is the id for `ko hn item`."""
-    _echo_stories(hn_mod.top(n=n, days=days), as_json)
+    try:
+        stories = hn_mod.top(n=n, days=days)
+    except Exception as e:
+        _die(str(e), as_json=as_json)
+    _echo_stories(stories, as_json)
 
 
 @hn_app.command("search")
@@ -422,12 +480,14 @@ def hn_search(
     as_json: bool = typer.Option(False, "--json", help="emit JSON instead of text"),
 ) -> None:
     """Search HN stories. Relevance order, last 12 months by default."""
-    results = hn_mod.search(
-        query, n=n, since_months=since, by_date=new, min_comments=min_comments
-    )
+    try:
+        results = hn_mod.search(
+            query, n=n, since_months=since, by_date=new, min_comments=min_comments
+        )
+    except Exception as e:
+        _die(str(e), as_json=as_json)
     if not results:
-        typer.echo(f"No results for '{query}'.")
-        raise typer.Exit(0)
+        _no_results(f"No results for '{query}'.", as_json)
     _echo_stories(results, as_json)
 
 
@@ -437,9 +497,21 @@ def hn_item(
     n: int = typer.Option(
         hn_mod.DEFAULT_MAX_COMMENTS, "--n", help="max comments to show (0 = all)"
     ),
+    as_json: bool = typer.Option(False, "--json", help="emit JSON instead of text"),
 ) -> None:
-    """One story + its comment tree as readable indented text."""
-    story, comments = hn_mod.item(item_id, max_comments=n)
+    """One story + its comment tree (as readable indented text, or `{story, comments}` JSON)."""
+    try:
+        story, comments = hn_mod.item(item_id, max_comments=n)
+    except Exception as e:
+        _die(str(e), as_json=as_json)
+    if as_json:
+        typer.echo(
+            json.dumps(
+                {"story": asdict(story), "comments": [asdict(c) for c in comments]},
+                default=str,
+            )
+        )
+        return
     date = story.created_at.strftime("%Y-%m-%d")
     typer.echo(f"{story.title}  ({story.points}pts, {date})")
     if story.url:
@@ -553,9 +625,16 @@ def gsheets_info(
 @gsheets_app.command("tabs")
 def gsheets_tabs(
     spreadsheet_id: str = typer.Argument(..., help="Google Sheet ID"),
+    as_json: bool = typer.Option(False, "--json", help="emit a JSON array of tab names"),
 ) -> None:
     """List tab names, one per line (machine-friendly)."""
-    info = gsheets_mod.get_info(spreadsheet_id)
+    try:
+        info = gsheets_mod.get_info(spreadsheet_id)
+    except gsheets_mod.SheetsError as e:
+        _die(str(e), as_json=as_json)
+    if as_json:
+        typer.echo(json.dumps(info.tabs))
+        return
     for t in info.tabs:
         typer.echo(t)
 
@@ -652,6 +731,7 @@ def gsheets_find(
         False, "--formula", help="search formulas, not displayed values"
     ),
     tab: list[str] = typer.Option(None, "--tab", help="limit to these tab(s); repeatable"),
+    as_json: bool = typer.Option(False, "--json", help="emit JSON array of {tab, ref, cell}"),
 ) -> None:
     """Search every cell of every tab. TSV: tab, A1 ref, cell."""
     try:
@@ -659,11 +739,12 @@ def gsheets_find(
             gsheets_mod.sheet_id(spreadsheet_id), text, formula=formula, tabs=tab or None
         )
     except gsheets_mod.SheetsError as e:
-        typer.echo(str(e), err=True)
-        raise typer.Exit(1) from None
+        _die(str(e), as_json=as_json)
     if not hits:
-        typer.echo("no matches", err=True)
-        raise typer.Exit(0)
+        _no_results("no matches", as_json)
+    if as_json:
+        typer.echo(json.dumps([{"tab": t, "ref": ref, "cell": cell} for t, ref, cell in hits]))
+        return
     for t, ref, cell in hits:
         typer.echo(f"{t}\t{ref}\t{cell}")
 
@@ -1210,10 +1291,12 @@ def x_search(
     as_json: bool = typer.Option(False, "--json", help="emit JSON instead of text"),
 ) -> None:
     """Search recent X posts. Newest first by default."""
-    posts = x_mod.search(query, n=n, days=days, top=top)
+    try:
+        posts = x_mod.search(query, n=n, days=days, top=top)
+    except Exception as e:
+        _die(str(e), as_json=as_json)
     if not posts:
-        typer.echo(f"No posts for '{query}' in the last {days} days.")
-        raise typer.Exit(0)
+        _no_results(f"No posts for '{query}' in the last {days} days.", as_json)
     _echo_posts(posts, as_json)
 
 
@@ -1226,17 +1309,28 @@ def x_list(
     as_json: bool = typer.Option(False, "--json", help="emit JSON instead of text"),
 ) -> None:
     """Recent posts from one of your X lists, newest first."""
-    posts = x_mod.list_posts(name, n=n)
+    try:
+        posts = x_mod.list_posts(name, n=n)
+    except Exception as e:
+        _die(str(e), as_json=as_json)
     if not posts:
-        typer.echo(f"No recent posts in list '{name}'.")
-        raise typer.Exit(0)
+        _no_results(f"No recent posts in list '{name}'.", as_json)
     _echo_posts(posts, as_json)
 
 
 @x_app.command("lists")
-def x_lists() -> None:
-    """Your X lists (owned + followed), one per line."""
-    for lst in x_mod.my_lists():
+def x_lists(
+    as_json: bool = typer.Option(False, "--json", help="emit JSON instead of TSV"),
+) -> None:
+    """Your X lists (owned + followed). TSV: id, name."""
+    try:
+        lists = x_mod.my_lists()
+    except Exception as e:
+        _die(str(e), as_json=as_json)
+    if as_json:
+        _emit_json(lists)
+        return
+    for lst in lists:
         typer.echo(f"{lst.id}\t{lst.name}")
 
 
@@ -1339,9 +1433,14 @@ def tv(
         typer.echo("--tv and --movie are mutually exclusive", err=True)
         raise typer.Exit(2)
     kind = "tv" if tv else "movie" if movie else None
-    top, rest = tmdb_mod.lookup(query, kind=kind, year=year, country=country)
+    try:
+        top, rest = tmdb_mod.lookup(query, kind=kind, year=year, country=country)
+    except Exception as e:
+        _die(str(e), as_json=as_json)
     if top is None:
-        typer.echo(f"No matches for '{query}'.")
+        if as_json:  # keep the {top, matches} shape valid for a downstream parser
+            typer.echo(json.dumps({"top": None, "matches": []}))
+        typer.echo(f"No matches for '{query}'.", err=True)
         raise typer.Exit(0)
     if as_json:
         typer.echo(
@@ -1528,14 +1627,18 @@ def agent_tv(
 
 
 @agent_app.command("sessions")
-def agent_sessions() -> None:
+def agent_sessions(
+    as_json: bool = typer.Option(False, "--json", help="emit JSON instead of TSV"),
+) -> None:
     """List saved agent sessions, newest first (TSV: id, agent, model, title)."""
     from ko import sessions
 
     rows = sessions.listing()
     if not rows:
-        typer.echo("no sessions yet", err=True)
-        raise typer.Exit(0)
+        _no_results("no sessions yet", as_json)
+    if as_json:
+        typer.echo(json.dumps(rows, default=str))
+        return
     for s in rows:
         typer.echo(f"{s['id']}\t{s['agent']}\t{s['model']}\t{s['title']}")
 
@@ -1680,12 +1783,16 @@ def publish_up(
 
 
 @publish_app.command("list")
-def publish_list() -> None:
+def publish_list(
+    as_json: bool = typer.Option(False, "--json", help="emit JSON instead of TSV"),
+) -> None:
     """List everything published (TSV: name, url, folder)."""
     rows = publish_mod.published()
     if not rows:
-        typer.echo("nothing published yet", err=True)
-        raise typer.Exit(0)
+        _no_results("nothing published yet", as_json)
+    if as_json:
+        _emit_json(rows)
+        return
     for p in rows:
         typer.echo(f"{p.name}\t{p.url}\t{p.folder}")
 
