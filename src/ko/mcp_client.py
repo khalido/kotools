@@ -197,6 +197,56 @@ def call(spec: dict, tool: str, args: dict) -> str:
         raise MCPTestError(_explain(spec, e)) from e
 
 
+_OVERVIEW_INSTRUCTIONS = (
+    "You're inspecting an MCP server for a developer who wants to understand it quickly (often to "
+    "size up or debug their own dev server). Cover, concisely: what the server is for, its tools "
+    "(and resources/prompts) grouped sensibly, and what it's most useful for. You may call tools "
+    "that clearly only READ to verify behavior, but never call anything that looks like it mutates "
+    "state. Markdown, tight, no preamble."
+)
+
+
+def _spec_to_entry(spec: dict) -> dict:
+    """Internal spec -> a raw mcpServers entry (for pydantic-ai's load_mcp_toolsets)."""
+    if spec.get("transport") == "stdio":
+        entry: dict = {"command": spec["command"], "args": spec.get("args") or []}
+        if spec.get("env"):
+            entry["env"] = spec["env"]
+        return entry
+    entry = {"url": spec["url"]}
+    if spec.get("headers"):
+        entry["headers"] = spec["headers"]
+    return entry
+
+
+def overview(spec: dict, model: str, prompt: str | None = None) -> str:
+    """Have a pydantic-ai agent connect to the server (as an MCP toolset), explore it, and summarize
+    what it's for. Uses pydantic-ai's load_mcp_toolsets (same mcpServers shape ko stores). Lazy
+    imports so plain inspect/call don't pull pydantic-ai."""
+    import os as _os
+    import tempfile
+
+    from pydantic_ai import Agent
+    from pydantic_ai.mcp import load_mcp_toolsets
+
+    name = "".join(c if c.isalnum() else "_" for c in spec.get("name", "server"))[:32] or "server"
+    cfg = {"mcpServers": {name: _spec_to_entry(spec)}}
+    fd, path = tempfile.mkstemp(suffix=".json", prefix="ko-mcp-")
+    try:
+        _os.write(fd, json.dumps(cfg).encode())
+        _os.close(fd)
+        toolsets = load_mcp_toolsets(path)
+        agent = Agent(model, toolsets=toolsets, instructions=_OVERVIEW_INSTRUCTIONS)
+        return asyncio.run(
+            agent.run(prompt or "Give me a concise overview of this MCP server.")
+        ).output
+    except Exception as e:
+        raise MCPTestError(_explain(spec, e)) from e
+    finally:
+        if _os.path.exists(path):
+            _os.unlink(path)
+
+
 # --- server registry (~/.config/ko/mcp.json, standard `mcpServers` shape) ---
 
 

@@ -19,6 +19,7 @@ import httpx
 @dataclass
 class Balance:
     provider: str
+    account: str = ""  # which key/account (provider-specific label)
     remaining: float | None = None  # account credit remaining (USD)
     total: float | None = None  # credits granted/purchased
     used: float | None = None  # total used
@@ -45,7 +46,11 @@ def openrouter() -> Balance:
         for label, field in (("today", "usage_daily"), ("week", "usage_weekly"), ("month", "usage_monthly"))
         if keyinfo.get(field) is not None
     )
-    return Balance("openrouter", remaining, total, used, trend)
+    # OpenRouter's key API exposes the key label + free-tier flag, but not account email/project.
+    account = keyinfo.get("label", "") or ""
+    if keyinfo.get("is_free_tier"):
+        account = f"{account} (free tier)".strip()
+    return Balance("openrouter", account, remaining, total, used, trend)
 
 
 PROVIDERS = [openrouter]

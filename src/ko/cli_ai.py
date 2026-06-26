@@ -466,6 +466,34 @@ def mcp_call(
     typer.echo(json.dumps({"tool": tool, "result": out}) if as_json else out)
 
 
+@mcp_app.command("overview")
+def mcp_overview(
+    server: str = typer.Argument(..., help="server name (from mcp.json) or URL"),
+    header: list[str] = typer.Option(
+        None, "--header", "-H", help="extra header 'Key: Value' (overrides config); repeatable"
+    ),
+    model: str = typer.Option(
+        None, "--model", "-m", help="agent model (default: KO_AGENT_MODEL or openrouter:z-ai/glm-5.2)"
+    ),
+) -> None:
+    """An LLM agent connects to an MCP server, explores it, and summarizes what it's for and what's
+    most useful — great for sizing up a server (incl. your own dev server). Makes a (cheap) model call.
+    """
+    import os
+
+    try:
+        headers = mcp_client_mod.parse_headers(header)
+    except mcp_client_mod.MCPTestError as e:
+        _die(str(e), code="usage")
+    mdl = model or os.environ.get("KO_AGENT_MODEL") or "openrouter:z-ai/glm-5.2"
+    try:
+        spec = mcp_client_mod.resolve(server, headers)
+        out = mcp_client_mod.overview(spec, mdl)
+    except mcp_client_mod.MCPTestError as e:
+        _die(str(e), code="overview")
+    typer.echo(out)
+
+
 @app.command("billing")
 def billing(
     as_json: bool = typer.Option(False, "--json", help="emit JSON"),
@@ -482,7 +510,8 @@ def billing(
         left = f"${b.remaining:.2f} left" if b.remaining is not None else "—"
         of = f"  (of ${b.total:.0f}; ${b.used:.2f} used)" if b.total is not None else ""
         trend = f"  · {b.trend}" if b.trend else ""
-        typer.echo(f"{b.provider:12} {left}{of}{trend}")
+        acct = f"  [{b.account}]" if b.account else ""
+        typer.echo(f"{b.provider:12}{acct}  {left}{of}{trend}")
 
 
 @mcp_app.command("servers")

@@ -26,7 +26,7 @@ dependencies = [
     "httpx>=0.28.1",
     "liteparse>=2.1.1",
     "mcp[cli]>=1.28.0",
-    "pydantic-ai-slim[google,openrouter]>=2.0.0b7,<3",
+    "pydantic-ai-slim[google,openrouter,mcp]>=2.0.0b7,<3",
     # pydantic-ai v2 beta pins its sibling pydantic-graph to a prerelease too.
     # Referencing it explicitly lets us drop the global prerelease=allow, so only
     # the pydantic-ai beta line is prerelease and everything else stays on stable.
