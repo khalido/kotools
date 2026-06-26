@@ -118,21 +118,37 @@ ko gmail search "is:unread newer_than:2d"        # unread, last 2 days
 `ko gsheets` runs as *you* against *your* Google account (OAuth user flow, no service account). One
 token grants read **and** write; reads use the narrower read-only scope under the hood.
 
-1. **Create a Google Cloud project.** https://console.cloud.google.com/projectcreate
-2. **Enable the APIs** you'll use. APIs & Services → Library → enable *Google Sheets API*, plus
-   *Google Docs API* (`ko gdocs`), *Google Calendar API* (`ko cal`), and *Gmail API* (`ko gmail`,
-   read-only). No Drive — `ko` works by ID and can't browse your Drive. One token covers them all.
-3. **Configure the OAuth consent screen** (APIs & Services → OAuth consent screen). This step decides
-   whether your refresh token lasts:
-   - **Workspace org?** Set **User type: Internal** — only your org's users, and **no token expiry**.
-   - **Personal Gmail (no org)?** User type must be **External**; add **yourself as a Test user**.
-     ⚠️ An External app left in *Testing* expires its refresh token after **7 days** (re-auth weekly).
-     To avoid that, **Publish** the app (consent screen → Publish — for a personal Desktop app you can
-     ignore Google's verification; "unverified app" is just a warning you click through).
-4. **Create OAuth credentials.** Credentials → Create Credentials → OAuth client ID → **Desktop app**. Download the JSON.
+Each step below links straight to the right console page. They all take a `?project=<project-id>`
+query param — paste your project's ID (from step 1) into the links, or just keep the project selected
+in the console's top bar. The **gcloud CLI** can do step 2; steps 3–4 are console-only.
+
+1. **Create a Google Cloud project** → https://console.cloud.google.com/projectcreate . Note its
+   **project ID** (e.g. `kotools-500611`) — the links below use it.
+2. **Enable the APIs** → [API Library](https://console.cloud.google.com/apis/library?project=<project-id>):
+   enable *Google Sheets*, *Google Docs* (`ko gdocs`), *Google Calendar* (`ko cal`), and *Gmail*
+   (`ko gmail`, read-only). No Drive — `ko` works by ID and can't browse your Drive. One token covers all.
+   Fast path with the gcloud CLI:
+   ```
+   gcloud services enable sheets.googleapis.com docs.googleapis.com calendar-json.googleapis.com gmail.googleapis.com
+   ```
+3. **Configure + publish the OAuth consent screen** →
+   [Auth Platform overview](https://console.cloud.google.com/auth/overview?project=<project-id>)
+   (set app name + support email, **User type: External**), then
+   [Audience](https://console.cloud.google.com/auth/audience?project=<project-id>) → **Publish app**.
+   This step decides whether your refresh token lasts:
+   - **Workspace org and only need org accounts?** **User type: Internal** — no token expiry, no publish
+     needed. But Internal **can't authorize a personal Gmail** — use External if you want personal + work.
+   - **External** (any account): a project left in *Testing* expires its refresh token after **7 days** and
+     requires each account added as a **Test user**. **Publish** the app to remove both — it stays
+     "unverified" (a warning you click through on your own app), but the token no longer expires.
+   - You don't configure *scopes* here — `ko` requests them in code (Sheets/Docs/Calendar + Gmail-readonly).
+     Adding an API later = one re-auth (`ko gsheets auth --logout` then `ko gsheets auth`).
+4. **Create OAuth credentials** →
+   [Credentials](https://console.cloud.google.com/apis/credentials?project=<project-id>) → Create
+   Credentials → OAuth client ID → **Application type: Desktop app** → Download the JSON.
 5. **Save the JSON** to `~/.config/ko/google_client.json` (or set `KO_GOOGLE_CLIENT_FILE=<path>`).
-6. **Run `ko gsheets auth`.** A browser opens; approve. The refresh token caches at
-   `~/.local/state/ko/google_token.json` (relocatable via `KO_STATE_DIR`).
+6. **Run `ko gsheets auth`.** A browser opens; approve (click through the "unverified app" warning). The
+   refresh token caches at `~/.local/state/ko/google_token.json` (relocatable via `KO_STATE_DIR`).
 
 **Reuse on other machines:** that token file is portable — copy it to another machine's same path (or
 point `KO_STATE_DIR` at it) to reuse the auth with no re-consent.
