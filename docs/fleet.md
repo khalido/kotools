@@ -81,6 +81,32 @@ by resuming the session with the next instruction — no re-explaining.
 
 ---
 
+## The handoff pattern — local → box → microsite (2026-06-26)
+
+The first concrete use case, and it sets the core principle:
+
+**Durable source → disposable compute → disposable render.** The only irreplaceable thing is the
+*source* (the research MD + the build prompt). The Sprite, the build, and the hosted output are all
+*derived* and regenerable. Design so that's literally true, and two things follow for free:
+- "Doesn't matter if the box crashes" becomes a guarantee — the box holds no unique state.
+- Throwaway becomes a *feature*: because the source is safe, renders are free to be ephemeral. That's
+  the appeal — a personal **artifact factory**, cheap hosted things you don't have to curate.
+
+Flow:
+```
+local ko agent → writes research.md + a BUILD prompt → git push → poke the box
+              → box clones → cheap coding agent builds (rendered doc … full project, by prompt)
+              → hosts on its Sprite URL (or `ko publish`) → optionally pushes the result back
+```
+
+- **Source of truth = git** (real projects, the robot-arm kind) **or the Drive-synced folder**
+  (quick/throwaway notes). **Not `~/.config/ko`** — that's settings, not content, and not a backup.
+- **Git is the handoff medium AND the "local backup":** the repo lives on the Mac + GitHub + the box
+  at once, so no separate backup is needed. Handoff = "push + poke" = `ko fleet dispatch`.
+- **Cheap coding model is plenty** for "MD + prompt → microsite" (templated build work). Save the
+  smart model for the controller. The rendered-doc ↔ full-project spectrum is just how much the box
+  builds — same pipeline, different prompt.
+
 ## Reactions / risks (2026-06-26)
 
 Backed without hesitation: **bursty+dormant** (token spend bounded by short wakes, not a policed
