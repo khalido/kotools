@@ -74,6 +74,13 @@ Three Sonnet sub-agents swept HN + Exa + web for what builders are doing in 2026
 - [ ] **`ko gdocs` review/comment (needs Drive scope)** — "have the agent read my doc and comment on it." Key facts: the Docs API has **no suggested-edits** (direct edits only via batchUpdate — insert/delete/replace/style/tables), and **comments live in the Drive API** (`comments`/`replies`), not Docs. So commenting = the non-destructive review channel (agent leaves comments, I decide) and it requires Drive. Pair with `drive.readonly` + a configured folder id for "read the docs in this folder" (per-folder OAuth grant isn't a thing — scope is per-API; the folder limit is ko's behavior, or use a service-account + folder-share for a true grant).
 - ko's MCP = **my curated subset**, deliberately NOT Google's giant official Workspace MCP. The point is the 10 tools I actually use (concise, low-context), not 80 generic ones.
 
+### `ko mcp` verbs + investigation upgrades (decided 2026-06-26, implement after the cli refactor)
+Disambiguation rule: **a verb that takes `<url>` acts on someone else's server (client); `serve` (no url) makes ko the server.** Keeps "probe" vs "be a server" unconfusable.
+- [ ] **Rename `ko mcp test` → `ko mcp inspect <url>`** — clearer than "test" (the ambiguous word) and matches the ecosystem ("MCP **Inspector**"). Brand new, cheap to rename.
+- [ ] **Split `call` out as its own verb** — `ko mcp call <url> <tool> [--arg k=v]` (was the `--call` flag). inspect *reads*, call *invokes*.
+- [ ] **`ko mcp serve [--http]`** — run ko's OWN server (the FastMCP task, later). The no-url verb.
+- [ ] **`inspect` = all surfaces, not just tools.** Use the raw `ClientSession` to also `list_resources` (+ `list_resource_templates`) and `list_prompts`, shown only if advertised. Surface the full `initialize` response — protocol, capabilities, and the server's **`instructions`** field. `--tool <name>` dumps one tool's full JSON Schema. Keep the raw-503 error fallback (the best part). Optional: `ko mcp ping <url>` via `session.send_ping()` for liveness+timing.
+
 ### Infra note
 - **Progressive disclosure for `ko mcp`** — when the MCP server lands, expose **one** `ko` tool taking an argv array (agent calls `--help`, drills in, executes) rather than one MCP tool per subcommand. Measured ~91% token cut vs flat tool lists as the CLI grows. [solo.io/blog/keeping-context-and-tokens-low-with-progressive-disclosure-in-agentgateway](https://www.solo.io/blog/keeping-context-and-tokens-low-with-progressive-disclosure-in-agentgateway)
 
