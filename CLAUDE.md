@@ -69,8 +69,10 @@ Ko's personal opinionated CLI. Thin wrappers around SDKs I use often, built so b
 - `ko doctor` shows per-tool setup status (keys set, binaries found, auth done)
 
 ## Agent notes
+- **`AGENTS.md`** at the repo root is the agent-facing contract (output/exit-code/`--json` conventions, bare-arg shortcuts). Keep it in sync with the bullets below.
 - `ko --help` / `ko <cmd> --help` are the contract
 - `ko gsheets get ... ` defaults to TSV — `cut -f N` safe
+- `--json` on most read commands → a JSON array of objects (a few return a single object; `gsheets get` is a 2D array). Under `--json`: errors are `{error, code}` on stderr, empty results are `[]` on stdout. stdout = data, stderr = notes/errors.
 - Exit codes: `0` success (incl. empty results), `1` runtime error, `2` usage error
 - No interactive prompts inside commands (except the one-time OAuth browser popup)
 
