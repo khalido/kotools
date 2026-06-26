@@ -20,7 +20,8 @@ from ._cli_shared import _die, _emit_json, _no_results, app
 # --- sub-apps ---
 
 mcp_app = typer.Typer(
-    help="Inspect/call MCP servers (ko is itself an MCP client). `ko mcp inspect <url>` · `ko mcp call`.",
+    help="Inspect/call MCP servers by name or url (ko is itself an MCP client). "
+    "`ko mcp inspect <name|url>` · `call` · `servers`. Names from ~/.config/ko/mcp.json.",
     no_args_is_help=True,
 )
 app.add_typer(mcp_app, name="mcp")
@@ -379,27 +380,28 @@ def _mcp_args(arg: list[str] | None, as_json: bool) -> dict:
 
 @mcp_app.command("inspect")
 def mcp_inspect(
-    url: str = typer.Argument(
-        ..., help="MCP server URL (Streamable HTTP), e.g. http://localhost:5180/mcp"
+    server: str = typer.Argument(
+        ..., help="server name (from ~/.config/ko/mcp.json) or a URL, e.g. http://localhost:5180/mcp"
     ),
     header: list[str] = typer.Option(
         None, "--header", "-H",
-        help="extra header 'Key: Value' (e.g. 'Authorization: Bearer ...'); repeatable",
+        help="extra header 'Key: Value' (overrides config; e.g. 'Authorization: Bearer ...'); repeatable",
     ),
     tool: str = typer.Option(None, "--tool", help="print one tool's full JSON input schema and exit"),
     as_json: bool = typer.Option(False, "--json", help="emit JSON"),
 ) -> None:
     """Investigate an MCP server: its tools, resources, and prompts (+ capabilities and any server
-    instructions). `--tool <name>` dumps that tool's full input schema. On failure it prints the
-    server's real HTTP status + body — so a 503 'not configured' is clearly a server issue, not your
-    client. Listings go to stdout (pipeable); the server banner to stderr.
+    instructions). Target a configured name or a raw URL. `--tool <name>` dumps that tool's full
+    input schema. On failure it prints the server's real HTTP status + body — so a 503 'not
+    configured' is clearly a server issue, not your client. Listings to stdout; banner to stderr.
     """
     try:
         headers = mcp_client_mod.parse_headers(header)
     except mcp_client_mod.MCPTestError as e:
         _die(str(e), as_json=as_json, code="usage")
     try:
-        info = mcp_client_mod.inspect(url, headers)
+        spec = mcp_client_mod.resolve(server, headers)
+        info = mcp_client_mod.inspect(spec)
     except mcp_client_mod.MCPTestError as e:
         _die(str(e), as_json=as_json, code="connect")
     if tool:
@@ -441,11 +443,11 @@ def mcp_inspect(
 
 @mcp_app.command("call")
 def mcp_call(
-    url: str = typer.Argument(..., help="MCP server URL (Streamable HTTP)"),
+    server: str = typer.Argument(..., help="server name (from mcp.json) or URL"),
     tool: str = typer.Argument(..., help="tool name to call (see `ko mcp inspect`)"),
     arg: list[str] = typer.Option(None, "--arg", help="k=value argument; repeatable"),
     header: list[str] = typer.Option(
-        None, "--header", "-H", help="extra header 'Key: Value' (e.g. auth); repeatable"
+        None, "--header", "-H", help="extra header 'Key: Value' (overrides config); repeatable"
     ),
     as_json: bool = typer.Option(False, "--json", help="emit JSON"),
 ) -> None:
@@ -456,7 +458,31 @@ def mcp_call(
         _die(str(e), as_json=as_json, code="usage")
     args = _mcp_args(arg, as_json)
     try:
-        out = mcp_client_mod.call(url, tool, args, headers)
+        spec = mcp_client_mod.resolve(server, headers)
+        out = mcp_client_mod.call(spec, tool, args)
     except mcp_client_mod.MCPTestError as e:
         _die(str(e), as_json=as_json, code="call")
     typer.echo(json.dumps({"tool": tool, "result": out}) if as_json else out)
+
+
+@mcp_app.command("servers")
+def mcp_servers(
+    as_json: bool = typer.Option(False, "--json", help="emit JSON"),
+) -> None:
+    """List MCP servers configured in ~/.config/ko/mcp.json (standard `mcpServers` shape).
+    TSV: name, transport, target. Use a name with `ko mcp inspect <name>` / `call <name> <tool>`."""
+    try:
+        servers = mcp_client_mod.load_servers()
+    except mcp_client_mod.MCPTestError as e:
+        _die(str(e), as_json=as_json, code="config")
+    if not servers:
+        _no_results("no servers in ~/.config/ko/mcp.json (add an `mcpServers` object)", as_json)
+    if as_json:
+        typer.echo(json.dumps(servers))
+        return
+    for name, cfg in sorted(servers.items()):
+        if cfg.get("command"):
+            kind, target = "stdio", " ".join([cfg["command"], *cfg.get("args", [])])
+        else:
+            kind, target = "http", cfg.get("url", "?")
+        typer.echo(f"{name}\t{kind}\t{target}")
