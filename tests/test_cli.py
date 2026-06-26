@@ -40,6 +40,13 @@ def test_no_results_plain_note_to_stderr_exit0(capsys):
     assert out.err.strip() == "No results for 'x'."
 
 
+def test_fmt_day_humanizes_and_drops_time():
+    assert cli._fmt_day("2018-06-22T03:54:39.000Z") == "22 Jun 2018"
+    assert cli._fmt_day("2016-02-22") == "22 Feb 2016"
+    assert cli._fmt_day(None) == ""
+    assert cli._fmt_day("garbage") == "garbage"[:10]  # falls back to the date slice
+
+
 def test_no_results_emits_empty_array_under_json(capsys):
     with pytest.raises(typer.Exit) as exc:
         cli._no_results("No results for 'x'.", as_json=True)

@@ -86,6 +86,29 @@ def list_calendars() -> list[Calendar]:
     return out
 
 
+def resolve_calendar_ids(names: list[str], calendars: list[Calendar] | None = None) -> list[str]:
+    """Map calendar names (case-insensitive) or raw ids to ids — for "only these calendars"
+    allowlists (config or `--calendar`). `calendars` defaults to list_calendars() (pass it to
+    avoid the call / for tests). Raises CalError naming what's available if one can't be matched."""
+    cals = calendars if calendars is not None else list_calendars()
+    by_name = {c.name.lower(): c.id for c in cals}
+    ids = {c.id for c in cals}
+    out: list[str] = []
+    missing: list[str] = []
+    for name in names:
+        key = name.strip()
+        if key in ids:
+            out.append(key)
+        elif key.lower() in by_name:
+            out.append(by_name[key.lower()])
+        else:
+            missing.append(name)
+    if missing:
+        avail = ", ".join(sorted(c.name for c in cals)) or "(none)"
+        raise CalError(f"no calendar named {missing}. Available: {avail}")
+    return out
+
+
 def _event(raw: dict, cal_id: str, cal_name: str) -> CalEvent:
     s, e = raw.get("start", {}), raw.get("end", {})
     return CalEvent(

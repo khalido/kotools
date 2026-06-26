@@ -173,6 +173,18 @@ def _no_results(note: str, as_json: bool) -> NoReturn:
     raise typer.Exit(0)
 
 
+def _fmt_day(iso: str | None) -> str:
+    """An ISO date/datetime string -> human '22 Jun 2018' (day only, no time); '' if missing."""
+    if not iso:
+        return ""
+    from datetime import datetime
+
+    try:
+        return datetime.fromisoformat(iso.replace("Z", "+00:00")).strftime("%d %b %Y")
+    except ValueError:
+        return iso[:10]  # fall back to the date portion
+
+
 # --- arxiv ---
 
 
@@ -271,12 +283,13 @@ def exa_search(
         None, "--end-date", help="publish date ceiling (YYYY-MM-DD)"
     ),
     no_text: bool = typer.Option(
-        False, "--no-text", help="skip content retrieval (faster; title + url only)"
+        False, "--no-text", help="skip content entirely (fastest; title + url + date only)"
     ),
-    long: bool = typer.Option(False, "--long", "-l", help="show text excerpts"),
+    long: bool = typer.Option(False, "--long", "-l", help="fetch the full page text excerpt, not just the summary"),
     as_json: bool = typer.Option(False, "--json", help="emit JSON instead of text"),
 ) -> None:
-    """Semantic search. For labs/faculty use --domains .edu; for uni pages use --domains <uni>."""
+    """Semantic search. Each hit shows a query-relevant summary by default. For labs/faculty
+    use --domains .edu; for uni pages use --domains <uni>."""
     try:
         results = exa_mod.search(
             query,
@@ -286,7 +299,8 @@ def exa_search(
             since_months=since,
             start_published_date=start_date,
             end_published_date=end_date,
-            with_text=not no_text,
+            with_text=long,
+            with_summary=not no_text,
         )
     except Exception as e:
         _die(str(e), as_json=as_json)
@@ -296,12 +310,16 @@ def exa_search(
         _emit_json(results)
         return
     for r in results:
-        date = r.published_date or "-"
-        typer.echo(f"{r.score:.2f}  {date}  {r.title}")
+        day = _fmt_day(r.published_date)
+        typer.echo(f"{r.title or r.url}{'  ·  ' + day if day else ''}")
         typer.echo(f"  {r.url}")
-        if long and r.text:
-            excerpt = r.text[:400].replace("\n", " ")
-            typer.echo(f"  {excerpt}{'…' if len(r.text) > 400 else ''}")
+        blurb = (r.text if long else None) or r.summary
+        if blurb:
+            excerpt = " ".join(blurb.split())
+            if excerpt.startswith("Summary:"):  # Exa sometimes prefixes its summary
+                excerpt = excerpt[len("Summary:") :].lstrip(" -")
+            cap = 500 if long else 240
+            typer.echo(f"  {excerpt[:cap]}{'…' if len(excerpt) > cap else ''}")
         typer.echo("")
 
 
@@ -978,6 +996,9 @@ def _cal_main(
     ),
     days: int = typer.Option(7, "--days", "-d", help="days of agenda (default 7)"),
     today: bool = typer.Option(False, "--today", help="just today"),
+    calendar: list[str] = typer.Option(
+        None, "--calendar", "-c", help="limit to these calendar(s) by name or id; repeatable"
+    ),
     as_json: bool = typer.Option(False, "--json", help="emit JSON"),
 ) -> None:
     """Agenda across your calendars (bare `ko cal`). Subcommands: day / add / cals / auth."""
@@ -986,7 +1007,8 @@ def _cal_main(
         return
     n = 1 if today else days
     try:
-        events = gcal_mod.list_events(days=n)
+        ids = gcal_mod.resolve_calendar_ids(calendar) if calendar else None
+        events = gcal_mod.list_events(days=n, calendar_ids=ids)
     except gcal_mod.CalError as e:
         typer.echo(str(e), err=True)
         raise typer.Exit(1) from None
@@ -997,6 +1019,9 @@ def _cal_main(
 @cal_app.command("day")
 def cal_day(
     date_str: str = typer.Argument("today", help="YYYY-MM-DD, 'today', or 'tomorrow'"),
+    calendar: list[str] = typer.Option(
+        None, "--calendar", "-c", help="limit to these calendar(s) by name or id; repeatable"
+    ),
     as_json: bool = typer.Option(False, "--json", help="emit JSON"),
 ) -> None:
     """All events for a single day."""
@@ -1006,7 +1031,10 @@ def cal_day(
         _, val = gcal_mod.parse_when(date_str)
         d = val.date() if isinstance(val, datetime) else val
         start = datetime(d.year, d.month, d.day, tzinfo=gcal_mod.tz())
-        events = gcal_mod.list_events(time_min=start, time_max=start + timedelta(days=1))
+        ids = gcal_mod.resolve_calendar_ids(calendar) if calendar else None
+        events = gcal_mod.list_events(
+            time_min=start, time_max=start + timedelta(days=1), calendar_ids=ids
+        )
     except (gcal_mod.CalError, ValueError) as e:
         typer.echo(str(e), err=True)
         raise typer.Exit(1) from None

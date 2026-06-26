@@ -27,6 +27,7 @@ class ExaResult:
     score: float
     published_date: str | None
     text: str | None  # populated only when with_text=True
+    summary: str | None = None  # a query-relevant blurb, when with_summary=True
 
 
 def _client() -> Exa:
@@ -47,10 +48,12 @@ def search(
     since_months: int | None = None,
     start_published_date: str | None = None,
     end_published_date: str | None = None,
-    with_text: bool = True,
+    with_text: bool = False,
+    with_summary: bool = True,
     max_chars: int = DEFAULT_MAX_CHARS,
 ) -> list[ExaResult]:
-    """Semantic web search via Exa. Returns results with optional inline text.
+    """Semantic web search via Exa. Returns results with an optional query-relevant summary
+    (default) and/or the full page text (`with_text`).
 
     Param names mirror Exa's SDK so agent-written code composes with upstream docs.
     `since_months` is our ergonomic shortcut for "last N months" — sets
@@ -69,8 +72,12 @@ def search(
         kwargs["start_published_date"] = start_published_date
     if end_published_date:
         kwargs["end_published_date"] = end_published_date
+    # Summary is a short query-relevant blurb (cheap, useful in a list); text is the full page.
     if with_text:
         kwargs["text"] = {"max_characters": max_chars}
+    if with_summary:
+        kwargs["summary"] = {"query": query}
+    if with_text or with_summary:
         response = client.search_and_contents(query, **kwargs)
     else:
         response = client.search(query, **kwargs)
@@ -82,6 +89,7 @@ def search(
             score=float(item.score or 0.0),
             published_date=item.published_date,
             text=getattr(item, "text", None),
+            summary=getattr(item, "summary", None),
         )
         for item in response.results
     ]

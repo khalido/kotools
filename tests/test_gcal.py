@@ -82,6 +82,20 @@ def test_search_events_past_is_most_recent_first(monkeypatch):
     assert [e.summary for e in out] == ["Dentist Jun", "Dentist Jan"]  # most recent first
 
 
+def test_resolve_calendar_ids_by_name_id_and_missing():
+    import pytest
+
+    cals = [
+        gcal.Calendar(id="abc@group", name="Family", primary=False, role="owner"),
+        gcal.Calendar(id="me@x.com", name="Primary", primary=True, role="owner"),
+    ]
+    # name is case-insensitive; a raw id passes through; order is preserved
+    assert gcal.resolve_calendar_ids(["family", "me@x.com"], calendars=cals) == ["abc@group", "me@x.com"]
+    with pytest.raises(gcal.CalError) as e:
+        gcal.resolve_calendar_ids(["Holidays"], calendars=cals)
+    assert "Family" in str(e.value) and "Primary" in str(e.value)  # error names what's available
+
+
 def test_tz_name_default_and_override(monkeypatch):
     monkeypatch.setattr(gcal.config, "get", lambda *a, **k: None)
     assert gcal.tz_name() == "Australia/Sydney"
