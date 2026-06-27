@@ -96,7 +96,7 @@ Three Sonnet sub-agents swept HN + Exa + web for what builders are doing in 2026
 Disambiguation rule: **a verb that takes `<url>` acts on someone else's server (client); `serve` (no url) makes ko the server.** Keeps "probe" vs "be a server" unconfusable.
 - [ ] **Rename `ko mcp test` → `ko mcp inspect <url>`** — clearer than "test" (the ambiguous word) and matches the ecosystem ("MCP **Inspector**"). Brand new, cheap to rename.
 - [ ] **Split `call` out as its own verb** — `ko mcp call <url> <tool> [--arg k=v]` (was the `--call` flag). inspect *reads*, call *invokes*.
-- [ ] **`ko mcp serve [--http]`** — run ko's OWN server (the FastMCP task, later). The no-url verb.
+- [ ] **`ko mcp serve [--http]`** — run ko's OWN server (the FastMCP task, later). The no-url verb. Tool-design *principles* carry from `everx/docs/mcp-tool-design.md` (few powerful tools, progressive disclosure, low tool count, markdown-to-read vs JSON-to-render, helpful errors) — but the *shapes* don't: that's a CRM (find/detail/deep-dive/bulk over entities); ko's surface is SDK-wrapper verbs, so map the discipline, not the four entity tools.
 - [ ] **`inspect` = all surfaces, not just tools.** Use the raw `ClientSession` to also `list_resources` (+ `list_resource_templates`) and `list_prompts`, shown only if advertised. Surface the full `initialize` response — protocol, capabilities, and the server's **`instructions`** field. `--tool <name>` dumps one tool's full JSON Schema. Keep the raw-503 error fallback (the best part). Optional: `ko mcp ping <url>` via `session.send_ping()` for liveness+timing.
 
 ### `ko mcp ui` — launch the official Inspector, pre-configured (2026-06-27)
