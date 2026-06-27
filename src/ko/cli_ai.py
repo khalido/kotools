@@ -514,6 +514,52 @@ def billing(
         typer.echo(f"{b.provider:12}{acct}  {left}{of}{trend}")
 
 
+@mcp_app.command("auth-info")
+def mcp_auth_info(
+    server: str = typer.Argument(..., help="server name (from mcp.json) or URL"),
+    header: list[str] = typer.Option(None, "--header", "-H", help="extra header 'Key: Value'; repeatable"),
+    as_json: bool = typer.Option(False, "--json", help="emit JSON"),
+) -> None:
+    """Validate a remote server's OAuth discovery surface BEFORE connecting — the public `.well-known`
+    metadata (protected-resource + auth-server), scopes, endpoints, DCR — and flag anything malformed
+    (e.g. HTML where JSON should be). Spec-aware (RFC 9728 + RFC 8414). Exit 1 if problems are found.
+    """
+    try:
+        headers = mcp_client_mod.parse_headers(header)
+        spec = mcp_client_mod.resolve(server, headers)
+    except mcp_client_mod.MCPTestError as e:
+        _die(str(e), as_json=as_json, code="usage")
+    if spec.get("transport") != "http":
+        _die("auth-info is for remote (http) servers", as_json=as_json, code="usage")
+    info = mcp_client_mod.auth_info(spec["url"], spec.get("headers"))
+    if as_json:
+        typer.echo(json.dumps(info, default=str))
+        raise typer.Exit(1 if info.get("problems") else 0)
+    typer.echo(f"MCP endpoint: HTTP {info.get('mcp_status', '?')}  (auth required: {info.get('requires_auth')})")
+    if info.get("www_authenticate"):
+        typer.echo(f"  WWW-Authenticate: {info['www_authenticate']}")
+    pr = info.get("protected_resource")
+    if pr:
+        typer.echo(f"\nProtected resource  [{info.get('protected_resource_url')}]")
+        typer.echo(f"  resource:     {pr.get('resource')}")
+        typer.echo(f"  scopes:       {', '.join(pr.get('scopes_supported', [])) or '(none)'}")
+        typer.echo(f"  auth servers: {', '.join(pr.get('authorization_servers', []))}")
+    for asm in info.get("auth_servers", []):
+        typer.echo(f"\nAuth server  [{asm.get('_discovered_at')}]")
+        typer.echo(f"  issuer:       {asm.get('issuer')}")
+        typer.echo(f"  authorize:    {asm.get('authorization_endpoint')}")
+        typer.echo(f"  token:        {asm.get('token_endpoint')}")
+        typer.echo(f"  registration: {asm.get('registration_endpoint') or '— (no DCR)'}")
+        typer.echo(f"  scopes:       {', '.join(asm.get('scopes_supported', [])) or '(none)'}")
+        typer.echo(f"  PKCE S256:    {'S256' in (asm.get('code_challenge_methods_supported') or [])}")
+    if info.get("problems"):
+        typer.echo("\nPROBLEMS:", err=True)
+        for prob in info["problems"]:
+            typer.echo(f"  ✗ {prob}", err=True)
+        raise typer.Exit(1)
+    typer.echo("\n✓ discovery surface looks well-formed", err=True)
+
+
 @mcp_app.command("servers")
 def mcp_servers(
     as_json: bool = typer.Option(False, "--json", help="emit JSON"),

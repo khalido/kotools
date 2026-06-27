@@ -28,6 +28,21 @@ def test_error_type():
     assert issubclass(mcp_client.MCPTestError, RuntimeError)
 
 
+def test_decode_jwt_claims():
+    # payload {"aud":"wrong-aud","iss":"me","scope":"read","exp":123}
+    token = "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiJ3cm9uZy1hdWQiLCJpc3MiOiJtZSIsInNjb3BlIjoicmVhZCIsImV4cCI6MTIzfQ.x"
+    claims = mcp_client.decode_jwt_claims(token)
+    assert claims["aud"] == "wrong-aud" and claims["scope"] == "read" and claims["exp"] == 123
+    assert mcp_client.decode_jwt_claims("not-a-jwt") is None  # not 3 parts
+
+
+def test_resource_metadata_url():
+    www = 'Bearer realm="everx-mcp", resource_metadata="http://localhost:5180/.well-known/oauth-protected-resource/mcp"'
+    assert mcp_client._resource_metadata_url(www) == "http://localhost:5180/.well-known/oauth-protected-resource/mcp"
+    assert mcp_client._resource_metadata_url("Bearer realm=x") is None
+    assert mcp_client._resource_metadata_url(None) is None
+
+
 def test_normalize_http_and_stdio():
     http = mcp_client._normalize("a", {"url": "http://x/mcp", "headers": {"H": "v"}})
     assert http == {"transport": "http", "name": "a", "url": "http://x/mcp", "headers": {"H": "v"}}

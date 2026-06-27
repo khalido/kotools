@@ -14,7 +14,9 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 from contextlib import asynccontextmanager
+from urllib.parse import urlsplit
 from dataclasses import dataclass, field
 from datetime import timedelta
 
@@ -77,8 +79,25 @@ def _unwrap(exc: BaseException) -> BaseException:
     return exc
 
 
+def decode_jwt_claims(token: str) -> dict | None:
+    """Decode a JWT payload (no signature verification) — for surfacing aud/iss/scope/exp on a 401.
+    Returns None if it isn't a 3-part JWT."""
+    import base64
+
+    parts = token.split(".")
+    if len(parts) != 3:
+        return None
+    payload = parts[1] + "=" * (-len(parts[1]) % 4)
+    try:
+        return json.loads(base64.urlsafe_b64decode(payload))
+    except Exception:
+        return None
+
+
 def _probe(url: str, headers: dict[str, str]) -> str:
-    """Raw initialize POST → a human 'HTTP <code>: <body>' line, so a failed connect explains itself."""
+    """Raw initialize POST → a human diagnostic line. On failure surfaces the WWW-Authenticate header
+    (the server saying *why*) and decodes a passed Bearer token's claims (aud/iss/scope/exp — a wrong
+    audience is otherwise invisible)."""
     body = {
         "jsonrpc": "2.0",
         "id": 1,
@@ -91,11 +110,108 @@ def _probe(url: str, headers: dict[str, str]) -> str:
     except httpx.HTTPError as e:
         return f"could not reach {url}: {e}"
     snippet = " ".join(r.text.split())[:300]
-    return f"HTTP {r.status_code}: {snippet}" if snippet else f"HTTP {r.status_code}"
+    parts = [f"HTTP {r.status_code}: {snippet}" if snippet else f"HTTP {r.status_code}"]
+    www = r.headers.get("www-authenticate")
+    if www:
+        parts.append(f"WWW-Authenticate: {www}")
+    auth = headers.get("Authorization") or headers.get("authorization") or ""
+    if auth.lower().startswith("bearer ") and r.status_code in (401, 403):
+        claims = decode_jwt_claims(auth[7:].strip())
+        if claims:
+            shown = {k: claims[k] for k in ("aud", "iss", "scope", "exp") if k in claims}
+            parts.append(f"your token claims: {shown}")
+    return "  |  ".join(parts)
 
 
 def _first_line(text: str | None) -> str:
     return (text or "").strip().split("\n")[0]
+
+
+# --- OAuth discovery validation (RFC 9728 protected-resource + RFC 8414 AS metadata) ---
+
+
+def _fetch_json(url: str, headers: dict | None = None) -> tuple[dict | None, str | None]:
+    """GET → (json | None, problem | None). Flags the exact bug class: HTML where JSON should be."""
+    try:
+        r = httpx.get(url, headers=headers or {}, timeout=8.0)
+    except httpx.HTTPError as e:
+        return None, f"unreachable: {e}"
+    if r.status_code != 200:
+        return None, f"HTTP {r.status_code}"
+    ct = r.headers.get("content-type", "")
+    if r.text.lstrip()[:1] == "<" or "html" in ct.lower():
+        return None, f"returned HTML, not JSON (content-type: {ct or '?'}) — likely an app-shell catch-all"
+    try:
+        return r.json(), None
+    except Exception:
+        return None, f"not valid JSON (content-type: {ct or '?'})"
+
+
+def _resource_metadata_url(www: str | None) -> str | None:
+    """Extract resource_metadata="<url>" from a WWW-Authenticate header."""
+    m = re.search(r'resource_metadata="?([^",\s]+)"?', www or "")
+    return m.group(1) if m else None
+
+
+def auth_info(url: str, headers: dict | None = None) -> dict:
+    """Walk a remote server's OAuth discovery surface BEFORE authenticating, and report whether each
+    public part is well-formed. Spec-aware: RFC 9728 (protected-resource) + RFC 8414 (auth-server)."""
+    headers = headers or {}
+    out: dict = {"url": url, "problems": [], "auth_servers": []}
+    init = {
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": {"protocolVersion": _PROTOCOL, "capabilities": {}, "clientInfo": {"name": "ko", "version": "0"}},
+    }
+    try:
+        r = httpx.post(url, json=init, headers={
+            "Content-Type": "application/json", "Accept": "application/json, text/event-stream", **headers,
+        }, timeout=8.0)
+    except httpx.HTTPError as e:
+        out["problems"].append(f"could not reach {url}: {e}")
+        return out
+    out["mcp_status"] = r.status_code
+    out["www_authenticate"] = r.headers.get("www-authenticate")
+    out["requires_auth"] = r.status_code in (401, 403)
+    if not out["requires_auth"]:
+        return out  # no OAuth advertised
+
+    origin = f"{urlsplit(url).scheme}://{urlsplit(url).netloc}"
+    pr_url = _resource_metadata_url(out["www_authenticate"]) or f"{origin}/.well-known/oauth-protected-resource"
+    out["protected_resource_url"] = pr_url
+    pr, prob = _fetch_json(pr_url)
+    if prob:
+        out["problems"].append(f"protected-resource metadata ({pr_url}): {prob}")
+        return out
+    out["protected_resource"] = pr
+    for key in ("resource", "authorization_servers"):
+        if not pr.get(key):
+            out["problems"].append(f"protected-resource metadata missing '{key}'")
+
+    for issuer in pr.get("authorization_servers") or []:
+        sp = urlsplit(issuer)
+        as_origin = f"{sp.scheme}://{sp.netloc}"
+        candidates = [
+            f"{as_origin}/.well-known/oauth-authorization-server{sp.path}",
+            f"{issuer.rstrip('/')}/.well-known/oauth-authorization-server",
+            f"{as_origin}/.well-known/openid-configuration{sp.path}",
+            f"{issuer.rstrip('/')}/.well-known/openid-configuration",
+        ]
+        meta = None
+        for c in candidates:
+            meta, _ = _fetch_json(c)
+            if meta:
+                meta["_discovered_at"] = c
+                break
+        if not meta:
+            out["problems"].append(f"auth-server '{issuer}': no discoverable metadata (tried {len(candidates)} URLs)")
+            continue
+        for key in ("issuer", "authorization_endpoint", "token_endpoint"):
+            if not meta.get(key):
+                out["problems"].append(f"auth-server '{issuer}' metadata missing '{key}'")
+        if not meta.get("registration_endpoint"):
+            out["problems"].append(f"auth-server '{issuer}': no registration_endpoint (no Dynamic Client Registration)")
+        out["auth_servers"].append(meta)
+    return out
 
 
 @asynccontextmanager
