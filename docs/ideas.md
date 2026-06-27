@@ -6,6 +6,24 @@ The single list of candidate subcommands. WORKLOG tracks what happened; this tra
 
 **Skill or no skill:** the goal is a CLI so intuitive that `--help` *is* the skill — short, opinionated, example-rich. If that fails, ship a `using-ko` skill later. Treat needing a skill as a design smell.
 
+## Status & roadmap (updated 2026-06-27)
+
+**Shipped this session (2026-06-22 → 27):** gmail `thread`; Google lib shared-spine refactor (errors/http/id in `google_auth`); CLI agent-friendliness pass (clean errors, no stdout leaks, fuller `--json`, `AGENTS.md`, trailing-`help`); **`ko prompt`** (kickoff briefs); `ko cal --calendar` allowlist; `ko exa search` summaries + human dates; hn `--min-comments` fix; **`ko mcp` inspect/call/overview/servers** (client + `mcp.json` registry with `${ENV}` expansion + an agent that summarizes a server); **`ko billing`** (OpenRouter); **local logging via loguru** + `ko logs`; repo made public + PyPI-ready; `cli.py` split into `_cli_shared`/`cli_google`/`cli_web`/`cli_ai`; `pydantic-ai-slim[mcp]` added.
+
+**The one blocker (USER action):** finish Google auth — APIs enabled ✓ (gcloud, project `kotools-500611`); now **publish the consent app** (External) + `ko gsheets auth` & `-a personal auth`. Everything Google-shaped waits on this.
+
+**Build queue (decided, in order):**
+1. **Google auth live** (user) → smoke-test `ko cal` / `gmail` / `gdocs` / `gsheets`.
+2. **PyPI publish** (user, token coming): `uv build --no-sources && uv publish`.
+3. **`ko note`** — append-and-review Google Doc (tiny; prepend timestamped blocks; needs gdocs auth). See the `ko note` entry below.
+4. **`ko brief`** — morning brief: deterministic gather (`cal` filtered + `gmail` unread + `hn`/papers + `tt`) → one cheap-model synthesis in my voice; `--raw` skips the LLM. A scripted pipeline, NOT an agent loop.
+5. **`ko ai`** — Layer 2 agent (the big one; full design below). Now also folds in MCP toolsets + telemetry (see those bullets).
+6. **Telemetry → PostHog** (auto-on when key set): command-log loguru sink; LLM traces via pydantic-ai `InstrumentationSettings` → local + PostHog (rides on `ko ai`). See Infra (a)/(b).
+7. **MCP server** (`ko mcp serve`, FastMCP) + **bundled default servers** (railway/context7); **Telegram bridge** — all ride on `ko ai`.
+8. **Far future:** agent fleet / remote sandboxes — `docs/remote.md` (planning) + `docs/fleet.md` (brief).
+
+**Smaller, any-time:** `ko prompt suggest` (project detection) + `include:`; CLI polish (enumerated errors, idempotency field, `has_more`+hint, `-n`/`--n` standardize, `NO_COLOR`); `ko publish --md` mobile nav; `ko gdocs` review/comment (Drive scope). Backlog commands (`yt`, `q`, `news`, `scholar`…) further down.
+
 ## Next up
 
 - [x] **`ko fetch <url>`** — SHIPPED 2026-06-13 as designed: trafilatura markdown (live-verified on real articles), arxiv links → arxiv2md, PDF links → ~/Downloads + liteparse (`--no-save`). Bare shortcut `ko <url>` routes here. Gotcha found: the Wayback availability API chokes on percent-encoded `url=` params — query built by hand. `--jina` escape hatch still future.
@@ -92,7 +110,7 @@ Disambiguation rule: **a verb that takes `<url>` acts on someone else's server (
 ### Infra note
 - **Progressive disclosure for `ko mcp`** — when the MCP server lands, expose **one** `ko` tool taking an argv array (agent calls `--help`, drills in, executes) rather than one MCP tool per subcommand. Measured ~91% token cut vs flat tool lists as the CLI grows. [solo.io/blog/keeping-context-and-tokens-low-with-progressive-disclosure-in-agentgateway](https://www.solo.io/blog/keeping-context-and-tokens-low-with-progressive-disclosure-in-agentgateway)
 
-## `ko ai` — the agent layer (design sketch, 2026-06-11)
+## `ko ai` — the agent layer (design sketch 2026-06-11, updated 2026-06-27: + MCP toolsets, telemetry)
 
 ko grows two explicit layers:
 
@@ -114,6 +132,8 @@ Decisions:
   - Boundary: cache + history only. Knowledge store / saved links belongs to a separate app — don't rebuild that inside ko.
 - **Paper-research skill** (idea 2026-06-12, from HF's internal "context-research" pattern): Layer 1 stays dumb — `ko hf search` is one search, full stop. The pipeline lives in a `ko ai` skill: take the question → generate 2–3 keyword-variant queries → run `hf search` (and `arxiv search`/`pwc search`) in parallel → cheap-model subagent triages by relevance + recency → `hf get`/`arxiv fetch` the top few → read methodology/results → synthesize. Relevant for the research-masters use. Later.
 - **Smart routing lives in `ko fetch`, not the agent.** No `ko linktopdf`/`linktoyt`: `ko fetch <anything>` sniffs deterministically — youtube.com/youtu.be → transcript, content-type PDF → pymupdf4llm, else trafilatura, dead link → Wayback. One universal "thing → markdown" command. Smart ≠ fuzzy. Plus the bare-link shortcut: `ko <url>` (top-level URL detection) routes straight to fetch.
+- **MCP servers as toolsets (validated 2026-06-27).** Beyond the Layer-1 `FunctionToolset`s, the agent can consume *external* MCP servers as tools via pydantic-ai's `load_mcp_toolsets("~/.config/ko/mcp.json")` — the **same registry the CLI uses** (we confirmed it reads our exact `mcpServers` shape + `${VAR}` expansion). Server selection is **run-time** (pass which servers to attach per run), not a persistent enable/disable. Needs the `[mcp]` extra (already added). So `ko ai` gets context7/railway/etc. as tools for free once the registry has them.
+- **Telemetry built in (decided 2026-06-27).** `Agent.instrument_all(InstrumentationSettings(tracer_provider=<ours>, include_content=<bool>))` in the agent bootstrap → OTel `gen_ai.*` spans + token/cost metrics fan out to a **local exporter** (file/SQLite for analysis) **and PostHog OTLP** at once. Instrumenting here (not OpenRouter Broadcast) is **provider-agnostic** — captures DeepSeek-direct / Gemini-direct / OR alike, so it survives moving agents off OpenRouter to cheaper APIs. `include_content` is the prompt/response scrub toggle. Full comparison: Infra (b).
 
 ### Implementation notes (research 2026-06-11: pydantic.dev docs + pydantic-ai source + private prior art)
 
