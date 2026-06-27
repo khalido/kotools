@@ -11,7 +11,9 @@ def isolated(monkeypatch, tmp_path):
     monkeypatch.setenv("KO_CONFIG_DIR", str(tmp_path / "config"))  # no config.toml -> defaults
     from ko import logs
 
-    return logs
+    logs._reset()  # loguru is a process-global singleton — isolate between tests
+    yield logs
+    logs._reset()
 
 
 def test_command_event_round_trips_and_marks_errors(isolated):

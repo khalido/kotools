@@ -25,6 +25,7 @@ dependencies = [
     "google-auth-oauthlib>=1.4.0",
     "httpx>=0.28.1",
     "liteparse>=2.1.1",
+    "loguru~=0.7.3",
     "mcp[cli]>=1.28.0",
     "pydantic-ai-slim[google,openrouter,mcp]>=2.0.0b7,<3",
     # pydantic-ai v2 beta pins its sibling pydantic-graph to a prerelease too.
