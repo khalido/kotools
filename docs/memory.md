@@ -25,6 +25,33 @@ Three pieces that click together (each reuses something ko already has):
 
 ## Plan
 
+### Source of truth: markdown-in-git; libSQL is a projection (refinement 2026-06-27, from a Gemini sketch)
+
+**The inversion that improves the plan:** the **human-readable markdown in a private git repo is the
+source of truth; the libSQL vector DB is a *rebuildable index* over it** (not the store). Why it's the
+right call here:
+- It *is* the projection rule (markdown = truth, vector DB = disposable; rebuild from markdown anytime).
+- **Inspectable + hand-editable** — read / `git diff` / edit memory as plain markdown. Maximum "own it".
+- **Git is the durable, multi-machine sync of the source** — free, versioned, survives DB loss.
+- **Unifies with Claude Code's `MEMORY.md`** (already markdown-in-a-folder) → ko's memory and Claude's
+  can be the *same* git repo; ko just adds the vector index both read.
+
+**Sync — simpler than syncing both:** **git syncs the source**; each machine **rebuilds its own local
+libSQL** from the markdown (re-embedding a few hundred curated facts with a small local model is cheap).
+A **central Turso (or the edge-mcp MCP server) is *optional* — only for *remote* agents** (fleet/edge)
+that query without running an embedder. So Turso is a remote-query convenience, not the sync backbone.
+
+**Workspace anchor files** (ko already uses the `AGENTS.md` pattern — same idea, pointed at the notes repo):
+- `AGENTS.md` in the notes root — the protocol: read/append markdown in-domain, and on a novel
+  fact/decision append one line to `log.jsonl`, then commit.
+- `log.jsonl` — append-only `{ts, agent, action, file, summary, vector_dirty}` per change. The real-time
+  loop writes markdown + this line (zero latency, **no embedding mid-flight**); the overnight loop scans
+  for `vector_dirty:true` and **re-embeds just those** (incremental re-index). (Overlaps git history a
+  little; the `vector_dirty` flag + cheap-scan summary are the value-add.)
+
+Embeddings stay **small + local**: 384-dim int8 (MiniLM), *not* 1536-dim float32 (~16× storage + a paid
+API call per fact) — bump only if retrieval visibly misses.
+
 ### Backend decision: Turso / libSQL  (over Cloudflare, over the managed layers)
 
 - **Turso / libSQL ✓ (chosen).** One file does storage *and* vector; **embedded replica** = local DB
@@ -82,11 +109,12 @@ never-retrieved rows. This keeps the store a small curated set, not a junk drawe
 vector tech** (the "memory fallacy" critique).
 
 ### Thin slice (build order)
-1. **Local libSQL file + `ko memory add` / `search`** (manual). Prove retrieval is actually useful.
-2. **Expose as an MCP server** → Claude Code + `ko ai` share one memory.
-3. **Overnight session-distiller skill** (ADD-only, small model).
-4. **Decay / GC pass.**
-5. **Turso sync** (embedded replica) once a 2nd machine / fleet box needs it.
+1. **Markdown notes repo + `ko memory add` / `search`.** `add` appends a markdown fact (+ a `log.jsonl`
+   line); `search` queries a **local libSQL index rebuilt from the markdown**. Prove retrieval is useful.
+2. **Incremental re-index** — scan `log.jsonl` for `vector_dirty`, re-embed just those + decay/GC.
+3. **Expose as an MCP server** → Claude Code + `ko ai` share one memory (and the same markdown repo).
+4. **Overnight session-distiller skill** (ADD-only, small model) → writes markdown facts, not DB rows.
+5. **Central Turso / edge-mcp** only when a *remote* agent (fleet/edge) must query without an embedder.
 
 Skip for v1: knowledge graph (Zep / MAGMA), temporal fact-validity, UPDATE/merge logic. Add only if the
 simple version visibly underdelivers.
