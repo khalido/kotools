@@ -139,7 +139,27 @@ Two separate artifacts per tool — don't conflate them:
 
 ## Infra
 
-- [ ] **PostHog sync (opt-in, later) — a loguru sink, not file-parsing.** Local logging shipped 2026-06-27 via **loguru** (`logs.py`: one wide event per command, no secrets). Because it's loguru, the sync is just **`logger.add(posthog_sink)`** — a sink function that gets each `record` and forwards it (no re-reading files). Map record→PostHog `ko_command` event with properties (cmd, duration_ms, exit_code, error, ko_version), `distinct_id` = a stable anon machine id. PostHog ingests via OTLP, but the **capture/batch API** (`POST /capture`) is simpler for this. **Opt-in** (network = consent): needs `POSTHOG_API_KEY` + host; add the sink only when configured. Batch on a flush (loguru `enqueue`/buffered sink) since one event/command is low-volume. No sampling needed. Ref: posthog.com/docs/logs/best-practices.
+PostHog = the durable backend (logs survive crashes / reinstalls / new machines). **Two separate
+integrations — don't conflate them:**
+
+- [ ] **(a) Command logs → PostHog, auto-enabled on env var.** Local logging shipped 2026-06-27 via
+  loguru (`logs.py`: one wide event per command, scalar-only, no secrets). The sync is just a second
+  **`logger.add(posthog_sink)`** — `logs.setup()` adds it when **`POSTHOG_API_KEY`** (+ `POSTHOG_HOST`,
+  default `https://us.i.posthog.com`) is set. The sink forwards each loguru `record` → PostHog
+  **capture/batch API** (`POST /capture`) as a `ko_command` event (props: cmd, duration_ms, exit_code,
+  error, ko_version), `distinct_id` = a stable anon machine id. Buffer/flush since it's low-volume.
+  Easy because it's loguru. Ref: posthog.com/docs/logs/best-practices.
+- [ ] **(b) LLM/agent traces → PostHog AI Observability (OTel) — separate product.** PostHog ingests
+  OpenTelemetry **`gen_ai.*`** spans → `$ai_generation` events with model, tokens, **cost USD**, latency,
+  prompts, responses, tools; multi-step traces reconstruct via `$ai_trace_id`/`$ai_span_id`/`$ai_parent_id`.
+  **pydantic-ai already emits OTel `gen_ai.*` instrumentation**, so `ko llm`/`ko agent`/`ko ai` get LLM
+  observability by attaching PostHog to its tracer — no re-instrumenting. Two wiring options:
+  `PostHogSpanProcessor` (from `posthog[otel]`) on the TracerProvider, OR direct OTLP HTTP to
+  **`https://us.i.posthog.com/i/v0/ai/otel`** with `Authorization: Bearer <project_token>`. Portable to
+  other pydantic-ai projects (same gen_ai.* standard). ⚠️ **Captures prompt/response *content* by
+  default** — no documented content-scrub opt-out (omitting distinct_id only anonymizes *who*). Decide
+  the privacy trade before enabling. Refs: posthog.com/docs/llm-analytics/installation/opentelemetry,
+  /llm-analytics/start-here. **Not building yet — research done 2026-06-27.**
 - [ ] PyPI trusted publisher + tag-push GitHub Action (plan in WORKLOG 2026-04-22).
 - [ ] MCP server exposing the same modules (`mcp_server.py` stub has the wiring sketch). CLI for humans + bash; MCP for native agent calls. **Use FastMCP** ([gofastmcp.com](https://gofastmcp.com)) — it does **stdio** (local: Claude Code/Desktop on the Mac) *and* **HTTP** (remote: a server on the home box that the laptop connects to) from one definition. Progressive disclosure for the tool surface — one argv-style `ko` tool, not one per subcommand (see Research scan 2026-06-26). Home-server hosting ties in below.
   - **Consolidation note:** `ko mcp test` currently uses the raw `mcp` SDK (already a dep) with a hand-rolled raw-POST error fallback — keep it simple. FastMCP ships a high-level **`Client`** (`from fastmcp import Client`: list_tools/call_tool/transports). Once `fastmcp` is a dep anyway (for this server, or for pydantic-ai's `[mcp]` agent toolset), `ko mcp test` can ride on `fastmcp.Client` and shed code. Don't add `fastmcp` just for the probe.
