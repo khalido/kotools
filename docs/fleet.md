@@ -3,6 +3,11 @@
 > **Status: future direction (far layer).** This rides on top of `ko ai` (the agent layer) +
 > the MCP/Telegram front-ends. Dependency order: auth → `ko brief` → `ko ai` → MCP/front-ends →
 > fleet. Do **not** start before `ko ai` exists. Captured 2026-06-26; reactions/risks at the bottom.
+>
+> **Read `docs/remote.md` first** — it's the higher-level planning talk (the two pathways, the
+> one-interface/N-backends model, the thin-slice sequencing). This doc is the deeper brief: guardrails,
+> prior art, the handoff pattern, build order. The substrate has since evolved from Sprites-only to a
+> **box interface with pluggable backends** (railway-ephemeral, shellbox-dormant) — see remote.md.
 
 A concise context dump for the `ko` agent. Goal: stand up a small fleet of mostly-dormant
 specialist agents on Sprites, supervised by a smart control agent.
