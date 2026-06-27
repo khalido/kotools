@@ -153,18 +153,21 @@ integrations — don't conflate them:**
   OpenTelemetry **`gen_ai.*`** spans → `$ai_generation` events with model, tokens, **cost USD**, latency,
   prompts, responses, tools; multi-step traces reconstruct via `$ai_trace_id`/`$ai_span_id`/`$ai_parent_id`.
   PostHog OTLP endpoint: **`https://us.i.posthog.com/i/v0/ai/otel`** (`Authorization: Bearer <project_token>`).
-  Three ways to feed it, best first:
-  - **OpenRouter Broadcast → PostHog (preferred — ZERO ko code).** OpenRouter has a native OTel sink
-    (Settings → Observability → Enable Broadcast → OTLP endpoint + headers; emits `gen_ai.*` with
-    model/tokens/cost). All server-side config. **Privacy Mode excludes prompt/completion content** — the
-    scrub opt-out PostHog's own path lacks. Caveat: only sees **OpenRouter-routed** calls — ko *agents*
-    default to OR ✓, but `ko llm`/`ko tv` default to `google:gemini-3.5-flash` (direct, NOT captured).
-    Path detail to confirm: OR broadcasts OTLP `/v1/traces`-style; PostHog wants `/i/v0/ai/otel` — may need
-    a tiny OTel Collector between. Ref: openrouter.ai/docs/guides/features/broadcast/otel-collector.
-  - **pydantic-ai OTel → PostHog** for the non-OR calls (Gemini-direct). pydantic-ai already emits
-    `gen_ai.*`, so attach `PostHogSpanProcessor` (from `posthog[otel]`) to its TracerProvider — no
-    re-instrumenting. Portable to other pydantic-ai projects. ⚠️ no content-scrub here (unlike OR Privacy Mode).
-  - direct OTLP HTTP if ever needed.
+  Two homes — instrument at the **pydantic-ai layer** is preferred (provider-agnostic + local+cloud + control):
+  - **pydantic-ai `InstrumentationSettings` (PREFERRED).** `Agent.instrument_all(InstrumentationSettings(
+    tracer_provider=<ours>, include_content=<bool>))` in ko's agent bootstrap covers `ko llm`/`agent`/`ai`.
+    Why it wins (matches the multi-provider future): (1) **provider-agnostic** — wraps the model call *inside*
+    pydantic-ai, so it captures DeepSeek-direct/Gemini-direct/OR alike (OR Broadcast can't see non-OR calls;
+    DeepSeek-direct is a stated goal for cheap agents); (2) **one `tracer_provider`, N exporters** → save
+    **locally** (file/SQLite for analysis) *and* to PostHog (OTLP `/i/v0/ai/otel`) at once; (3) **`include_content`**
+    natively toggles prompt/completion capture — the scrub PostHog's path lacks. Emits `gen_ai.*` spans +
+    token/cost histograms. Cost: ko writes the TracerProvider+exporter setup + an OTel-sdk dep (pydantic-ai
+    `logfire` extra bundles OTel). Code: refs/pydantic-ai `models/instrumented.py`.
+  - **OpenRouter Broadcast → PostHog (zero ko code, fallback).** OR's native OTel sink (Settings →
+    Observability → Broadcast → OTLP + headers; Privacy Mode scrubs content). Server-side, but **OR-routed
+    calls only** — disqualified the moment a DeepSeek-direct/Gemini-direct agent exists. Path detail:
+    OR posts OTLP `/v1/traces`-style; PostHog wants `/i/v0/ai/otel` (maybe a Collector between).
+    Ref: openrouter.ai/docs/guides/features/broadcast/otel-collector.
   Refs: posthog.com/docs/llm-analytics/installation/opentelemetry, /llm-analytics/start-here.
   **Not building yet — research done 2026-06-27.**
 - [ ] PyPI trusted publisher + tag-push GitHub Action (plan in WORKLOG 2026-04-22).
