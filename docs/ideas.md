@@ -152,14 +152,21 @@ integrations — don't conflate them:**
 - [ ] **(b) LLM/agent traces → PostHog AI Observability (OTel) — separate product.** PostHog ingests
   OpenTelemetry **`gen_ai.*`** spans → `$ai_generation` events with model, tokens, **cost USD**, latency,
   prompts, responses, tools; multi-step traces reconstruct via `$ai_trace_id`/`$ai_span_id`/`$ai_parent_id`.
-  **pydantic-ai already emits OTel `gen_ai.*` instrumentation**, so `ko llm`/`ko agent`/`ko ai` get LLM
-  observability by attaching PostHog to its tracer — no re-instrumenting. Two wiring options:
-  `PostHogSpanProcessor` (from `posthog[otel]`) on the TracerProvider, OR direct OTLP HTTP to
-  **`https://us.i.posthog.com/i/v0/ai/otel`** with `Authorization: Bearer <project_token>`. Portable to
-  other pydantic-ai projects (same gen_ai.* standard). ⚠️ **Captures prompt/response *content* by
-  default** — no documented content-scrub opt-out (omitting distinct_id only anonymizes *who*). Decide
-  the privacy trade before enabling. Refs: posthog.com/docs/llm-analytics/installation/opentelemetry,
-  /llm-analytics/start-here. **Not building yet — research done 2026-06-27.**
+  PostHog OTLP endpoint: **`https://us.i.posthog.com/i/v0/ai/otel`** (`Authorization: Bearer <project_token>`).
+  Three ways to feed it, best first:
+  - **OpenRouter Broadcast → PostHog (preferred — ZERO ko code).** OpenRouter has a native OTel sink
+    (Settings → Observability → Enable Broadcast → OTLP endpoint + headers; emits `gen_ai.*` with
+    model/tokens/cost). All server-side config. **Privacy Mode excludes prompt/completion content** — the
+    scrub opt-out PostHog's own path lacks. Caveat: only sees **OpenRouter-routed** calls — ko *agents*
+    default to OR ✓, but `ko llm`/`ko tv` default to `google:gemini-3.5-flash` (direct, NOT captured).
+    Path detail to confirm: OR broadcasts OTLP `/v1/traces`-style; PostHog wants `/i/v0/ai/otel` — may need
+    a tiny OTel Collector between. Ref: openrouter.ai/docs/guides/features/broadcast/otel-collector.
+  - **pydantic-ai OTel → PostHog** for the non-OR calls (Gemini-direct). pydantic-ai already emits
+    `gen_ai.*`, so attach `PostHogSpanProcessor` (from `posthog[otel]`) to its TracerProvider — no
+    re-instrumenting. Portable to other pydantic-ai projects. ⚠️ no content-scrub here (unlike OR Privacy Mode).
+  - direct OTLP HTTP if ever needed.
+  Refs: posthog.com/docs/llm-analytics/installation/opentelemetry, /llm-analytics/start-here.
+  **Not building yet — research done 2026-06-27.**
 - [ ] PyPI trusted publisher + tag-push GitHub Action (plan in WORKLOG 2026-04-22).
 - [ ] MCP server exposing the same modules (`mcp_server.py` stub has the wiring sketch). CLI for humans + bash; MCP for native agent calls. **Use FastMCP** ([gofastmcp.com](https://gofastmcp.com)) — it does **stdio** (local: Claude Code/Desktop on the Mac) *and* **HTTP** (remote: a server on the home box that the laptop connects to) from one definition. Progressive disclosure for the tool surface — one argv-style `ko` tool, not one per subcommand (see Research scan 2026-06-26). Home-server hosting ties in below.
   - **Consolidation note:** `ko mcp test` currently uses the raw `mcp` SDK (already a dep) with a hand-rolled raw-POST error fallback — keep it simple. FastMCP ships a high-level **`Client`** (`from fastmcp import Client`: list_tools/call_tool/transports). Once `fastmcp` is a dep anyway (for this server, or for pydantic-ai's `[mcp]` agent toolset), `ko mcp test` can ride on `fastmcp.Client` and shed code. Don't add `fastmcp` just for the probe.
