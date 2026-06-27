@@ -152,12 +152,58 @@ def doctor() -> None:
     )
 
 
+@app.command("logs")
+def logs_cmd(
+    n: int = typer.Option(20, "--n", help="how many recent events"),
+    errors: bool = typer.Option(False, "--errors", help="only error events"),
+    as_json: bool = typer.Option(False, "--json", help="emit JSON"),
+) -> None:
+    """Recent ko command logs — local structured JSONL (one event per command, no args/secrets).
+    On by default; disable with `[logs] enabled = false` in config.toml. A PostHog sync is later.
+    """
+    import json as _json
+
+    from . import logs as logs_mod
+
+    events = logs_mod.recent(n, errors_only=errors)
+    if not events:
+        _no_results("no logs yet", as_json)
+    if as_json:
+        typer.echo(_json.dumps(events, default=str))
+        return
+    for e in events:
+        ts = e.get("ts", "")[:19].replace("T", " ")
+        mark = "✗" if e.get("level") == "error" else " "
+        dur = e.get("duration_ms")
+        durs = f"{dur}ms" if dur is not None else ""
+        err = f"  {e['error']}" if e.get("error") else ""
+        cmd = e.get("cmd") or e.get("event", "")
+        typer.echo(f"{mark} {ts}  {cmd:22} exit={e.get('exit_code', '?')}  {durs}{err}")
+
+
+def _cmd_label(args: list[str]) -> str:
+    """A privacy-safe command label for logging: the group/command + a *validated* subcommand only.
+    A subcommand must be a registered command of the group, so an arg value (query, url, id) is
+    never captured — `ko exa search rust` logs `exa search`, never `rust`."""
+    toks = [a for a in args if not a.startswith("-")]
+    if not toks:
+        return "(root)"
+    head = toks[0]
+    if len(toks) > 1:
+        grp = next((g for g in app.registered_groups if g.name == head), None)
+        if grp is not None and toks[1] in {c.name for c in grp.typer_instance.registered_commands}:
+            return f"{head} {toks[1]}"
+    return head
+
+
 def main() -> None:
     """Entry point with deterministic bare-argument shortcuts (command names
     always win): `ko paper.pdf` routes to `ko doc`, and `ko x ai` routes to
     `ko x list ai` (anything after `x` that isn't an x command is a list name).
     """
+    import os
     import sys
+    import time
 
     args = sys.argv[1:]
     # `help` as a trailing word == --help, so you can slap it on any command:
@@ -188,7 +234,25 @@ def main() -> None:
             # but leave subcommands and `--help` to the group.
             if not args[1:] or (args[1] not in pub_known and args[1] not in ("--help", "-h")):
                 sys.argv.insert(2, "up")
-    app()
+    if os.environ.get("_KO_COMPLETE"):  # shell-completion run — never log it
+        app()
+        return
+    # One wide structured event per command (local JSONL; see logs.py). Best-effort.
+    label = _cmd_label(sys.argv[1:])
+    start = time.monotonic()
+    code, err = 0, None
+    try:
+        app()
+    except SystemExit as e:
+        code = e.code if isinstance(e.code, int) else (1 if e.code else 0)
+        raise
+    except BaseException as e:
+        code, err = 1, type(e).__name__
+        raise
+    finally:
+        from . import logs
+
+        logs.command_event(label, int((time.monotonic() - start) * 1000), code, err)
 
 
 if __name__ == "__main__":
