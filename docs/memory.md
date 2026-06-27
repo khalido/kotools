@@ -10,9 +10,14 @@
 ## Overview
 
 One cheap, **cross-agent** memory store. Any agent — Claude Code, `ko ai`, a fleet box, on my PC or
-wherever — reads/writes the *same* space. It holds **distilled useful things** (facts, decisions,
-preferences, learnings), not raw sessions. **Retrieval is deterministic** — vector search, no LLM in
-the read path. It's **populated overnight** by an agent that distills my sessions into facts.
+wherever — reads/writes the *same* space. It holds **tight 1–2 line summaries** (facts, decisions,
+preferences, learnings) — it's the **search *surface*, not the full content**. **Retrieval is
+deterministic** — vector search, no LLM in the read path.
+
+**Two sources, and the depth lives elsewhere** (see `docs/notes.md`): a memory row is a summary derived
+from either (a) my **notes repo** — pointing back to the full note ("open the full version") — or (b) a
+**session** (the overnight distiller). So memory = the catalog; the **notes repo** = the depth; a row's
+`source` is a note path or a session id. This is progressive disclosure (same as `ko prompt` / skills).
 
 Three pieces that click together (each reuses something ko already has):
 
@@ -33,8 +38,9 @@ right call here:
 - It *is* the projection rule (markdown = truth, vector DB = disposable; rebuild from markdown anytime).
 - **Inspectable + hand-editable** — read / `git diff` / edit memory as plain markdown. Maximum "own it".
 - **Git is the durable, multi-machine sync of the source** — free, versioned, survives DB loss.
-- **Unifies with Claude Code's `MEMORY.md`** (already markdown-in-a-folder) → ko's memory and Claude's
-  can be the *same* git repo; ko just adds the vector index both read.
+- The markdown source IS the **notes repo** (`docs/notes.md`) — full notes + artifacts, `labs`-style.
+  Memory indexes *summaries* of it (plus sessions); the vector DB rebuilds from the notes anytime.
+  (Claude Code's `MEMORY.md` is a related lightweight cousin — could live in the same notes repo.)
 
 **Sync — simpler than syncing both:** **git syncs the source**; each machine **rebuilds its own local
 libSQL** from the markdown (re-embedding a few hundred curated facts with a small local model is cheap).
