@@ -141,6 +141,88 @@ def replace_text(doc: str, find: str, replace: str, match_case: bool = False) ->
     return result.get("replies", [{}])[0].get("replaceAllText", {}).get("occurrencesChanged", 0)
 
 
+def _hex_to_rgb(hex_color: str) -> dict:
+    """'#RRGGBB' -> a Docs API rgbColor dict of 0..1 floats. Pure; unit-testable."""
+    h = hex_color.lstrip("#")
+    if len(h) != 6:
+        raise DocsError(f"bad hex color {hex_color!r} — want '#RRGGBB'")
+    try:
+        r, g, b = (int(h[i : i + 2], 16) / 255 for i in (0, 2, 4))
+    except ValueError as e:
+        raise DocsError(f"bad hex color {hex_color!r} — want '#RRGGBB'") from e
+    return {"red": round(r, 4), "green": round(g, 4), "blue": round(b, 4)}
+
+
+def _find_tables(document: dict) -> list[dict]:
+    """Tables in body order: each {start, rows, cols}. `start` is the tableStartLocation index. Pure."""
+    out: list[dict] = []
+    for el in document.get("body", {}).get("content", []):
+        if "table" in el:
+            t = el["table"]
+            out.append({"start": el["startIndex"], "rows": t.get("rows", 0), "cols": t.get("columns", 0)})
+    return out
+
+
+def shade_table(
+    doc: str,
+    rows: list[int] | None = None,
+    cols: list[int] | None = None,
+    color: str = "#D9D9D9",
+    table_index: int = 0,
+) -> int:
+    """Background-shade whole rows and/or columns of a table. `rows`/`cols` are 0-based indices
+    (negative ok: -1 = last). Common uses: rows=[0] for a header, cols=[-1] for a totals column.
+    `table_index` selects which table (0 = first). All shading goes in one batchUpdate. Returns
+    the number of ranges styled. The minimal escape hatch for the bit Markdown can't do."""
+    did = doc_id(doc)
+    svc = get_docs_service(readonly=False)
+    try:  # field mask: we only need each element's index + table dimensions
+        document = (
+            svc.documents()
+            .get(documentId=did, fields="body(content(startIndex,table(rows,columns)))")
+            .execute(num_retries=3)
+        )
+    except HttpError as e:
+        _handle(e, did)
+    tables = _find_tables(document)
+    if not tables:
+        raise DocsNotFound(f"no tables in doc {did}")
+    if not 0 <= table_index < len(tables):
+        raise DocsError(f"table_index {table_index} out of range — doc has {len(tables)} table(s)")
+    t = tables[table_index]
+    bg = {"color": {"rgbColor": _hex_to_rgb(color)}}
+
+    def _range(row_index: int, col_index: int, row_span: int, col_span: int) -> dict:
+        return {
+            "updateTableCellStyle": {
+                "tableCellStyle": {"backgroundColor": bg},
+                "fields": "backgroundColor",
+                "tableRange": {
+                    "tableCellLocation": {
+                        "tableStartLocation": {"index": t["start"]},
+                        "rowIndex": row_index,
+                        "columnIndex": col_index,
+                    },
+                    "rowSpan": row_span,
+                    "columnSpan": col_span,
+                },
+            }
+        }
+
+    def _norm(i: int, n: int) -> int:
+        return i if i >= 0 else n + i
+
+    requests = [_range(_norm(r, t["rows"]), 0, 1, t["cols"]) for r in (rows or [])]
+    requests += [_range(0, _norm(c, t["cols"]), t["rows"], 1) for c in (cols or [])]
+    if not requests:
+        raise DocsError("nothing to shade — pass rows and/or cols (e.g. --rows 0)")
+    try:
+        svc.documents().batchUpdate(documentId=did, body={"requests": requests}).execute(num_retries=3)
+    except HttpError as e:
+        _handle(e, did)
+    return len(requests)
+
+
 def create_doc(title: str) -> str:
     """Create a new Google Doc; return its ID. Lands in My Drive root."""
     try:

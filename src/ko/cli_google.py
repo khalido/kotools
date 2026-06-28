@@ -35,7 +35,7 @@ app.add_typer(gsheets_app, name="gsheets")
 gdocs_app = typer.Typer(
     help=(
         "Read & write Google Docs (same OAuth token as `ko gsheets`). "
-        "Reads: get / info / export / comments. Writes: append / replace / new / push / reply."
+        "Reads: get / info / export / comments. Writes: append / replace / new / push / reply / shade-table."
     ),
     no_args_is_help=True,
 )
@@ -551,6 +551,32 @@ def gdocs_reply(
         typer.echo(str(e), err=True)
         raise typer.Exit(1) from None
     typer.echo(f"replied to {comment_id} ({r['id']})", err=True)
+
+
+@gdocs_app.command("shade-table")
+def gdocs_shade_table(
+    doc: str = typer.Argument(..., help="Google Doc ID or URL"),
+    rows: str = typer.Option(None, "--rows", help="comma-sep 0-based rows to shade (-1=last), e.g. 0 = header"),
+    cols: str = typer.Option(None, "--cols", help="comma-sep 0-based columns to shade (-1=last)"),
+    color: str = typer.Option("#D9D9D9", "--color", help="hex background, e.g. #D9D9D9"),
+    table: int = typer.Option(0, "--table", help="which table if the doc has several (0 = first)"),
+) -> None:
+    """Background-shade table rows/columns — the bit Markdown can't do. `--rows 0` shades a header,
+    `--cols -1` a totals column. Re-run after a `push` to re-apply (a fresh push has no shading)."""
+    def _parse(s: str | None) -> list[int] | None:
+        if not s:
+            return None
+        try:
+            return [int(x) for x in s.split(",")]
+        except ValueError:
+            _die(f"bad index list {s!r} — want comma-separated integers like '0,-1'")
+
+    try:
+        n = gdocs_mod.shade_table(doc, rows=_parse(rows), cols=_parse(cols), color=color, table_index=table)
+    except gdocs_mod.DocsError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1) from None
+    typer.echo(f"shaded {n} range(s)", err=True)
 
 
 @gdocs_app.command("auth")

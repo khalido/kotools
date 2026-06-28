@@ -6,8 +6,8 @@
 Markdown in git stays the source of truth.
 
 References:
-- Google — [Use Markdown in Google Docs](https://support.google.com/docs/answer/12014036?hl=en#zippy=%2Cconvert-markdown-to-google-docs-content-on-paste)
-- Google's own lists are **incomplete** (tables aren't mentioned but *do* convert), so trust this
+* Google — [Use Markdown in Google Docs](https://support.google.com/docs/answer/12014036?hl=en#zippy=%2Cconvert-markdown-to-google-docs-content-on-paste)
+* Google's own lists are **incomplete** (tables aren't mentioned but *do* convert), so trust this
   empirically-tested file over the docs for the `ko` workflow.
 
 Regenerate / re-test with:
@@ -16,6 +16,9 @@ Regenerate / re-test with:
 ko gdocs push docs/gdocs-markdown.md --title kotools-test
 ko gdocs export <doc-id>        # compare against this file
 ```
+
+Canonical test Doc — reused for ongoing checks as Google Docs adds Markdown features:
+**kotools-test**, id `17ZstQgHvwCSglcTUKuX28mBiQ672nPeKIyD370VIE5g`.
 
 ## Basic Markdown — all of this converts
 
@@ -80,12 +83,12 @@ right-align comes back):
 
 Avoid these in a Doc-bound proposal — they're dropped or mangled on conversion:
 
-- **Fenced code blocks** — ` ```lang ` blocks do **not** become a monospaced code block. They
+* **Fenced code blocks** — ` ```lang ` blocks do **not** become a monospaced code block. They
   flatten to plain paragraphs (one blank line inserted between each source line) and punctuation
   gets backslash-escaped (`->` → `\->`). If you need code in a Doc, expect plain, slightly mangled
   text. (Demonstrated below.)
-- **Blockquotes** — the `>` marker is lost; the text becomes a normal paragraph.
-- **Images** — a pushed image embeds as base64 and won't export cleanly. Fine to skip for text.
+* **Blockquotes** — the `>` marker is lost; the text becomes a normal paragraph.
+* **Images** — a pushed image embeds as base64 and won't export cleanly. Fine to skip for text.
 
 Code-block specimen (check how this renders — it will *not* be a code block):
 
