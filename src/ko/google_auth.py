@@ -11,8 +11,12 @@ Workspace "Internal" consent screen won't authorize a personal Gmail; give that 
 its own `google_client_<account>.json`).
 
 Scopes are per-API: `ko` requests Sheets + Docs + Calendar (read or read+write) + Gmail (read-only)
-— and deliberately NOT Drive, so it can't browse your whole Drive, only the docs/sheets you address
-by ID. One token per account covers them all. Adding another API later means one re-consent. README.
++ Drive `drive.file`. It deliberately does NOT request a broad Drive scope (`drive`/`drive.readonly`),
+so it still can't browse your whole Drive — only the docs/sheets you address by ID. The narrow
+`drive.file` scope grants access *only to files `ko` itself creates or that you open by ID*, which is
+exactly what the Markdown↔Doc round-trip and comment-reading need (those are Drive-API features the
+Docs API can't do) without widening the blast radius. One token per account covers them all. Adding a
+scope means one re-consent (`ko gsheets auth` again). README.
 """
 
 from __future__ import annotations
@@ -32,11 +36,14 @@ from googleapiclient.errors import HttpError
 from . import config
 from .dirs import config_dir, state_dir, state_file
 
+# drive.file is a single read+write scope scoped to app-created/opened files only — it appears in
+# BOTH lists because even "read-only" ko needs it to export markdown / read comments from docs it made.
 SCOPES_READONLY = [
     "https://www.googleapis.com/auth/spreadsheets.readonly",
     "https://www.googleapis.com/auth/documents.readonly",
     "https://www.googleapis.com/auth/calendar.readonly",
     "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/drive.file",  # per-file Drive: only files ko creates/opens
 ]
 SCOPES_READWRITE = [
     "https://www.googleapis.com/auth/spreadsheets",
@@ -44,6 +51,7 @@ SCOPES_READWRITE = [
     "https://www.googleapis.com/auth/calendar.events",
     "https://www.googleapis.com/auth/calendar.readonly",  # list calendars + read events
     "https://www.googleapis.com/auth/gmail.readonly",  # Gmail is read-only in ko (no send/modify)
+    "https://www.googleapis.com/auth/drive.file",  # per-file Drive: only files ko creates/opens
 ]
 
 DEFAULT_ACCOUNT = "default"
@@ -86,6 +94,7 @@ def raise_for_status(e: HttpError, context: str, *, not_found, permission, hint:
 _ID_RE = {
     "spreadsheets": re.compile(r"/spreadsheets/d/([a-zA-Z0-9_-]+)"),
     "document": re.compile(r"/document/d/([a-zA-Z0-9_-]+)"),
+    "folder": re.compile(r"/folders/([a-zA-Z0-9_-]+)"),
 }
 
 
@@ -138,13 +147,24 @@ def _scopes(readonly: bool) -> list[str]:
     return SCOPES_READONLY if readonly else SCOPES_READWRITE
 
 
+# Present only in the read+write set, so its presence in a token's granted scopes = "can write".
+_WRITE_MARKER_SCOPE = "https://www.googleapis.com/auth/spreadsheets"
+
+
 def _load_cached(readonly: bool, account: str) -> Credentials | None:
     tf = token_file(account)
     if not tf.exists():
         return None
     try:
-        creds = Credentials.from_authorized_user_file(str(tf), _scopes(readonly))
+        # Load with the token's OWN granted scopes (omit `scopes=`), NOT a readonly/readwrite-derived
+        # list. Requesting a *narrower* set than was granted makes the refresh fail with "scope has
+        # changed" and silently triggers a fresh browser auth — so one read+write token must be able
+        # to serve read-only reads (a superset covers the subset).
+        creds = Credentials.from_authorized_user_file(str(tf))
     except Exception:
+        return None
+    # A write op can't run on a token granted only read-only scopes — force a re-auth to upgrade.
+    if not readonly and _WRITE_MARKER_SCOPE not in (creds.scopes or []):
         return None
     if creds.valid:
         return creds
@@ -215,6 +235,15 @@ def get_gmail_service(readonly: bool = True, account: str | None = None) -> Reso
     )
 
 
+@lru_cache
+def get_drive_service(readonly: bool = True, account: str | None = None) -> Resource:
+    # drive.file is the same scope read or write, so `readonly` only steers which cached token
+    # we reuse — it doesn't narrow Drive access (the scope itself is already per-file).
+    return build(
+        "drive", "v3", credentials=get_credentials(readonly, account), cache_discovery=False
+    )
+
+
 def logout(account: str | None = None) -> bool:
     """Remove an account's cached token (default: the active account). Returns True if removed."""
     tf = token_file(account)
@@ -225,5 +254,6 @@ def logout(account: str | None = None) -> bool:
         get_docs_service.cache_clear()
         get_calendar_service.cache_clear()
         get_gmail_service.cache_clear()
+        get_drive_service.cache_clear()
         return True
     return False

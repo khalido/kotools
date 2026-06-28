@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from dataclasses import asdict
 from pathlib import Path
@@ -12,6 +13,7 @@ import typer
 
 from . import gcal as gcal_mod
 from . import gdocs as gdocs_mod
+from . import gdrive as gdrive_mod
 from . import gmail as gmail_mod
 from . import google_auth
 from . import gsheets as gsheets_mod
@@ -33,7 +35,7 @@ app.add_typer(gsheets_app, name="gsheets")
 gdocs_app = typer.Typer(
     help=(
         "Read & write Google Docs (same OAuth token as `ko gsheets`). "
-        "Reads: get / info. Writes: append / replace / new."
+        "Reads: get / info / export / comments. Writes: append / replace / new / push / reply."
     ),
     no_args_is_help=True,
 )
@@ -452,6 +454,103 @@ def gdocs_new(title: str = typer.Argument(..., help="title for the new doc")) ->
         raise typer.Exit(1) from None
     typer.echo(new_id)
     typer.echo(f"https://docs.google.com/document/d/{new_id}/edit", err=True)
+
+
+_DRIVE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{20,}$")
+
+
+def _resolve_folder(folder: str | None) -> str | None:
+    """A `--folder` value → a folder ID. A `/folders/` URL or a bare ID passes through; anything
+    else is treated as a name and find-or-created (so `--folder Proposals` just works)."""
+    if not folder:
+        return None
+    if "/folders/" in folder or _DRIVE_ID_RE.match(folder):
+        return folder
+    return gdrive_mod.ensure_folder(folder)
+
+
+@gdocs_app.command("push")
+def gdocs_push(
+    markdown_file: Path = typer.Argument(..., help="path to a Markdown file (or '-' for stdin)"),
+    title: str = typer.Option(None, "--title", "-t", help="doc title (default: file stem)"),
+    folder: str = typer.Option(
+        None, "--folder", "-f", help="folder ID, /folders/ URL, or a name to find-or-create"
+    ),
+) -> None:
+    """Push a Markdown file to a NEW formatted Google Doc; prints its ID (stdout) and URL (stderr)."""
+    md = sys.stdin.read() if str(markdown_file) == "-" else markdown_file.read_text()
+    doc_title = title or (markdown_file.stem if str(markdown_file) != "-" else "Untitled")
+    try:
+        folder_id = _resolve_folder(folder)
+        new_id = gdrive_mod.push_markdown(md, doc_title, folder_id=folder_id)
+    except gdrive_mod.DriveError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1) from None
+    typer.echo(new_id)
+    typer.echo(f"https://docs.google.com/document/d/{new_id}/edit", err=True)
+
+
+@gdocs_app.command("export")
+def gdocs_export(
+    doc: str = typer.Argument(..., help="Google Doc ID or URL"),
+    out: Path = typer.Option(None, "--out", "-o", help="write to a file instead of stdout"),
+) -> None:
+    """Export a Doc as real Markdown (tables included). To stdout, or a file with -o."""
+    try:
+        md = gdrive_mod.export_markdown(doc)
+    except gdrive_mod.DriveError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1) from None
+    if out:
+        out.write_text(md)
+        typer.echo(f"wrote {len(md)} char(s) to {out}", err=True)
+    else:
+        typer.echo(md)
+
+
+@gdocs_app.command("comments")
+def gdocs_comments(
+    doc: str = typer.Argument(..., help="Google Doc ID or URL"),
+    show_all: bool = typer.Option(False, "--all", help="include resolved comments"),
+    as_json: bool = typer.Option(False, "--json", help="emit JSON instead of pretty text"),
+) -> None:
+    """Read review comments + replies off a Doc. Resolved are hidden unless --all."""
+    try:
+        comments = gdrive_mod.list_comments(doc, include_resolved=show_all)
+    except gdrive_mod.DriveError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1) from None
+    if as_json:
+        typer.echo(json.dumps(comments, default=str))
+        return
+    if not comments:
+        _no_results("no comments", False)
+    for c in comments:
+        flag = " (resolved)" if c["resolved"] else ""
+        head = f"{c['author']} · {c['created_time']}{flag}  [{c['id']}]"
+        typer.echo(head)
+        if c["quoted_text"]:
+            typer.echo(f"  > {c['quoted_text']}")
+        typer.echo(f"  {c['content']}")
+        for r in c["replies"]:
+            typer.echo(f"    ↳ {r['author']} · {r['created_time']}: {r['content']}")
+        typer.echo("")
+
+
+@gdocs_app.command("reply")
+def gdocs_reply(
+    doc: str = typer.Argument(..., help="Google Doc ID or URL"),
+    comment_id: str = typer.Argument(..., help="comment ID (the [bracketed] id from `ko gdocs comments`)"),
+    text: str = typer.Argument(None, help="reply text (omit to read stdin)"),
+) -> None:
+    """Reply to a comment thread on a Doc (needs the read+write grant)."""
+    body = text if text is not None else sys.stdin.read()
+    try:
+        r = gdrive_mod.reply_comment(doc, comment_id, body)
+    except gdrive_mod.DriveError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1) from None
+    typer.echo(f"replied to {comment_id} ({r['id']})", err=True)
 
 
 @gdocs_app.command("auth")

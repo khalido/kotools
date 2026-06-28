@@ -17,7 +17,7 @@ Current subcommands:
 - `ko tv` — movie/TV quick check: rating, overview, where to stream (AU default; via [TMDB](https://developer.themoviedb.org))
 - `ko tt` — TickTick lists + tasks (read-only) via its hosted MCP — `ko tt lists`, `ko tt items <list>`
 - `ko gsheets` — read **& write** Google Sheets via OAuth (`get`/`find` · `set`/`put`/`header`/`add-tab`/`new`/`clear`, with overwrite guards)
-- `ko gdocs` — read **& write** Google Docs (same OAuth token): `get`/`info` · `append`/`replace`/`new`
+- `ko gdocs` — read **& write** Google Docs (same OAuth token): `get`/`info` · `append`/`replace`/`new` · `push` a Markdown file to a formatted Doc · `export` a Doc back to real Markdown · read `comments` · `reply` to a thread
 - `ko cal` — Google Calendar agenda + quick-add (same token): bare `ko cal` = next 7 days · `day`/`find`/`add`/`cals`
 - `ko gmail` — read Gmail (read-only, same token): bare = recent inbox · `search "<gmail query>"` · `from <who>` · `view <id>` · `thread <id>` (whole conversation)
 - `ko agent` — pydantic-ai agents: `research` (web + papers + HN) and `tv` (what to watch in AU), with saved/resumable sessions
@@ -125,11 +125,12 @@ in the console's top bar. The **gcloud CLI** can do step 2; steps 3–4 are cons
 1. **Create a Google Cloud project** → https://console.cloud.google.com/projectcreate . Note its
    **project ID** (e.g. `kotools-500611`) — the links below use it.
 2. **Enable the APIs** → [API Library](https://console.cloud.google.com/apis/library?project=<project-id>):
-   enable *Google Sheets*, *Google Docs* (`ko gdocs`), *Google Calendar* (`ko cal`), and *Gmail*
-   (`ko gmail`, read-only). No Drive — `ko` works by ID and can't browse your Drive. One token covers all.
+   enable *Google Sheets*, *Google Docs* (`ko gdocs`), *Google Calendar* (`ko cal`), *Gmail*
+   (`ko gmail`, read-only), and *Google Drive* (the narrow `drive.file` scope only — see below).
+   `ko` still can't browse your Drive; one token covers all.
    Fast path with the gcloud CLI:
    ```
-   gcloud services enable sheets.googleapis.com docs.googleapis.com calendar-json.googleapis.com gmail.googleapis.com
+   gcloud services enable sheets.googleapis.com docs.googleapis.com calendar-json.googleapis.com gmail.googleapis.com drive.googleapis.com
    ```
 3. **Configure + publish the OAuth consent screen** →
    [Auth Platform overview](https://console.cloud.google.com/auth/overview?project=<project-id>)
@@ -141,8 +142,9 @@ in the console's top bar. The **gcloud CLI** can do step 2; steps 3–4 are cons
    - **External** (any account): a project left in *Testing* expires its refresh token after **7 days** and
      requires each account added as a **Test user**. **Publish** the app to remove both — it stays
      "unverified" (a warning you click through on your own app), but the token no longer expires.
-   - You don't configure *scopes* here — `ko` requests them in code (Sheets/Docs/Calendar + Gmail-readonly).
-     Adding an API later = one re-auth (`ko gsheets auth --logout` then `ko gsheets auth`).
+   - You don't configure *scopes* here — `ko` requests them in code (Sheets/Docs/Calendar +
+     Gmail-readonly + Drive `drive.file`). Adding an API later = one re-auth (`ko gsheets auth --logout`
+     then `ko gsheets auth`).
 4. **Create OAuth credentials** →
    [Credentials](https://console.cloud.google.com/apis/credentials?project=<project-id>) → Create
    Credentials → OAuth client ID → **Application type: Desktop app** → Download the JSON.
@@ -163,6 +165,31 @@ pass `--overwrite` — including formulas that currently display blank.
 email — fine for bots, tedious for a personal read/write-anywhere CLI. OAuth gives access to anything
 the signed-in account can see. **Scope to one folder?** No — OAuth scopes are per-API, not per-resource;
 use a service account with individual share grants if you need tighter control.
+
+### Markdown ↔ Google Docs + comments (`ko gdocs push/export/comments`)
+
+`ko` requests the **narrow `drive.file` Drive scope** — and deliberately *not* `drive`/`drive.readonly`.
+`drive.file` grants access **only to files `ko` itself creates or that you open by ID** — it still
+cannot browse, search, or list your Drive. That's exactly enough for a Markdown-first proposal loop,
+without widening the blast radius:
+
+```
+ko gdocs push proposal.md --title "Acme — Proposal" --folder Proposals   # .md → formatted Doc
+# → review & comment in Google Docs (you + colleagues)
+ko gdocs comments <doc>                       # read the feedback back (replies indented, [id] shown)
+ko gdocs reply <doc> <comment-id> "on it"     # reply to a thread without leaving the terminal
+ko gdocs replace <doc> "Q2" "Q3"              # surgical in-place edit — keeps comment threads
+ko gdocs export <doc> -o proposal.md          # pull the Doc back as real Markdown (tables incl.)
+```
+
+Keep the Markdown in git as the source of truth; push to a Doc for review, export to reconcile.
+**What converts** (and what doesn't — code blocks and blockquotes don't): see the tested support
+matrix in [`docs/gdocs-markdown.md`](docs/gdocs-markdown.md).
+`--folder` takes a folder ID, a `/folders/` URL, or a **name** (`Proposals`) that `ko`
+find-or-creates. **Caveat:** because `drive.file` only sees files `ko` made, `export`/`comments`
+work on docs **`ko` pushed** — not on a pre-existing doc someone else created (that returns 404).
+For broad read access you'd need `drive.readonly`, which `ko` intentionally refuses. Images in a
+pushed doc embed as base64 and don't round-trip cleanly — fine for text proposals.
 
 ### Multiple Google accounts (work + personal)
 

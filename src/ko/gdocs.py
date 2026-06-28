@@ -1,11 +1,14 @@
 """Google Docs reader/writer — minimal primitives over the Docs v1 API.
 
 Read a doc as plain text or light markdown; append text to the end; find/replace across
-the whole doc; create a new doc. Addresses docs by ID or URL — no Drive scope needed.
+the whole doc; create a new doc. Addresses docs by ID or URL.
 Reads use the read-only scope, writes the read+write one (one `ko gsheets auth` covers both).
 
 Deliberately minimal: full structural editing (tables, styles, inline formatting, images) is
 the web editor's job. This is the "read it / append a note / swap some text" surface.
+
+For Markdown round-tripping (push a `.md` to a formatted Doc, export a Doc to real Markdown) and
+reading review comments, see `gdrive.py` — those are Drive-API features the Docs API can't do.
 """
 
 from __future__ import annotations
