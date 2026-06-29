@@ -167,7 +167,7 @@ def shade_table(
     doc: str,
     rows: list[int] | None = None,
     cols: list[int] | None = None,
-    color: str = "#D9D9D9",
+    color: str = "#EFEFEF",
     table_index: int = 0,
 ) -> int:
     """Background-shade whole rows and/or columns of a table. `rows`/`cols` are 0-based indices

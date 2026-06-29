@@ -558,7 +558,7 @@ def gdocs_shade_table(
     doc: str = typer.Argument(..., help="Google Doc ID or URL"),
     rows: str = typer.Option(None, "--rows", help="comma-sep 0-based rows to shade (-1=last), e.g. 0 = header"),
     cols: str = typer.Option(None, "--cols", help="comma-sep 0-based columns to shade (-1=last)"),
-    color: str = typer.Option("#D9D9D9", "--color", help="hex background, e.g. #D9D9D9"),
+    color: str = typer.Option("#EFEFEF", "--color", help="hex background (default a light grey)"),
     table: int = typer.Option(0, "--table", help="which table if the doc has several (0 = first)"),
 ) -> None:
     """Background-shade table rows/columns — the bit Markdown can't do. `--rows 0` shades a header,

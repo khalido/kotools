@@ -5,10 +5,10 @@
 **what actually survives that round-trip** — push it, eyeball the Doc, export it, compare. The
 Markdown in git stays the source of truth.
 
-References:
-* Google — [Use Markdown in Google Docs](https://support.google.com/docs/answer/12014036?hl=en#zippy=%2Cconvert-markdown-to-google-docs-content-on-paste)
-* Google's own lists are **incomplete** (tables aren't mentioned but *do* convert), so trust this
-  empirically-tested file over the docs for the `ko` workflow.
+> **If you're reading this in Google Docs:** it's generated from `docs/gdocs-markdown.md` in the
+> [kotools](https://github.com/khalido/kotools) repo — edit the Markdown there, not this Doc, then
+> re-push. The table shading below was applied with `ko gdocs shade-table` (Markdown can't set cell
+> colours). See the **References** at the bottom.
 
 Regenerate / re-test with:
 
@@ -16,9 +16,6 @@ Regenerate / re-test with:
 ko gdocs push docs/gdocs-markdown.md --title kotools-test
 ko gdocs export <doc-id>        # compare against this file
 ```
-
-Canonical test Doc — reused for ongoing checks as Google Docs adds Markdown features:
-**kotools-test**, id `17ZstQgHvwCSglcTUKuX28mBiQ672nPeKIyD370VIE5g`.
 
 ## Basic Markdown — all of this converts
 
@@ -58,8 +55,8 @@ Numbered, with one level of sub-bullets:
 
 Checkbox syntax converts to a real Google Docs checklist (round-trips):
 
-- [ ] An unchecked task
-- [x] A checked task
+* [ ] An unchecked task
+* [x] A checked task
 
 ### Horizontal rule
 
@@ -78,6 +75,10 @@ right-align comes back):
 | Ultrasound unit |   2 |    $45,000 |    $90,000 |
 | Service plan    |   1 |     $8,000 |     $8,000 |
 | **Total**       |     |            |   $101,600 |
+
+Cell **background shading** is *not* a Markdown feature — apply it after a push with
+`ko gdocs shade-table <doc> --rows 0` (header) or `--cols -1` (totals column). The header and Total
+rows here were shaded that way. A fresh `push` has no shading, so re-run `shade-table` after re-pushing.
 
 ## What does NOT survive
 
@@ -101,3 +102,20 @@ def margin(cost: float, price: float) -> float:
 Blockquote specimen (comes back as plain text):
 
 > This blockquote comes back as a normal paragraph, not a quote.
+
+## References
+
+* [Use Markdown in Google Docs](https://support.google.com/docs/answer/12014036?hl=en#zippy=%2Cconvert-markdown-to-google-docs-content-on-paste)
+  — the **editor-side** Markdown behaviour (where only `*` makes a list).
+* [Google Docs API — REST reference](https://developers.google.com/workspace/docs/api/reference/rest)
+  — the SDK `ko` drives under the hood: `replace` and `shade-table` use the Docs API; `push`/`export`
+  use the Drive API's Markdown conversion.
+* [Tables how-to](https://developers.google.com/workspace/docs/api/how-tos/tables) — table cell/row
+  styling (the basis for `shade-table`).
+* [google-api-python-client](https://github.com/googleapis/google-api-python-client) — the Python
+  SDK the tool wraps.
+* Note: Google's own Markdown lists are **incomplete** (tables aren't mentioned but *do* convert),
+  so trust this empirically-tested file over the docs for the `ko` workflow.
+
+Canonical test Doc — reused for ongoing checks as Google Docs adds Markdown features:
+**kotools-test**, id `1wZ6GCOFPqPm9WXjaB-TBQHQ7bzLwqQX9D0A-oBI4mPk` (changes on each re-push).
