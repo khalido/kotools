@@ -12,7 +12,8 @@ colours). See the References at the bottom.
 
 Regenerate / re-test with:
 
-`ko gdocs push docs/gdocs-markdown.md --title kotools-test`
+`ko gdocs push docs/gdocs-markdown.md --update <doc-id>` — re-imports into the same Doc, keeping its
+URL and sharing (drop `--update` to create a fresh Doc instead).
 
 `ko gdocs export <doc-id>` — then compare against this file.
 
@@ -117,4 +118,5 @@ Blockquote specimen (comes back as plain text):
   so trust this empirically-tested file over the docs for the `ko` workflow.
 
 Canonical test Doc — reused for ongoing checks as Google Docs adds Markdown features:
-**kotools-test**, id `1VoxeRR_N5toaYIIxcZZxWXrjnE4q0BNvDR6V0ayh6VQ` (changes on each re-push).
+**kotools-test**, id `1VoxeRR_N5toaYIIxcZZxWXrjnE4q0BNvDR6V0ayh6VQ`. Re-push with
+`--update <that-id>` to keep this id stable (re-apply shading afterwards, since an update clears it).

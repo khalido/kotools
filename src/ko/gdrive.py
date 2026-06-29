@@ -103,24 +103,32 @@ def _flatten_comment(raw: dict) -> dict:
     }
 
 
-def push_markdown(md_text: str, title: str, folder_id: str | None = None) -> str:
-    """Create a NEW Google Doc from Markdown; return its doc ID.
+def push_markdown(
+    md_text: str, title: str, folder_id: str | None = None, update_id: str | None = None
+) -> str:
+    """Markdown -> a Google Doc; return its doc ID.
 
-    Drive converts `text/markdown` media into a native Doc when the target mimeType is a Doc.
-    `folder_id` (if given) places it in that folder, else My Drive root. Images embed as base64
-    and don't round-trip cleanly — fine for text proposals, not image-heavy decks.
+    Default: create a NEW Doc (`folder_id` places it in a folder, else My Drive root). With
+    `update_id`, instead **re-import into that existing Doc in place** — same id, same URL, sharing
+    preserved — which is what you want for an iterated proposal/reference. Caveat: an update replaces
+    the whole body, so any manual shading and existing comment anchors are dropped (for a doc under
+    live review, edit with `gdocs.replace` instead). Drive converts `text/markdown` server-side;
+    images embed as base64 and don't round-trip cleanly — fine for text, not image-heavy decks.
     """
+    media = MediaInMemoryUpload(_md_bytes(md_text), mimetype=MARKDOWN_MIME, resumable=False)
+    svc = get_drive_service(readonly=False)
+    if update_id:
+        did = _doc_id(update_id)
+        try:
+            svc.files().update(fileId=did, media_body=media, fields="id").execute(num_retries=3)
+        except HttpError as e:
+            _handle(e, did)
+        return did
     body: dict = {"name": title, "mimeType": DOC_MIME}
     if folder_id:
         body["parents"] = [_folder_id(folder_id)]
-    media = MediaInMemoryUpload(_md_bytes(md_text), mimetype=MARKDOWN_MIME, resumable=False)
     try:
-        created = (
-            get_drive_service(readonly=False)
-            .files()
-            .create(body=body, media_body=media, fields="id")
-            .execute(num_retries=3)
-        )
+        created = svc.files().create(body=body, media_body=media, fields="id").execute(num_retries=3)
     except HttpError as e:
         _handle(e, f"create doc '{title}'")
     return created["id"]

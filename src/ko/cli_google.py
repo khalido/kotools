@@ -476,18 +476,24 @@ def gdocs_push(
     folder: str = typer.Option(
         None, "--folder", "-f", help="folder ID, /folders/ URL, or a name to find-or-create"
     ),
+    update: str = typer.Option(
+        None, "--update", "-u",
+        help="update an existing doc in place (same URL/sharing) instead of creating a new one",
+    ),
 ) -> None:
-    """Push a Markdown file to a NEW formatted Google Doc; prints its ID (stdout) and URL (stderr)."""
+    """Push a Markdown file to a Google Doc; prints ID (stdout) and URL (stderr). Creates a new doc,
+    or with --update <id> re-imports into that doc in place (keeps the URL; drops shading/comments)."""
     md = sys.stdin.read() if str(markdown_file) == "-" else markdown_file.read_text()
     doc_title = title or (markdown_file.stem if str(markdown_file) != "-" else "Untitled")
     try:
-        folder_id = _resolve_folder(folder)
-        new_id = gdrive_mod.push_markdown(md, doc_title, folder_id=folder_id)
+        folder_id = None if update else _resolve_folder(folder)
+        new_id = gdrive_mod.push_markdown(md, doc_title, folder_id=folder_id, update_id=update)
     except gdrive_mod.DriveError as e:
         typer.echo(str(e), err=True)
         raise typer.Exit(1) from None
     typer.echo(new_id)
-    typer.echo(f"https://docs.google.com/document/d/{new_id}/edit", err=True)
+    verb = "updated" if update else "created"
+    typer.echo(f"{verb}: https://docs.google.com/document/d/{new_id}/edit", err=True)
 
 
 @gdocs_app.command("export")
