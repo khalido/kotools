@@ -5,17 +5,16 @@
 **what actually survives that round-trip** — push it, eyeball the Doc, export it, compare. The
 Markdown in git stays the source of truth.
 
-> **If you're reading this in Google Docs:** it's generated from `docs/gdocs-markdown.md` in the
-> [kotools](https://github.com/khalido/kotools) repo — edit the Markdown there, not this Doc, then
-> re-push. The table shading below was applied with `ko gdocs shade-table` (Markdown can't set cell
-> colours). See the **References** at the bottom.
+**If you're reading this in Google Docs:** it's generated from `docs/gdocs-markdown.md` in the
+[kotools](https://github.com/khalido/kotools) repo — edit the Markdown there, not this Doc, then
+re-push. The table shading below was applied with `ko gdocs shade-table` (Markdown can't set cell
+colours). See the References at the bottom.
 
 Regenerate / re-test with:
 
-```
-ko gdocs push docs/gdocs-markdown.md --title kotools-test
-ko gdocs export <doc-id>        # compare against this file
-```
+`ko gdocs push docs/gdocs-markdown.md --title kotools-test`
+
+`ko gdocs export <doc-id>` — then compare against this file.
 
 ## Basic Markdown — all of this converts
 
@@ -29,11 +28,10 @@ Everything you'd reach for in a proposal. Headings map to Google Docs' **Heading
 
 ### Lists
 
-Two markdown paths, one quirk: Google Docs' **editor** setting (*Tools → Preferences →
-Automatically detect Markdown*) only turns `*` into a list — a `-` stays literal. `ko gdocs push`
-(the Drive import path) accepts both, but **`*` is the safe common denominator**, so prefer it.
-Indent sub-items to nest: **2 spaces** under a bullet, **3 spaces** under a numbered item (to clear
-the `N. `). Both nest correctly — verified.
+**Use `*` for lists, not `-`.** Google Docs' editor markdown (*Tools → Preferences → Automatically
+detect Markdown*) only turns `*` into a list — `-` stays literal — and while `ko gdocs push` accepts
+both, only `*` reliably converts. Standardize on `*`. Indent sub-items to nest: **2 spaces** under a
+bullet, **3 spaces** under a numbered item (to clear the `N. `). Both nest correctly — verified.
 
 Bulleted, with one level of sub-bullets:
 
@@ -77,8 +75,9 @@ right-align comes back):
 | **Total**       |     |            |   $101,600 |
 
 Cell **background shading** is *not* a Markdown feature — apply it after a push with
-`ko gdocs shade-table <doc> --rows 0` (header) or `--cols -1` (totals column). The header and Total
-rows here were shaded that way. A fresh `push` has no shading, so re-run `shade-table` after re-pushing.
+`ko gdocs shade-table <doc>`, which shades the header row by default; add `--cols -1` for a totals
+column, or `--all-tables` to shade every table's header at once. The header and Total rows here were
+shaded that way. A fresh `push` has no shading, so re-run `shade-table` after re-pushing.
 
 ## What does NOT survive
 
@@ -118,4 +117,4 @@ Blockquote specimen (comes back as plain text):
   so trust this empirically-tested file over the docs for the `ko` workflow.
 
 Canonical test Doc — reused for ongoing checks as Google Docs adds Markdown features:
-**kotools-test**, id `1wZ6GCOFPqPm9WXjaB-TBQHQ7bzLwqQX9D0A-oBI4mPk` (changes on each re-push).
+**kotools-test**, id `1VoxeRR_N5toaYIIxcZZxWXrjnE4q0BNvDR6V0ayh6VQ` (changes on each re-push).

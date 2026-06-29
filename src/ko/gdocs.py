@@ -168,12 +168,13 @@ def shade_table(
     rows: list[int] | None = None,
     cols: list[int] | None = None,
     color: str = "#EFEFEF",
-    table_index: int = 0,
+    table_index: int | None = 0,
 ) -> int:
     """Background-shade whole rows and/or columns of a table. `rows`/`cols` are 0-based indices
     (negative ok: -1 = last). Common uses: rows=[0] for a header, cols=[-1] for a totals column.
-    `table_index` selects which table (0 = first). All shading goes in one batchUpdate. Returns
-    the number of ranges styled. The minimal escape hatch for the bit Markdown can't do."""
+    `table_index` selects which table (0 = first); pass `None` to apply to **every** table in the
+    doc (e.g. shade all headers at once). All shading goes in one batchUpdate. Returns the number of
+    ranges styled. The minimal escape hatch for the bit Markdown can't do."""
     did = doc_id(doc)
     svc = get_docs_service(readonly=False)
     try:  # field mask: we only need each element's index + table dimensions
@@ -187,12 +188,15 @@ def shade_table(
     tables = _find_tables(document)
     if not tables:
         raise DocsNotFound(f"no tables in doc {did}")
-    if not 0 <= table_index < len(tables):
+    if table_index is None:
+        targets = tables
+    elif 0 <= table_index < len(tables):
+        targets = [tables[table_index]]
+    else:
         raise DocsError(f"table_index {table_index} out of range — doc has {len(tables)} table(s)")
-    t = tables[table_index]
     bg = {"color": {"rgbColor": _hex_to_rgb(color)}}
 
-    def _range(row_index: int, col_index: int, row_span: int, col_span: int) -> dict:
+    def _cell(t: dict, row_index: int, col_index: int, row_span: int, col_span: int) -> dict:
         return {
             "updateTableCellStyle": {
                 "tableCellStyle": {"backgroundColor": bg},
@@ -212,8 +216,10 @@ def shade_table(
     def _norm(i: int, n: int) -> int:
         return i if i >= 0 else n + i
 
-    requests = [_range(_norm(r, t["rows"]), 0, 1, t["cols"]) for r in (rows or [])]
-    requests += [_range(0, _norm(c, t["cols"]), t["rows"], 1) for c in (cols or [])]
+    requests: list[dict] = []
+    for t in targets:
+        requests += [_cell(t, _norm(r, t["rows"]), 0, 1, t["cols"]) for r in (rows or [])]
+        requests += [_cell(t, 0, _norm(c, t["cols"]), t["rows"], 1) for c in (cols or [])]
     if not requests:
         raise DocsError("nothing to shade — pass rows and/or cols (e.g. --rows 0)")
     try:

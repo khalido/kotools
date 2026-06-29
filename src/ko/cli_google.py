@@ -560,9 +560,13 @@ def gdocs_shade_table(
     cols: str = typer.Option(None, "--cols", help="comma-sep 0-based columns to shade (-1=last)"),
     color: str = typer.Option("#EFEFEF", "--color", help="hex background (default a light grey)"),
     table: int = typer.Option(0, "--table", help="which table if the doc has several (0 = first)"),
+    all_tables: bool = typer.Option(
+        False, "--all-tables", help="apply to every table in the doc (e.g. shade all headers at once)"
+    ),
 ) -> None:
-    """Background-shade table rows/columns — the bit Markdown can't do. `--rows 0` shades a header,
-    `--cols -1` a totals column. Re-run after a `push` to re-apply (a fresh push has no shading)."""
+    """Background-shade table rows/columns — the bit Markdown can't do. Defaults to the header row
+    (row 0); `--cols -1` adds a totals column. `--all-tables` does every table at once (the common
+    'shade all headers' shortcut). Re-run after a `push` (a fresh push has no shading)."""
     def _parse(s: str | None) -> list[int] | None:
         if not s:
             return None
@@ -571,8 +575,13 @@ def gdocs_shade_table(
         except ValueError:
             _die(f"bad index list {s!r} — want comma-separated integers like '0,-1'")
 
+    rows_l, cols_l = _parse(rows), _parse(cols)
+    if rows_l is None and cols_l is None:
+        rows_l = [0]  # convenience default: shade the header row
     try:
-        n = gdocs_mod.shade_table(doc, rows=_parse(rows), cols=_parse(cols), color=color, table_index=table)
+        n = gdocs_mod.shade_table(
+            doc, rows=rows_l, cols=cols_l, color=color, table_index=(None if all_tables else table)
+        )
     except gdocs_mod.DocsError as e:
         typer.echo(str(e), err=True)
         raise typer.Exit(1) from None
