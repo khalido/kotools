@@ -49,6 +49,16 @@ def test_flatten_comment_tolerates_missing_fields():
     assert out["resolved"] is True
 
 
+def test_diff_summary():
+    same, diff = gdrive.diff_summary("a\nb\nc", "a\nb\nc")
+    assert same == "~0% of the content changed" and diff == []
+
+    summary, diff = gdrive.diff_summary("a\nb\nc\n", "a\nB\nc\nd\n")
+    assert summary.startswith("~") and "changed" in summary and summary != same
+    assert any(ln.startswith("+B") for ln in diff) and any(ln.startswith("-b") for ln in diff)
+    assert any(ln.startswith("+d") for ln in diff)
+
+
 def test_error_hierarchy():
     assert issubclass(gdrive.DriveNotFound, gdrive.DriveError)
     assert issubclass(gdrive.DrivePermissionDenied, gdrive.DriveError)

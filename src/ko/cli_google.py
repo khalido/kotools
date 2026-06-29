@@ -31,15 +31,18 @@ gsheets_app = typer.Typer(
     no_args_is_help=True,
 )
 app.add_typer(gsheets_app, name="gsheets")
+app.add_typer(gsheets_app, name="gs", hidden=True)  # shortcut alias
 
 gdocs_app = typer.Typer(
     help=(
-        "Read & write Google Docs (same OAuth token as `ko gsheets`). "
-        "Reads: get / info / export / comments. Writes: append / replace / new / push / reply / shade-table."
+        "Read & write Google Docs as Markdown (same OAuth token as `ko gsheets`). "
+        "Read: get (Doc→Markdown) / info / comments. Write: push (Markdown→new or existing Doc) / "
+        "replace / append / reply / shade-table."
     ),
     no_args_is_help=True,
 )
 app.add_typer(gdocs_app, name="gdocs")
+app.add_typer(gdocs_app, name="gd", hidden=True)  # shortcut alias
 
 cal_app = typer.Typer(
     help=(
@@ -391,14 +394,19 @@ def _gdocs_account(
 @gdocs_app.command("get")
 def gdocs_get(
     doc: str = typer.Argument(..., help="Google Doc ID or URL"),
-    markdown: bool = typer.Option(False, "--md", help="light markdown (# headings, - bullets)"),
+    out: Path = typer.Option(None, "--out", "-o", help="write to a file instead of stdout"),
 ) -> None:
-    """Print a doc's text. --md adds headings/bullets (light, not lossless)."""
+    """Read a Doc as Markdown (tables included) — pipe it to an LLM/agent, or save with -o."""
     try:
-        typer.echo(gdocs_mod.get_text(doc, markdown=markdown))
-    except gdocs_mod.DocsError as e:
+        md = gdrive_mod.export_markdown(doc)
+    except gdrive_mod.DriveError as e:
         typer.echo(str(e), err=True)
         raise typer.Exit(1) from None
+    if out:
+        out.write_text(md)
+        typer.echo(f"wrote {len(md)} char(s) to {out}", err=True)
+    else:
+        typer.echo(md)
 
 
 @gdocs_app.command("info")
@@ -444,18 +452,6 @@ def gdocs_replace(
     typer.echo(f"replaced {n} occurrence(s)", err=True)
 
 
-@gdocs_app.command("new")
-def gdocs_new(title: str = typer.Argument(..., help="title for the new doc")) -> None:
-    """Create a new Google Doc; prints its ID (stdout) and URL (stderr)."""
-    try:
-        new_id = gdocs_mod.create_doc(title)
-    except gdocs_mod.DocsError as e:
-        typer.echo(str(e), err=True)
-        raise typer.Exit(1) from None
-    typer.echo(new_id)
-    typer.echo(f"https://docs.google.com/document/d/{new_id}/edit", err=True)
-
-
 _DRIVE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{20,}$")
 
 
@@ -469,49 +465,77 @@ def _resolve_folder(folder: str | None) -> str | None:
     return gdrive_mod.ensure_folder(folder)
 
 
+def _ask_tty(prompt: str) -> bool:
+    """Yes/no from the controlling terminal — works even when stdin is piped Markdown. No TTY → False
+    (so non-interactive callers must pass --force)."""
+    try:
+        with open("/dev/tty", "r+") as tty:
+            tty.write(prompt)
+            tty.flush()
+            return tty.readline().strip().lower() in ("y", "yes")
+    except OSError:
+        typer.echo("no TTY for confirmation — pass --force to overwrite", err=True)
+        return False
+
+
+def _confirm_overwrite(target: str, new_md: str, force: bool) -> None:
+    """Guard an in-place doc overwrite: pull the current doc, show its title + a diff vs the new
+    Markdown, and confirm — unless --force. Aborts if declined or there's no TTY. The title is the
+    real wrong-id catch (you notice 'Overwrite "Budget 2026"?' when you meant the proposal)."""
+    try:
+        current = gdrive_mod.export_markdown(target)
+        title = gdocs_mod.get_info(target).title
+    except gdrive_mod.DriveError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1) from None
+    summary, diff = gdrive_mod.diff_summary(current, new_md)
+    typer.echo(f'Overwrite "{title}" ({gdocs_mod.doc_id(target)[:8]}…): {summary}', err=True)
+    if force:
+        return
+    for ln in diff[:80]:
+        typer.echo(ln, err=True)
+    if len(diff) > 80:
+        typer.echo(f"… (+{len(diff) - 80} more diff lines)", err=True)
+    if not _ask_tty("Overwrite? [y/N] "):
+        _die("aborted — not overwriting (pass --force to skip this check)", code="aborted")
+
+
 @gdocs_app.command("push")
 def gdocs_push(
-    markdown_file: Path = typer.Argument(..., help="path to a Markdown file (or '-' for stdin)"),
-    title: str = typer.Option(None, "--title", "-t", help="doc title (default: file stem)"),
+    markdown_file: Path = typer.Argument(..., help="Markdown file, or '-' for stdin"),
+    target: str = typer.Argument(
+        None, help="existing doc id or URL to update in place; omit to create a new doc"
+    ),
+    title: str = typer.Option(
+        None, "--title", "-t", help="title for a NEW doc (default: file stem; ignored on update)"
+    ),
     folder: str = typer.Option(
-        None, "--folder", "-f", help="folder ID, /folders/ URL, or a name to find-or-create"
+        None, "--folder", "-f", help="folder for a NEW doc: id, /folders/ URL, or a name to find-or-create"
     ),
-    update: str = typer.Option(
-        None, "--update", "-u",
-        help="update an existing doc in place (same URL/sharing) instead of creating a new one",
-    ),
+    force: bool = typer.Option(False, "--force", help="skip the overwrite diff/confirm when updating"),
 ) -> None:
-    """Push a Markdown file to a Google Doc; prints ID (stdout) and URL (stderr). Creates a new doc,
-    or with --update <id> re-imports into that doc in place (keeps the URL; drops shading/comments)."""
+    """Markdown → Google Doc; prints ID (stdout) and URL (stderr). No TARGET creates a new doc; a
+    TARGET (id or URL) updates that doc in place (same URL/sharing) after showing a diff to confirm
+    (--force skips). An update re-imports the whole body, so re-apply shading with `shade-table`."""
     md = sys.stdin.read() if str(markdown_file) == "-" else markdown_file.read_text()
+    if target:
+        _confirm_overwrite(target, md, force)
+        try:
+            doc = gdrive_mod.push_markdown(md, "", update_id=target)
+        except gdrive_mod.DriveError as e:
+            typer.echo(str(e), err=True)
+            raise typer.Exit(1) from None
+        typer.echo(doc)
+        typer.echo(f"updated: https://docs.google.com/document/d/{doc}/edit", err=True)
+        return
     doc_title = title or (markdown_file.stem if str(markdown_file) != "-" else "Untitled")
     try:
-        folder_id = None if update else _resolve_folder(folder)
-        new_id = gdrive_mod.push_markdown(md, doc_title, folder_id=folder_id, update_id=update)
+        new_id = gdrive_mod.push_markdown(md, doc_title, folder_id=_resolve_folder(folder))
     except gdrive_mod.DriveError as e:
         typer.echo(str(e), err=True)
         raise typer.Exit(1) from None
     typer.echo(new_id)
-    verb = "updated" if update else "created"
-    typer.echo(f"{verb}: https://docs.google.com/document/d/{new_id}/edit", err=True)
-
-
-@gdocs_app.command("export")
-def gdocs_export(
-    doc: str = typer.Argument(..., help="Google Doc ID or URL"),
-    out: Path = typer.Option(None, "--out", "-o", help="write to a file instead of stdout"),
-) -> None:
-    """Export a Doc as real Markdown (tables included). To stdout, or a file with -o."""
-    try:
-        md = gdrive_mod.export_markdown(doc)
-    except gdrive_mod.DriveError as e:
-        typer.echo(str(e), err=True)
-        raise typer.Exit(1) from None
-    if out:
-        out.write_text(md)
-        typer.echo(f"wrote {len(md)} char(s) to {out}", err=True)
-    else:
-        typer.echo(md)
+    typer.echo(f"created: https://docs.google.com/document/d/{new_id}/edit", err=True)
 
 
 @gdocs_app.command("comments")

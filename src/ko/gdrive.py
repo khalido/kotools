@@ -19,6 +19,7 @@ price of not granting a broad Drive scope. See `google_auth.py`.
 
 from __future__ import annotations
 
+import difflib
 from typing import NoReturn
 
 from googleapiclient.errors import HttpError
@@ -132,6 +133,17 @@ def push_markdown(
     except HttpError as e:
         _handle(e, f"create doc '{title}'")
     return created["id"]
+
+
+def diff_summary(old: str, new: str) -> tuple[str, list[str]]:
+    """Compare two Markdown strings for the overwrite sanity-check. Returns (summary, diff_lines):
+    summary like '~37% of the content changed'; diff_lines a unified diff ready to print. The percent
+    is character-level (difflib SequenceMatcher) so it's robust to line re-wrapping — unlike a +/-
+    line count, which a hard-wrapped source vs the Doc's reflowed export would wildly inflate. Pure
+    (stdlib difflib), so unit-testable without any Doc."""
+    pct = round((1 - difflib.SequenceMatcher(None, old, new).ratio()) * 100)
+    diff = list(difflib.unified_diff(old.splitlines(), new.splitlines(), lineterm=""))
+    return f"~{pct}% of the content changed", diff
 
 
 def export_markdown(doc: str) -> str:

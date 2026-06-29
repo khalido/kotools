@@ -17,7 +17,7 @@ Current subcommands:
 - `ko tv` — movie/TV quick check: rating, overview, where to stream (AU default; via [TMDB](https://developer.themoviedb.org))
 - `ko tt` — TickTick lists + tasks (read-only) via its hosted MCP — `ko tt lists`, `ko tt items <list>`
 - `ko gsheets` — read **& write** Google Sheets via OAuth (`get`/`find` · `set`/`put`/`header`/`add-tab`/`new`/`clear`, with overwrite guards)
-- `ko gdocs` — read **& write** Google Docs (same OAuth token): `get`/`info` · `append`/`replace`/`new` · `push` a Markdown file to a formatted Doc · `export` a Doc back to real Markdown · read `comments` · `reply` to a thread
+- `ko gdocs` — read **& write** Google Docs as Markdown (same OAuth token): `get` a Doc as Markdown (pipe it) · `push` a Markdown file to a **new** Doc, or **update** an existing one in place (diff + confirm) · `replace`/`append` · read `comments` / `reply` · `shade-table` (header/totals)
 - `ko cal` — Google Calendar agenda + quick-add (same token): bare `ko cal` = next 7 days · `day`/`find`/`add`/`cals`
 - `ko gmail` — read Gmail (read-only, same token): bare = recent inbox · `search "<gmail query>"` · `from <who>` · `view <id>` · `thread <id>` (whole conversation)
 - `ko agent` — pydantic-ai agents: `research` (web + papers + HN) and `tv` (what to watch in AU), with saved/resumable sessions
@@ -105,7 +105,7 @@ ko gsheets get 1Bxi... 'Class Data!A1:F6' --json
 ko gsheets find <id> "Smith"                    # search every tab → tab, ref, cell
 ko gsheets set <id> 'Sheet1!A1' '=SUM(B:B)'     # write a cell (formulas parse)
 echo '{"Sheet1!A1": [["Name","Score"],["Ann",9]]}' | ko gsheets put <id>   # bulk write
-ko gdocs get <id> --md                          # a Google Doc as markdown
+ko gdocs get <id>                                # a Google Doc as markdown (pipe to ko llm, etc.)
 ko cal                                          # your next 7 days
 ko cal add "Dentist" 2026-07-01T14:00 -m 30     # add a 30-minute event
 ko cal find dentist --past                      # when was my last dentist appointment?
@@ -166,7 +166,7 @@ email — fine for bots, tedious for a personal read/write-anywhere CLI. OAuth g
 the signed-in account can see. **Scope to one folder?** No — OAuth scopes are per-API, not per-resource;
 use a service account with individual share grants if you need tighter control.
 
-### Markdown ↔ Google Docs + comments (`ko gdocs push/export/comments`)
+### Markdown ↔ Google Docs + comments (`ko gdocs push/get/comments`)
 
 `ko` requests the **narrow `drive.file` Drive scope** — and deliberately *not* `drive`/`drive.readonly`.
 `drive.file` grants access **only to files `ko` itself creates or that you open by ID** — it still
@@ -179,14 +179,15 @@ ko gdocs push proposal.md --title "Acme — Proposal" --folder Proposals   # .md
 ko gdocs comments <doc>                       # read the feedback back (replies indented, [id] shown)
 ko gdocs reply <doc> <comment-id> "on it"     # reply to a thread without leaving the terminal
 ko gdocs replace <doc> "Q2" "Q3"              # surgical in-place edit — keeps comment threads
-ko gdocs export <doc> -o proposal.md          # pull the Doc back as real Markdown (tables incl.)
+ko gdocs push proposal.md <doc>               # re-push edits in place (same URL; diff+confirm, --force skips)
+ko gdocs get <doc> -o proposal.md             # pull the Doc back as real Markdown (tables incl.)
 ```
 
 Keep the Markdown in git as the source of truth; push to a Doc for review, export to reconcile.
 **What converts** (and what doesn't — code blocks and blockquotes don't): see the tested support
 matrix in [`docs/gdocs-markdown.md`](docs/gdocs-markdown.md).
 `--folder` takes a folder ID, a `/folders/` URL, or a **name** (`Proposals`) that `ko`
-find-or-creates. **Caveat:** because `drive.file` only sees files `ko` made, `export`/`comments`
+find-or-creates. **Caveat:** because `drive.file` only sees files `ko` made, `get`/`comments`
 work on docs **`ko` pushed** — not on a pre-existing doc someone else created (that returns 404).
 For broad read access you'd need `drive.readonly`, which `ko` intentionally refuses. Images in a
 pushed doc embed as base64 and don't round-trip cleanly — fine for text proposals.
