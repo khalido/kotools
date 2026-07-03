@@ -73,14 +73,14 @@ def search(
     if end_published_date:
         kwargs["end_published_date"] = end_published_date
     # Summary is a short query-relevant blurb (cheap, useful in a list); text is the full page.
+    # exa-py 2.16 folded search_and_contents() into search(contents=...). contents=False
+    # keeps the no-content path lean — search() now returns text by default.
+    contents: dict = {}
     if with_text:
-        kwargs["text"] = {"max_characters": max_chars}
+        contents["text"] = {"max_characters": max_chars}
     if with_summary:
-        kwargs["summary"] = {"query": query}
-    if with_text or with_summary:
-        response = client.search_and_contents(query, **kwargs)
-    else:
-        response = client.search(query, **kwargs)
+        contents["summary"] = {"query": query}
+    response = client.search(query, contents=contents or False, **kwargs)
 
     return [
         ExaResult(

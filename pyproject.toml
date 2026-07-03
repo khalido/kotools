@@ -19,7 +19,7 @@ classifiers = [
 dependencies = [
     "arxiv>=4.0.0",
     "arxiv2markdown>=0.1.0",
-    "exa-py>=2.14.0",
+    "exa-py>=2.16.0",  # search(contents=…) API; 2.14/2.15 lack it
     "google-api-python-client>=2.197.0",
     "google-auth>=2.55.0",
     "google-auth-oauthlib>=1.4.0",
@@ -27,12 +27,7 @@ dependencies = [
     "liteparse>=2.1.1",
     "loguru~=0.7.3",
     "mcp[cli]>=1.28.0",
-    "pydantic-ai-slim[google,openrouter,mcp]>=2.0.0b7,<3",
-    # pydantic-ai v2 beta pins its sibling pydantic-graph to a prerelease too.
-    # Referencing it explicitly lets us drop the global prerelease=allow, so only
-    # the pydantic-ai beta line is prerelease and everything else stays on stable.
-    # Bump/remove both when pydantic-ai v2 ships final.
-    "pydantic-graph>=2.0.0b7,<3",
+    "pydantic-ai-slim[google,openrouter,mcp]>=2.4,<3",
     "trafilatura>=2.1.0",
     "typer>=0.26.7",
     "tzdata>=2025.1",  # guarantees zoneinfo works cross-platform (ko cal)
