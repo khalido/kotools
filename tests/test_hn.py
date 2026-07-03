@@ -31,6 +31,21 @@ def test_walk_depth_first_with_cap():
     assert len(capped) == 2
 
 
+def test_count_comments_is_full_total():
+    tree = [
+        {
+            "text": "top",
+            "children": [
+                {"text": "reply", "children": [{"text": "deep", "children": []}]},
+                {"text": None, "children": []},  # deleted — not counted
+            ],
+        },
+        {"text": "sibling", "children": []},
+    ]
+    # every text-bearing node anywhere in the tree, independent of any display cap
+    assert hn._count_comments(tree) == 4
+
+
 def test_search_passes_numeric_filters_as_list(monkeypatch):
     """Regression: Algolia 400s on a comma-joined numericFilters string once there's >1 filter;
     httpx must send a list (repeated params). Guards the `created_at_i + num_comments` combo."""

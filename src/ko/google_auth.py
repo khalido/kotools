@@ -61,6 +61,16 @@ class AuthError(RuntimeError):
     pass
 
 
+def _write_token(tf: Path, creds: Credentials) -> None:
+    """Persist a credentials JSON with owner-only perms — it holds a refresh token."""
+    tf.parent.mkdir(parents=True, exist_ok=True)
+    tf.write_text(creds.to_json())
+    try:
+        tf.chmod(0o600)
+    except OSError:
+        pass  # e.g. a filesystem without POSIX perms — best-effort
+
+
 # --- shared API helpers (errors, HTTP handling, id extraction) ---
 # gsheets / gdocs / gcal / gmail all hit Google APIs the same way: a 403/404 needs the same
 # mapping + an auth hint, and several take a URL-or-bare-ID. That spine lives here so each
@@ -171,7 +181,7 @@ def _load_cached(readonly: bool, account: str) -> Credentials | None:
     if creds.expired and creds.refresh_token:
         try:
             creds.refresh(Request())
-            tf.write_text(creds.to_json())
+            _write_token(tf, creds)
             return creds
         except Exception:
             return None
@@ -192,9 +202,7 @@ def _run_flow(readonly: bool, account: str) -> Credentials:
         )
     flow = InstalledAppFlow.from_client_secrets_file(str(cf), _scopes(readonly))
     creds = flow.run_local_server(port=0)
-    tf = token_file(account)
-    tf.parent.mkdir(parents=True, exist_ok=True)
-    tf.write_text(creds.to_json())
+    _write_token(token_file(account), creds)
     return creds
 
 

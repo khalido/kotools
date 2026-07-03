@@ -18,17 +18,24 @@ from ko import exa as exa_mod
 from ko import fetch as fetch_mod
 from ko import hf as hf_mod
 from ko import hn as hn_mod
+from ko import papers as papers_mod
 from ko import tmdb as tmdb_mod
 from ko.arxiv import SearchResult as ArxivResult
 from ko.exa import ExaResult
 from ko.hf import Paper
 from ko.hn import Story
+from ko.papers import Work
 
 
 def _try(label: str, fn, *args, **kwargs):
-    """Call a source, returning an error note instead of raising."""
+    """Call a source, returning an error note instead of raising — so one flaky source
+    doesn't abort a run. Programming errors (TypeError/AttributeError/NameError/ImportError)
+    are re-raised, not disguised as 'unavailable': those are our bugs and should surface
+    loudly, not send the agent routing around a code defect forever."""
     try:
         return fn(*args, **kwargs)
+    except (TypeError, AttributeError, NameError, ImportError):
+        raise
     except Exception as e:
         return f"{label} unavailable ({type(e).__name__}: {e}). Note this and try another source."
 
@@ -59,8 +66,9 @@ def fetch_url(url: str) -> str:
 
 # --- papers ---
 papers = FunctionToolset(
-    instructions="Papers: arxiv (broad academic) + Hugging Face Daily Papers (trending ML); "
-    "use the *_fetch/*_get tools to read a paper in full."
+    instructions="Papers: arxiv (broad academic) + Hugging Face Daily Papers (trending ML) + "
+    "OpenAlex (papers_search covers every publisher, not just arxiv; papers_cites walks the "
+    "citation graph). Use the *_fetch/*_get tools to read a paper in full."
 )
 
 
@@ -74,6 +82,18 @@ def arxiv_search(query: str, n: int = 5) -> list[ArxivResult]:
 def arxiv_fetch(arxiv_id: str) -> str:
     """Read a full arxiv paper as markdown by id (e.g. 2401.12345). Use after arxiv_search."""
     return _try("arxiv_fetch", arxiv_mod.fetch, arxiv_id)
+
+
+@papers.tool_plain
+def papers_search(query: str, n: int = 5) -> list[Work]:
+    """Cross-publisher paper search via OpenAlex (all journals, not just arxiv). Returns title, year, citations, DOI, journal, open-access url."""
+    return _try("papers_search", papers_mod.search, query, n=n)
+
+
+@papers.tool_plain
+def papers_cites(ref: str, n: int = 10) -> list[Work]:
+    """Papers citing a given paper (by DOI or arxiv id), most-cited first. Walk the citation graph to find follow-on work."""
+    return _try("papers_cites", papers_mod.cites, ref, n=n)
 
 
 @papers.tool_plain

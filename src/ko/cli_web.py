@@ -1,4 +1,4 @@
-"""Research/content cluster CLI commands: arxiv, exa, hf, hn, x, plus root-level tv/fetch/doc."""
+"""Research/content cluster CLI commands: arxiv, exa, hf, hn, papers, x, plus root-level tv/fetch/doc."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ from . import exa as exa_mod
 from . import fetch as fetch_mod
 from . import hf as hf_mod
 from . import hn as hn_mod
+from . import papers as papers_mod
 from . import tmdb as tmdb_mod
 from . import x as x_mod
 from ._cli_shared import _die, _emit_json, _fmt_day, _no_results, app
@@ -39,6 +40,13 @@ hn_app = typer.Typer(
     no_args_is_help=True,
 )
 app.add_typer(hn_app, name="hn")
+
+papers_app = typer.Typer(
+    help="Cross-publisher paper search + citation graph via OpenAlex (no auth; "
+    "S2_API_KEY adds tldr/similar). Takes DOIs, arxiv ids, or OpenAlex W-ids.",
+    no_args_is_help=True,
+)
+app.add_typer(papers_app, name="papers")
 
 x_app = typer.Typer(
     help="X (Twitter) posts via the official XDK (X_BEARER_TOKEN required, paid tier for reads).",
@@ -176,7 +184,8 @@ def exa_search(
         return
     for r in results:
         day = _fmt_day(r.published_date)
-        typer.echo(f"{r.title or r.url}{'  ·  ' + day if day else ''}")
+        title = " ".join((r.title or r.url).split())  # collapse stray newlines in the title
+        typer.echo(f"{title}{'  ·  ' + day if day else ''}")
         typer.echo(f"  {r.url}")
         blurb = (r.text if long else None) or r.summary
         if blurb:
@@ -200,6 +209,12 @@ def exa_get(
         contents = exa_mod.get_contents(urls)
     except Exception as e:
         _die(str(e))
+    missing = [u for u in urls if u not in contents]
+    if missing:  # don't let failed URLs vanish silently — an agent should know it's partial
+        typer.echo(
+            f"[fetched {len(contents)} of {len(urls)}; no content for: {', '.join(missing)}]",
+            err=True,
+        )
     sections = [f"# {url}\n\n{text}" for url, text in contents.items()]
     combined = "\n\n---\n\n".join(sections)
     if out is None:
@@ -316,6 +331,149 @@ def hf_get(
         typer.echo(f"Wrote {len(content):,} chars to {out}", err=True)
 
 
+# --- papers helpers ---
+
+
+def _echo_works(works: list[papers_mod.Work], as_json: bool) -> None:
+    if as_json:
+        _emit_json(works)
+        return
+    for w in works:
+        typer.echo(
+            f"{w.year}\t{w.cited_by_count}\t{w.oa_status or '—'}\t"
+            f"{w.title}\t{w.doi or '—'}\t{w.journal or '—'}"
+        )
+
+
+def _echo_work_card(w: papers_mod.Work) -> None:
+    authors = ", ".join(w.authors[:6]) + (" et al." if len(w.authors) > 6 else "")
+    typer.echo(f"{w.title}  ({w.year})")
+    if authors:
+        typer.echo(authors)
+    bits = [b for b in (w.journal, f"cited by {w.cited_by_count}", w.oa_status) if b]
+    typer.echo(" · ".join(bits))
+    if w.doi:
+        typer.echo(f"doi: {w.doi}  {w.doi_url}")
+    if w.oa_url:
+        typer.echo(f"oa: {w.oa_url}")
+    if w.tldr:
+        typer.echo(f"\ntldr: {w.tldr}")
+    if w.abstract:
+        typer.echo(f"\n{w.abstract}")
+
+
+# --- papers commands ---
+
+
+@papers_app.command("search")
+def papers_search(
+    query: str = typer.Argument(..., help="search query (title, abstract, full-text)"),
+    n: int = typer.Option(papers_mod.DEFAULT_N, "--n", help="max results"),
+    as_json: bool = typer.Option(False, "--json", help="emit JSON instead of TSV"),
+) -> None:
+    """Search articles across all publishers, relevance order.
+    TSV: year, cites, oa_status, title, doi, journal."""
+    try:
+        results = papers_mod.search(query, n=n)
+    except Exception as e:
+        _die(str(e), as_json=as_json)
+    if not results:
+        _no_results(f"No results for '{query}'.", as_json)
+    _echo_works(results, as_json)
+
+
+@papers_app.command("get")
+def papers_get(
+    ref: str = typer.Argument(..., help="DOI, doi.org URL, arxiv id, or OpenAlex W-id"),
+    info: bool = typer.Option(
+        False, "--info", "-i", help="metadata card only, skip the full-text fetch"
+    ),
+    out: Path = typer.Option(
+        None, "--out", "-o", help="write full text to this path; stdout if omitted"
+    ),
+    as_json: bool = typer.Option(
+        False, "--json", help="emit metadata as JSON (implies --info)"
+    ),
+) -> None:
+    """One paper: full text if an open-access copy exists, else a metadata card
+    (title, authors, journal, tldr, abstract). Paywalled ≠ error — the card is the answer."""
+    try:
+        w = papers_mod.get(ref)
+    except Exception as e:
+        _die(str(e), as_json=as_json)
+    if as_json:
+        typer.echo(json.dumps(asdict(w), default=str))
+        return
+    if not info:
+        # try each OA candidate in turn — direct PDFs first, landing page last;
+        # a direct PDF often works where the landing page bot-blocks (MDPI etc.)
+        for url in w.full_text_urls:
+            try:
+                r = fetch_mod.fetch(url, save=out is None)
+            except Exception:
+                continue  # dead/blocked → next candidate, else fall through to the card
+            note = f"oa copy: {url}" + (f"; {r.note}" if r.note else "")
+            typer.echo(f"[{note}]", err=True)
+            if out is None:
+                typer.echo(r.text)
+            else:
+                out.parent.mkdir(parents=True, exist_ok=True)
+                out.write_text(r.text)
+                typer.echo(f"Wrote {len(r.text):,} chars to {out}", err=True)
+            return
+        if w.full_text_urls:  # had OA links but none yielded text — card is the fallback
+            typer.echo("[no OA copy fetched — metadata card instead]", err=True)
+    _echo_work_card(w)
+
+
+@papers_app.command("cites")
+def papers_cites(
+    ref: str = typer.Argument(..., help="DOI, doi.org URL, arxiv id, or OpenAlex W-id"),
+    n: int = typer.Option(papers_mod.DEFAULT_N, "--n", help="max results"),
+    as_json: bool = typer.Option(False, "--json", help="emit JSON instead of TSV"),
+) -> None:
+    """Papers citing this one, most-cited first — 'who built on it?'"""
+    try:
+        results = papers_mod.cites(ref, n=n)
+    except Exception as e:
+        _die(str(e), as_json=as_json)
+    if not results:
+        _no_results(f"No citing works for {ref}.", as_json)
+    _echo_works(results, as_json)
+
+
+@papers_app.command("refs")
+def papers_refs(
+    ref: str = typer.Argument(..., help="DOI, doi.org URL, arxiv id, or OpenAlex W-id"),
+    n: int = typer.Option(papers_mod.DEFAULT_N, "--n", help="max results (batch cap 50)"),
+    as_json: bool = typer.Option(False, "--json", help="emit JSON instead of TSV"),
+) -> None:
+    """This paper's references, most-cited first — 'what does it build on?'"""
+    try:
+        results = papers_mod.refs(ref, n=n)
+    except Exception as e:
+        _die(str(e), as_json=as_json)
+    if not results:
+        _no_results(f"No resolvable references for {ref}.", as_json)
+    _echo_works(results, as_json)
+
+
+@papers_app.command("similar")
+def papers_similar(
+    ref: str = typer.Argument(..., help="DOI, doi.org URL, arxiv id, or OpenAlex W-id"),
+    n: int = typer.Option(papers_mod.DEFAULT_SIMILAR_N, "--n", help="max results"),
+    as_json: bool = typer.Option(False, "--json", help="emit JSON instead of TSV"),
+) -> None:
+    """Related papers via Semantic Scholar recommendations (needs S2_API_KEY, free)."""
+    try:
+        results = papers_mod.similar(ref, n=n)
+    except Exception as e:
+        _die(str(e), as_json=as_json)
+    if not results:
+        _no_results(f"No recommendations for {ref}.", as_json)
+    _echo_works(results, as_json)
+
+
 # --- hn helpers ---
 
 
@@ -407,6 +565,11 @@ def hn_item(
     if story.url:
         typer.echo(story.url)
     typer.echo(story.hn_url)
+    if len(comments) < story.num_comments:
+        typer.echo(
+            f"[showing {len(comments)} of {story.num_comments} comments — raise --n for more]",
+            err=True,
+        )
     for c in comments:
         pad = "  " * (c.depth + 1)
         typer.echo(f"\n{pad}[{c.author}]")
@@ -436,7 +599,10 @@ def doc(
     ),
 ) -> None:
     """Document → plain text via liteparse. Local + fast, no models. Shortcut: `ko <file>`."""
-    text = doc_mod.parse(file, pages=pages, ocr=not no_ocr)
+    try:
+        text = doc_mod.parse(file, pages=pages, ocr=not no_ocr)
+    except Exception as e:
+        _die(str(e))
     if out is None:
         typer.echo(text)
     else:
@@ -551,9 +717,12 @@ def fetch_cmd(
     """URL → clean markdown. Articles via trafilatura, PDFs download + parse,
     arxiv links via arxiv2md, paywalls via archive.today, dead links via Wayback.
     Shortcut: `ko <url>`."""
-    r = fetch_mod.fetch(
-        url, archive=archive, archive_is=archive_is, date=date, save=not no_save
-    )
+    try:
+        r = fetch_mod.fetch(
+            url, archive=archive, archive_is=archive_is, date=date, save=not no_save
+        )
+    except Exception as e:
+        _die(str(e))
     if r.note:
         typer.echo(f"[{r.note}]", err=True)
     if out is None:

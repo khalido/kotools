@@ -94,6 +94,8 @@ def fetch(arxiv_id: str) -> str:
         [_arxiv2md_bin(), arxiv_id, "--remove-refs", "--frontmatter", "-o", "-"],
         capture_output=True,
         text=True,
-        check=True,
     )
+    if result.returncode != 0:  # surface arxiv2md's own message, not a bare CalledProcessError
+        msg = (result.stderr or result.stdout or "").strip()
+        raise RuntimeError(f"arxiv2md failed for {arxiv_id}: {msg}".rstrip(": "))
     return result.stdout

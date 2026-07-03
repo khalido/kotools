@@ -115,7 +115,12 @@ def _npm_install(folder: Path) -> None:
     if not (folder / "package.json").exists() or (folder / "node_modules").exists():
         return
     npm = shutil.which("npm") or "npm"
-    proc = subprocess.run([npm, "install"], cwd=str(folder), capture_output=True, text=True)
+    try:
+        proc = subprocess.run(
+            [npm, "install"], cwd=str(folder), capture_output=True, text=True, timeout=300
+        )
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("npm install timed out after 5 min") from None
     if proc.returncode != 0:
         raise RuntimeError("npm install failed:\n" + (proc.stderr or proc.stdout))
 
@@ -416,13 +421,17 @@ def deploy(folder: Path, name: str | None = None, force: bool = False) -> str:
     _npm_install(folder)  # worker sites (Hono) need deps bundled before deploy
     with tempfile.TemporaryDirectory() as td:
         out_file = Path(td) / "out.ndjson"
-        proc = subprocess.run(
-            [*_wrangler(), "deploy"],
-            cwd=str(folder),
-            capture_output=True,
-            text=True,
-            env={**_cf_env(), "WRANGLER_OUTPUT_FILE_PATH": str(out_file)},
-        )
+        try:
+            proc = subprocess.run(
+                [*_wrangler(), "deploy"],
+                cwd=str(folder),
+                capture_output=True,
+                text=True,
+                env={**_cf_env(), "WRANGLER_OUTPUT_FILE_PATH": str(out_file)},
+                timeout=180,
+            )
+        except subprocess.TimeoutExpired:
+            raise RuntimeError("wrangler deploy timed out after 3 min") from None
         if proc.returncode != 0:
             raise RuntimeError(
                 "wrangler deploy failed (set KO_CLOUDFLARE_API_TOKEN + "

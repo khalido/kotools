@@ -11,7 +11,7 @@ wins at those. This is "what's on" and "put this on my calendar".
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from googleapiclient.errors import HttpError
@@ -109,6 +109,19 @@ def resolve_calendar_ids(names: list[str], calendars: list[Calendar] | None = No
     return out
 
 
+def _start_key(ev: CalEvent) -> datetime:
+    """A comparable aware datetime for sorting mixed all-day + timed events. String-sorting
+    ev.start is wrong: '...+10:00' vs '...Z' offsets (and date vs datetime) don't order
+    lexicographically. All-day events anchor to midnight in the local zone."""
+    s = ev.start
+    try:
+        if len(s) == 10:  # all-day "YYYY-MM-DD"
+            return datetime.fromisoformat(s).replace(tzinfo=tz())
+        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except ValueError:
+        return datetime.max.replace(tzinfo=timezone.utc)
+
+
 def _event(raw: dict, cal_id: str, cal_name: str) -> CalEvent:
     s, e = raw.get("start", {}), raw.get("end", {})
     return CalEvent(
@@ -163,7 +176,7 @@ def list_events(
             token = resp.get("nextPageToken")
             if not token:
                 break
-    events.sort(key=lambda ev: ev.start)
+    events.sort(key=_start_key)
     return events
 
 
@@ -191,10 +204,11 @@ def parse_when(s: str) -> tuple[bool, date | datetime]:
     """A CLI date/time string -> (all_day, value). Accepts 'today' / 'tomorrow' / 'YYYY-MM-DD'
     (all-day) or 'YYYY-MM-DDTHH:MM' (timed, in the local zone). Raises ValueError otherwise."""
     s = s.strip()
+    today = datetime.now(tz()).date()  # the configured zone, not the host's
     if s == "today":
-        return True, date.today()
+        return True, today
     if s == "tomorrow":
-        return True, date.today() + timedelta(days=1)
+        return True, today + timedelta(days=1)
     if "T" in s:
         dt = datetime.fromisoformat(s)
         return False, (dt.replace(tzinfo=tz()) if dt.tzinfo is None else dt)

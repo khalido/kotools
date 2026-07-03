@@ -13,6 +13,7 @@ not the dotfile-synced config dir. Flat files, no DB: listable, grepable, portab
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -63,21 +64,23 @@ def save(session_id: str, agent: str, messages: list) -> Path:
             created = json.loads(path.read_text()).get("created_at", created)
         except (OSError, ValueError):
             pass
-    path.write_text(
-        json.dumps(
-            {
-                "id": session_id,
-                "agent": agent,
-                "model": _model(msgs),
-                "title": _title(msgs),
-                "created_at": created,
-                "updated_at": _now(),
-                "tags": [],
-                "messages": msgs,
-            },
-            indent=2,
-        )
+    payload = json.dumps(
+        {
+            "id": session_id,
+            "agent": agent,
+            "model": _model(msgs),
+            "title": _title(msgs),
+            "created_at": created,
+            "updated_at": _now(),
+            "tags": [],
+            "messages": msgs,
+        },
+        indent=2,
     )
+    # atomic: this is rewritten every REPL turn — a crash mid-write must not corrupt the file
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(payload)
+    os.replace(tmp, path)
     return path
 
 

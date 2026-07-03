@@ -11,13 +11,28 @@ from pathlib import Path
 
 import typer
 
+from contextlib import contextmanager
+
+from googleapiclient.errors import HttpError
+
 from . import gcal as gcal_mod
 from . import gdocs as gdocs_mod
 from . import gdrive as gdrive_mod
 from . import gmail as gmail_mod
 from . import google_auth
 from . import gsheets as gsheets_mod
-from ._cli_shared import _die, _no_results, app
+from ._cli_shared import _die, _no_results, _tsv_cell, app
+
+
+@contextmanager
+def _google_errors(as_json: bool = False):
+    """One net for every Google failure mode: a domain error (403/404), a stray HttpError
+    (400 bad range, 429 quota, 5xx), or AuthError (missing client file / first-run). Turns
+    all of them into a clean `_die` line instead of a raw traceback."""
+    try:
+        yield
+    except (google_auth.GoogleError, google_auth.AuthError, HttpError) as e:
+        _die(str(e), as_json=as_json)
 
 # --- sub-apps ---
 
@@ -99,9 +114,10 @@ def _emit_rows(rows: list[list], as_json: bool) -> None:
     if as_json:
         typer.echo(json.dumps(rows, default=str))
         return
-    # Default: TSV — survives commas, pipes into cut/awk/mlr cleanly
+    # Default: TSV — survives commas, pipes into cut/awk/mlr cleanly. Cells are sanitized so a
+    # multi-line sheet cell (common) doesn't split one logical row across two output lines.
     for row in rows:
-        typer.echo("\t".join("" if c is None else str(c) for c in row))
+        typer.echo("\t".join(_tsv_cell(c) for c in row))
 
 
 def _parse_cells(text: str) -> list[list]:
@@ -146,14 +162,15 @@ def _gsheets_account(
 @gsheets_app.command("info")
 def gsheets_info(
     spreadsheet_id: str = typer.Argument(
-        ..., help="Google Sheet ID (the part between /d/ and /edit in the URL)"
+        ..., help="Google Sheet ID or URL (the part between /d/ and /edit)"
     ),
     as_json: bool = typer.Option(
         False, "--json", help="emit JSON instead of plain text"
     ),
 ) -> None:
     """Show a sheet's title and tab names."""
-    info = gsheets_mod.get_info(spreadsheet_id)
+    with _google_errors(as_json):
+        info = gsheets_mod.get_info(gsheets_mod.sheet_id(spreadsheet_id))
     if as_json:
         typer.echo(json.dumps(asdict(info)))
         return
@@ -164,14 +181,12 @@ def gsheets_info(
 
 @gsheets_app.command("tabs")
 def gsheets_tabs(
-    spreadsheet_id: str = typer.Argument(..., help="Google Sheet ID"),
+    spreadsheet_id: str = typer.Argument(..., help="Google Sheet ID or URL"),
     as_json: bool = typer.Option(False, "--json", help="emit a JSON array of tab names"),
 ) -> None:
     """List tab names, one per line (machine-friendly)."""
-    try:
-        info = gsheets_mod.get_info(spreadsheet_id)
-    except gsheets_mod.SheetsError as e:
-        _die(str(e), as_json=as_json)
+    with _google_errors(as_json):
+        info = gsheets_mod.get_info(gsheets_mod.sheet_id(spreadsheet_id))
     if as_json:
         typer.echo(json.dumps(info.tabs))
         return
@@ -181,7 +196,7 @@ def gsheets_tabs(
 
 @gsheets_app.command("get")
 def gsheets_get(
-    spreadsheet_id: str = typer.Argument(..., help="Google Sheet ID"),
+    spreadsheet_id: str = typer.Argument(..., help="Google Sheet ID or URL"),
     range_name: str = typer.Argument(
         ..., help="A1 range, e.g. 'Jobs!A4:T10' or \"'New biz props'!A4:S100\""
     ),
@@ -200,7 +215,10 @@ def gsheets_get(
         typer.echo("--raw and --formula are mutually exclusive", err=True)
         raise typer.Exit(2)
     render = "UNFORMATTED_VALUE" if raw else "FORMULA" if formula else "FORMATTED_VALUE"
-    rows = gsheets_mod.get_range(spreadsheet_id, range_name, value_render=render)
+    with _google_errors(as_json):
+        rows = gsheets_mod.get_range(
+            gsheets_mod.sheet_id(spreadsheet_id), range_name, value_render=render
+        )
     _emit_rows(rows, as_json)
 
 
@@ -286,7 +304,7 @@ def gsheets_find(
         typer.echo(json.dumps([{"tab": t, "ref": ref, "cell": cell} for t, ref, cell in hits]))
         return
     for t, ref, cell in hits:
-        typer.echo(f"{t}\t{ref}\t{cell}")
+        typer.echo(f"{t}\t{ref}\t{_tsv_cell(cell)}")
 
 
 @gsheets_app.command("header")

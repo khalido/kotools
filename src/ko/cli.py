@@ -6,7 +6,7 @@ from pathlib import Path
 
 import typer
 
-from ._cli_shared import app, _die, _no_results, _fmt_day  # noqa: F401 — re-exported for tests
+from ._cli_shared import app, _die, _no_results, _fmt_day, _tsv_cell  # noqa: F401 — re-exported for tests
 from . import cli_google, cli_web, cli_ai  # noqa: F401  — triggers sub-app self-registration
 
 # These sub-app objects are needed by main()'s bare-arg dispatcher.
@@ -68,6 +68,14 @@ def doctor() -> None:
     rows: list[tuple[str, str, str, tuple[str, str]]] = [
         ("hn", "Hacker News top/search/comments", "—", ("✓ no auth", "green")),
         ("hf", "HF papers: daily feed, search, metadata", "—", ("✓ no auth", "green")),
+        (
+            "papers",
+            "cross-publisher paper search + citation graph",
+            "S2_API_KEY (optional: tldr/similar)",
+            env("S2_API_KEY")
+            if config.key_source("S2_API_KEY")
+            else ("– optional", "yellow"),
+        ),
         (
             "fetch",
             "URL → markdown (articles, PDFs, Wayback)",
@@ -196,44 +204,49 @@ def _cmd_label(args: list[str]) -> str:
     return head
 
 
+def _route(args: list[str]) -> list[str]:
+    """Deterministic bare-argument routing (explicit command names always win). Pure:
+    takes the args after the program name, returns the rewritten list. Shortcuts:
+    `help` trailing == `--help` at any level; `ko <url>` -> `fetch <url>`; `ko <file>` ->
+    `doc <file>`; `ko x <name>` -> `x list <name>`; `ko tt <name>` -> `tt items <name>`;
+    `ko publish [dir]` -> `publish up [dir]`."""
+    args = list(args)
+    # `help` as a trailing word == --help (`ko help`, `ko exa search help`). To *search* the
+    # literal word "help", use the flag form instead — `ko exa search --help` is help.
+    if args and args[-1] == "help" and "--help" not in args and "-h" not in args:
+        args[-1] = "--help"
+    if not args or args[0].startswith("-"):
+        return args
+    known = {g.name for g in app.registered_groups} | {
+        c.name for c in app.registered_commands
+    }
+    if args[0].startswith(("http://", "https://")):
+        args.insert(0, "fetch")
+    elif args[0] not in known and Path(args[0]).is_file():
+        args.insert(0, "doc")
+    elif args[0] == "x" and len(args) > 1 and not args[1].startswith("-"):
+        if args[1] not in {c.name for c in x_app.registered_commands}:
+            args.insert(1, "list")
+    elif args[0] == "tt" and len(args) > 1 and not args[1].startswith("-"):
+        if args[1] not in {c.name for c in tt_app.registered_commands}:
+            args.insert(1, "items")  # `ko tt Shopping` -> `ko tt items Shopping`
+    elif args[0] == "publish":
+        pub_known = {c.name for c in publish_app.registered_commands}
+        # `ko publish` / `ko publish ./dir` / `ko publish -n foo` -> `... up ...`,
+        # but leave subcommands and `--help` to the group.
+        if not args[1:] or (args[1] not in pub_known and args[1] not in ("--help", "-h")):
+            args.insert(1, "up")
+    return args
+
+
 def main() -> None:
-    """Entry point with deterministic bare-argument shortcuts (command names
-    always win): `ko paper.pdf` routes to `ko doc`, and `ko x ai` routes to
-    `ko x list ai` (anything after `x` that isn't an x command is a list name).
-    """
+    """Entry point with deterministic bare-argument shortcuts (see `_route`): `ko paper.pdf`
+    routes to `ko doc`, `ko x ai` to `ko x list ai`, `ko <url>` to `ko fetch <url>`."""
     import os
     import sys
     import time
 
-    args = sys.argv[1:]
-    # `help` as a trailing word == --help, so you can slap it on any command:
-    # `ko help`, `ko exa help`, `ko exa search help`. (To *search* for the literal word
-    # "help", use the flag form for help instead — `ko exa search --help` is help.)
-    if args and args[-1] == "help" and "--help" not in args and "-h" not in args:
-        sys.argv[-1] = "--help"
-        args = sys.argv[1:]
-    if args and not args[0].startswith("-"):
-        known = {g.name for g in app.registered_groups} | {
-            c.name for c in app.registered_commands
-        }
-        if args[0].startswith(("http://", "https://")):
-            sys.argv.insert(1, "fetch")
-        elif args[0] not in known and Path(args[0]).is_file():
-            sys.argv.insert(1, "doc")
-        elif args[0] == "x" and len(args) > 1 and not args[1].startswith("-"):
-            x_known = {c.name for c in x_app.registered_commands}
-            if args[1] not in x_known:
-                sys.argv.insert(2, "list")
-        elif args[0] == "tt" and len(args) > 1 and not args[1].startswith("-"):
-            tt_known = {c.name for c in tt_app.registered_commands}
-            if args[1] not in tt_known:
-                sys.argv.insert(2, "items")  # `ko tt Shopping` -> `ko tt items Shopping`
-        elif args[0] == "publish":
-            pub_known = {c.name for c in publish_app.registered_commands}
-            # `ko publish` / `ko publish ./dir` / `ko publish -n foo` -> `... up ...`,
-            # but leave subcommands and `--help` to the group.
-            if not args[1:] or (args[1] not in pub_known and args[1] not in ("--help", "-h")):
-                sys.argv.insert(2, "up")
+    sys.argv[1:] = _route(sys.argv[1:])
     if os.environ.get("_KO_COMPLETE"):  # shell-completion run — never log it
         app()
         return

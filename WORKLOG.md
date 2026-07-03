@@ -2,6 +2,40 @@
 
 Newest first. Big picture only — git commits have the detail; candidate ideas and decisions live in `docs/ideas.md`.
 
+## 2026-07-03 (later) — deps + Fable-review fixes
+
+- **Dep upgrade**: pydantic-ai-slim/pydantic-graph 2.0.0b7 → **2.4.0 stable** (dropped the beta-pin block + explicit pydantic-graph pin — transitive-only); exa-py 2.14→2.16, liteparse 2.1→2.4, openai/google-genai/mcp/typer bumps. Migrated `exa.py` off the deprecated `search_and_contents()` → `search(contents=…)`.
+- **httpx2 decision: WAIT** (not migrating). pydantic-ai main (v2.4.0) still pins `httpx>=0.27`; a full migration lives only on the unmerged `origin/use-httpx2` branch. Migrating now would split httpx/httpx2 exception types across our `except` boundaries. Watch for that branch merging + `httpx2` in `pydantic_ai_slim/pyproject.toml`.
+- **Fable multi-agent review → top findings fixed**:
+  - **Agent contract honored**: wrapped the bare command bodies (`fetch`, `doc`, `llm`, `agent research/tv`, `tt`, `gsheets info/get`) in catch→`_die` so they emit a clean stderr line + right exit code instead of a raw traceback. `_die` now maps `code="usage"`→exit 2 (AGENTS.md). Shared `_google_errors` net catches GoogleError/AuthError/stray HttpError (400/429/5xx).
+  - **Security**: `ko mcp servers --json` now redacts auth/token/key values (it prints env-expanded config → was leaking live secrets to stdout).
+  - **Silent-wrong-answer bugs**: `ko cal` event sort now keys on a parsed aware datetime (was lexicographic on mixed-offset RFC3339 → mis-ordered cross-tz calendars); `parse_when("today"/"tomorrow")` uses the configured zone, not the host's.
+  - **Silent truncation surfaced**: `hn item` reports the true comment total (note "showing N of M"); `exa get` notes URLs that returned no content.
+  - **Smaller**: token files chmod 0600 (hold refresh tokens); `papers.py` DOI regex `[^\s?#]+` (matches fetch, drops utm junk); `x.py` guards a None `data` on unknown handle; `gdrive` escapes Drive-query name literals; `_try` re-raises programming errors instead of masking them as "source unavailable".
+  - **Round 2 (more simple wins)**: `gsheets info/tabs/get` now actually accept a URL (applied `sheet_id()` — help claimed URL support, code didn't); `arxiv.fetch` surfaces arxiv2md's own error instead of a bare CalledProcessError; subprocess timeouts on `npm install` (5 min) + `wrangler deploy` (3 min) so an agent can't hang; atomic writes (temp + `os.replace`) for session files (rewritten every REPL turn) + the OpenRouter model cache; extracted the bare-arg dispatch into a pure, tested `_route()`. **+12 tests total → 172 passing** (incl. the previously-untested `_route`/`_cmd_label` — the privacy-label contract now has assertions).
+  - **TSV integrity**: shared `_tsv_cell` sanitizer (tab→`\t`, newline→`\n`) applied to `gsheets get`/`find` output — a multi-line sheet cell no longer splits one logical row across two output lines; exa search titles collapse stray newlines too. +1 test → 173 passing.
+  - Deferred (noted, not done): publish cluster (SPA-rewrite on `--md` rename, registry/takeover guards, JSONC regex), the duplicated httpx `_get` helpers, `--json` error shape across the remaining cal/gmail/gdocs commands, `gmail view/thread --json`. **lru_cache account key**: intentionally left — see below (a non-bug for the bash-driven CLI; only matters for in-process account switching).
+
+## 2026-07-03
+
+- **`ko papers` shipped** — cross-publisher literature scouting per `docs/papers-cli-design.md`
+  (built as designed, same day the design settled):
+  - `search|get|cites|refs|similar`; OpenAlex backbone (no key, `mailto` polite pool),
+    S2 tldr/similar behind optional `S2_API_KEY` (keyless S2 429s immediately — degrades gracefully).
+  - `get` = full text via the OA copy through the existing fetch/liteparse pipeline, else a
+    metadata card (authors, journal, tldr, abstract reconstructed from `abstract_inverted_index`).
+  - **DOI routing in `ko fetch`**: doi.org URLs resolve OpenAlex's `oa_url` (= Unpaywall data)
+    before the publisher landing page — verified live on a Nature DOI that previously returned nothing.
+  - Research agent gains `papers_search` + `papers_cites` (citation graph) in the papers toolset.
+  - Zero new deps. ⚠️ live finding: some OpenAlex DOI records are bad merges (right abstract,
+    wrong title/author — e.g. `10.1002/jemt.20118`); workaround is search-by-title → W-id.
+  - **Post-ship (Sonnet-agent review): multi-candidate full-text chain.** `get` now walks
+    every OA location (`best_oa_location`/`locations[].pdf_url`, direct PDFs first, landing
+    page last) instead of OpenAlex's single `oa_url` pick — so a publisher bot-block (MDPI,
+    Nature) falls through to a repository/arXiv/OSTI copy. `Work.full_text_urls` property.
+    Considered but deferred per owner: EZproxy deep-link print (no uni login yet), `--scihub`
+    opt-in (OA chain covers more than expected first).
+
 ## 2026-06-25
 
 - **`ko publish` hardening + scaffold polish** (post-Opus-review on the `--hono` tier):

@@ -39,6 +39,10 @@ UA = {"User-Agent": "kotools/0.1 (+https://github.com/khalido/kotools)"}
 _ARXIV_RE = re.compile(r"arxiv\.org/(?:abs|html)/(\d{4}\.\d{4,5})(?:v\d+)?")
 # Below this, arxiv2md's output is just a scaffold (no HTML render) → fall back to the PDF.
 _ARXIV_MIN_CHARS = 2000
+# DOI links (doi.org URLs, doi: prefix, or a bare DOI) — publisher landing pages 403
+# or extract to nothing, so resolve the open-access copy via OpenAlex first.
+# [^\s?#] stops before query strings/fragments (?utm=… isn't part of the DOI).
+_DOI_RE = re.compile(r"(?:doi\.org/|doi:|^)(10\.\d{4,}/[^\s?#]+)", re.I)
 
 
 @dataclass
@@ -167,6 +171,22 @@ def fetch(
         return _archive_is(url)
     if archive:
         return _wayback(url, date)
+    if doi_m := _DOI_RE.search(url):
+        # try the OA copy (OpenAlex = Unpaywall's data) before the publisher's landing page
+        doi = doi_m.group(1)
+        from . import papers as papers_mod
+
+        try:
+            oa = papers_mod.oa_url(doi)
+        except Exception:
+            oa = ""
+        if oa and oa != url:
+            try:
+                r = fetch(oa, save=save)
+                r.note = f"doi:{doi} → {oa}" + (f"; {r.note}" if r.note else "")
+                return r
+            except Exception:
+                pass  # OA copy bot-blocked or dead → fall through to the landing page
 
     try:
         # ask for markdown — agent-optimized servers (e.g. Cloudflare's markdown-for-agents)

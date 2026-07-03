@@ -22,6 +22,29 @@ def test_parse_when():
     assert gcal.parse_when("tomorrow")[0] is True
 
 
+def test_start_key_orders_mixed_offsets_and_allday():
+    # a UTC-marked event at 23:30 is *later* in real time than a +10:00 event at 09:00 the
+    # next local morning; naive string sort gets this wrong ('...Z' vs '...+10:00'). All-day
+    # anchors to local midnight (a day+ before either), so it sorts first regardless of tz.
+    def ev(start: str) -> gcal.CalEvent:
+        return gcal.CalEvent(
+            id="", summary="", start=start, end="", all_day=len(start) == 10,
+            calendar_id="", calendar_name="",
+        )
+
+    events = [
+        ev("2026-06-27T09:00:00+10:00"),  # = 2026-06-26 23:00 UTC
+        ev("2026-06-26T23:30:00Z"),        # 30 min later in real time
+        ev("2026-06-26"),                  # all-day → local midnight, the earliest
+    ]
+    ordered = [e.start for e in sorted(events, key=gcal._start_key)]
+    assert ordered == [
+        "2026-06-26",
+        "2026-06-27T09:00:00+10:00",
+        "2026-06-26T23:30:00Z",
+    ]
+
+
 def test_event_mapping_timed_and_all_day():
     timed = gcal._event(
         {

@@ -159,6 +159,8 @@ def _user_id(handle: str) -> str:
     if uid := cache.get("users", {}).get(handle):
         return uid
     resp = _client().users.get_by_username(username=handle)
+    if not getattr(resp, "data", None):  # unknown/suspended handle → data is None
+        raise RuntimeError(f"no X user @{handle}")
     uid = str(resp.data.id)
     cache.setdefault("users", {})[handle] = uid
     _cache_write(cache)

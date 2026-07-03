@@ -116,6 +116,14 @@ def _strip_html(text: str) -> str:
     return html.unescape(_TAG_RE.sub("", text)).strip()
 
 
+def _count_comments(children: list[dict]) -> int:
+    """Total text-bearing comments in the full tree — the truth, independent of any display cap."""
+    return sum(
+        (1 if c.get("text") else 0) + _count_comments(c.get("children") or [])
+        for c in children
+    )
+
+
 def _walk(children: list[dict], depth: int, out: list[Comment], limit: int) -> None:
     for child in children:
         if limit and len(out) >= limit:
@@ -144,10 +152,12 @@ def item(
         title=data.get("title") or "",
         url=data.get("url") or None,
         points=data.get("points") or 0,
-        num_comments=0,  # items endpoint doesn't report it; len(comments) is the truth
+        num_comments=0,  # set below to the full-tree total (not the capped count)
         created_at=datetime.fromtimestamp(data["created_at_i"], tz=timezone.utc),
     )
+    children = data.get("children") or []
     comments: list[Comment] = []
-    _walk(data.get("children") or [], 0, comments, max_comments)
-    story.num_comments = len(comments)
+    _walk(children, 0, comments, max_comments)
+    # true total, so a capped result is detectable (len(comments) < num_comments)
+    story.num_comments = _count_comments(children)
     return story, comments

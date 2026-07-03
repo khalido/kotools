@@ -80,7 +80,10 @@ def llm_cmd(
     """One-shot LLM call, no tools: `ko hn item 123 | ko llm "summarize the debate"`."""
     llm_mod.refresh_openrouter_models()  # keeps -m autocomplete catalog fresh (once/day)
     stdin = None if sys.stdin.isatty() else sys.stdin.read()
-    typer.echo(llm_mod.run(prompt, stdin=stdin, model=model, system=system))
+    try:
+        typer.echo(llm_mod.run(prompt, stdin=stdin, model=model, system=system))
+    except Exception as e:
+        _die(str(e))
 
 
 @app.command("models")
@@ -113,10 +116,17 @@ def agent_research(
     ),
 ) -> None:
     """Research agent across web (exa), papers (arxiv, hf), and HN. No prompt = interactive REPL."""
-    if prompt:
-        research_run(prompt, model=model, resume=resume)  # prints itself; resume continues a session
-    else:
-        research_repl(model=model, resume=resume)
+    try:
+        if prompt:
+            research_run(prompt, model=model, resume=resume)  # prints itself; resume continues a session
+        else:
+            research_repl(model=model, resume=resume)
+    except FileNotFoundError:
+        _die(f"no saved session {resume!r} — see `ko agent sessions`")
+    except typer.Exit:
+        raise
+    except Exception as e:
+        _die(str(e))
 
 
 @agent_app.command("tv")
@@ -130,10 +140,17 @@ def agent_tv(
     ),
 ) -> None:
     """TV/movie agent — what to watch in Australia, tuned to Ko. No prompt = interactive REPL."""
-    if prompt:
-        tv_run(prompt, model=model, resume=resume)
-    else:
-        tv_repl(model=model, resume=resume)
+    try:
+        if prompt:
+            tv_run(prompt, model=model, resume=resume)
+        else:
+            tv_repl(model=model, resume=resume)
+    except FileNotFoundError:
+        _die(f"no saved session {resume!r} — see `ko agent sessions`")
+    except typer.Exit:
+        raise
+    except Exception as e:
+        _die(str(e))
 
 
 @agent_app.command("sessions")
@@ -161,13 +178,15 @@ def tt_lists(
     json_out: bool = typer.Option(False, "--json", help="JSON instead of TSV"),
 ) -> None:
     """List your TickTick lists (TSV: id, name)."""
-    projects = ticktick_mod.list_projects()
+    try:
+        projects = ticktick_mod.list_projects()
+    except Exception as e:
+        _die(str(e), as_json=json_out)
+    if not projects:
+        _no_results("no lists", json_out)
     if json_out:
         _emit_json(projects)
         return
-    if not projects:
-        typer.echo("no lists", err=True)
-        raise typer.Exit(0)
     for p in projects:
         typer.echo(f"{p.id}\t{p.name}")
 
@@ -178,17 +197,20 @@ def tt_items(
     json_out: bool = typer.Option(False, "--json", help="JSON instead of TSV"),
 ) -> None:
     """Open tasks in a list (TSV: priority, due, title). `ko tt <list>` is a shortcut."""
-    proj = ticktick_mod.resolve_list(list_name)
-    if not proj:
-        typer.echo(f"no list matching {list_name!r}", err=True)
-        raise typer.Exit(1)
-    tasks = ticktick_mod.get_tasks(proj.id)
+    try:
+        proj = ticktick_mod.resolve_list(list_name)
+        if not proj:
+            _die(f"no list matching {list_name!r}", as_json=json_out, code="not_found")
+        tasks = ticktick_mod.get_tasks(proj.id)
+    except typer.Exit:
+        raise
+    except Exception as e:
+        _die(str(e), as_json=json_out)
+    if not tasks:
+        _no_results(f"{proj.name}: no open tasks", json_out)
     if json_out:
         _emit_json(tasks)
         return
-    if not tasks:
-        typer.echo(f"{proj.name}: no open tasks", err=True)
-        raise typer.Exit(0)
     for t in tasks:
         typer.echo(f"{t.priority}\t{t.due or '—'}\t{t.title}")
 
@@ -560,6 +582,22 @@ def mcp_auth_info(
     typer.echo("\n✓ discovery surface looks well-formed", err=True)
 
 
+def _redact_server(cfg: dict) -> dict:
+    """Copy a server config with secret-bearing header/env values masked. (A URL with inline
+    userinfo/`?api_key=` isn't touched — don't put secrets in mcp.json URLs; use headers.)
+    `ko mcp inspect -H` is how you pass a real token deliberately; `servers --json` never leaks one."""
+    SECRET_KEYS = ("authorization", "token", "api-key", "apikey", "key", "secret", "password")
+    out = dict(cfg)
+    for field in ("headers", "env"):
+        d = cfg.get(field)
+        if isinstance(d, dict):
+            out[field] = {
+                k: ("***" if any(s in k.lower() for s in SECRET_KEYS) else v)
+                for k, v in d.items()
+            }
+    return out
+
+
 @mcp_app.command("servers")
 def mcp_servers(
     as_json: bool = typer.Option(False, "--json", help="emit JSON"),
@@ -573,7 +611,9 @@ def mcp_servers(
     if not servers:
         _no_results("no servers in ~/.config/ko/mcp.json (add an `mcpServers` object)", as_json)
     if as_json:
-        typer.echo(json.dumps(servers))
+        # load_servers() expands ${ENV} placeholders, so headers/env carry live secrets —
+        # redact them before printing to stdout (which gets piped/logged).
+        typer.echo(json.dumps({n: _redact_server(c) for n, c in servers.items()}))
         return
     for name, cfg in sorted(servers.items()):
         if cfg.get("command"):

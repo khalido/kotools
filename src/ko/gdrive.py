@@ -221,8 +221,11 @@ def ensure_folder(name: str, parent_id: str | None = None) -> str:
     """Find-or-create a Drive folder by name; return its ID. Only sees folders `ko` itself made
     (drive.file), which is exactly the set we'd want to reuse. `parent_id` nests it; else root."""
     parent = _folder_id(parent_id) if parent_id else None
+    # escape the name for a Drive query string literal — an apostrophe would otherwise
+    # break the query (or inject a clause)
+    safe_name = name.replace("\\", "\\\\").replace("'", "\\'")
     q = (
-        f"mimeType='{FOLDER_MIME}' and name='{name}' and trashed=false"
+        f"mimeType='{FOLDER_MIME}' and name='{safe_name}' and trashed=false"
         + (f" and '{parent}' in parents" if parent else "")
     )
     svc = get_drive_service(readonly=False)

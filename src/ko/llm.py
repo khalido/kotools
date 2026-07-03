@@ -105,7 +105,9 @@ def refresh_openrouter_models(ttl: int = _OPENROUTER_TTL, *, force: bool = False
     except Exception:
         return cached_openrouter_models()
     models = sorted(f"openrouter:{m['id']}" for m in data)
-    path.write_text(json.dumps({"models": models}))
+    tmp = path.with_suffix(".tmp")  # atomic: a crash mid-write must not corrupt the cache
+    tmp.write_text(json.dumps({"models": models}))
+    os.replace(tmp, path)
     return models
 
 

@@ -10,7 +10,8 @@ import typer
 
 # The root Typer app — imported by all group modules so they can self-register.
 app = typer.Typer(
-    help="ko — Ko's opinionated CLI (exa, arxiv, gsheets, doc, agent).",
+    help="ko — Ko's opinionated CLI: web/papers (exa, fetch, arxiv, hf, papers, hn), "
+    "Google (gsheets, gdocs, cal, gmail), llm/agents, publish, and more. `ko doctor` for setup.",
     no_args_is_help=True,
     # Agents drive ko over bash: a clean one-line error on stderr + exit 1 is parseable;
     # Typer's default colorized multi-frame traceback box is not. We catch expected errors
@@ -24,14 +25,19 @@ def _emit_json(items: list) -> None:
     typer.echo(json.dumps([asdict(i) for i in items], default=str))
 
 
-def _die(msg: str, *, as_json: bool = False, code: str = "error") -> NoReturn:
-    """Runtime-error exit: a JSON error object to stderr under --json, else plain text; exit 1.
-    Keeps stdout clean so a downstream `... | jq` never sees a half-message."""
+def _die(
+    msg: str, *, as_json: bool = False, code: str = "error", exit_code: int | None = None
+) -> NoReturn:
+    """Error exit: a JSON error object to stderr under --json, else plain text.
+    Exit code follows AGENTS.md — `code="usage"` → 2, everything else → 1 (override with
+    exit_code). Keeps stdout clean so a downstream `... | jq` never sees a half-message."""
     if as_json:
         typer.echo(json.dumps({"error": msg, "code": code}), err=True)
     else:
         typer.echo(msg, err=True)
-    raise typer.Exit(1)
+    if exit_code is None:
+        exit_code = 2 if code == "usage" else 1
+    raise typer.Exit(exit_code)
 
 
 def _no_results(note: str, as_json: bool) -> NoReturn:
@@ -41,6 +47,17 @@ def _no_results(note: str, as_json: bool) -> NoReturn:
         typer.echo("[]")
     typer.echo(note, err=True)
     raise typer.Exit(0)
+
+
+def _tsv_cell(value) -> str:
+    """One value rendered safe for a single TSV field: an embedded tab or newline would
+    otherwise split the field / spill the row onto the next line (silently mis-shaping the
+    output an agent parses with `cut -f`). Tabs → `\\t`, newlines → `\\n`; content preserved,
+    one row stays one line. `None` → ''."""
+    if value is None:
+        return ""
+    s = str(value).replace("\r\n", "\n").replace("\r", "\n")
+    return s.replace("\t", "\\t").replace("\n", "\\n")
 
 
 def _fmt_day(iso: str | None) -> str:

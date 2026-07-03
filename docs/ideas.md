@@ -31,8 +31,35 @@ The single list of candidate subcommands. WORKLOG tracks what happened; this tra
 - [x] **`ko llm "<prompt>"`** — SHIPPED 2026-06-13 per the settled design: model-less v2 Agent + per-run `model=`, default `google:gemini-3.5-flash` (`KO_DEFAULT_MODEL`; note v2 renamed the prefix — `google-gla:` is gone), stdin appended as `<input>` block, `-s` swaps system prompt, no tools ever. `-m` tab-completion via `known_model_names()` filtered to providers with env keys set (OpenRouter live-catalog completion still future).
 - [x] **`ko x search|list|lists`** — SHIPPED 2026-06-12 (untested live — no X_BEARER_TOKEN in env yet; ⚠️ verify tier covers reads on first run: free is ~write-only, Basic is the read floor; fallback if reads are off-plan: xai-sdk's `x_search` Grok digest). Official XDK. `search` = recent index (~7 days), author expansion, `--top`. `list <name>` = posts from my list by name, owned+followed, case-insensitive, name→id cached at `~/.config/ko/x_cache.json`; bare `ko x ai` sugar via the main() dispatcher. Home timeline deliberately absent: needs OAuth user-context, not app-only bearer.
 - [x] **Bare-link shortcut: `ko <url>`** — SHIPPED 2026-06-13 with fetch. — paste a link as the only arg, ko detects it's a URL (deterministic: scheme/domain pattern, no LLM) and routes to `ko fetch`, which sniffs YouTube/PDF/article/dead-link under the hood. The "I just want the markdown of this thing" zero-thought path.
+- [x] **`ko papers search|get|cites|refs|similar`** — SHIPPED 2026-07-03 as designed (`docs/papers-cli-design.md`): OpenAlex backbone (no key), S2 tldr/similar behind optional `S2_API_KEY`, DOI routing in `fetch.py` (doi.org URLs → OA copy first — verified live on a Nature DOI that previously extracted to nothing), `papers_search`/`papers_cites` added to the research agent's toolset. Zero new deps. ⚠️ found live: occasional OpenAlex bad-merge records (wrong title, right abstract) — search the title and use the W-id when a record looks off.
 
 ## Backlog (priority order; library picks researched 2026-06-11)
+
+- [ ] **`ko publish` hardening** — deferred from the 2026-07-03 Fable review (real, non-urgent):
+  - **`deploy` rewrites `--md` sites to SPA mode** (`publish.py` `ensure_config` defaults `spa=True`;
+    md scaffolds are `spa=False`) — renaming an md site silently breaks its 404 handling (every bad
+    `?page=` serves index.html). Behavioral bug, most worth fixing.
+  - **Registry not recorded when the URL is unparseable** (`if url:` guard) → poisons the *next*
+    deploy with a false "already a Worker, use --force".
+  - **Takeover guard disarms for `wrangler login` users** (`worker_exists` returns `None` without API
+    creds) — the "won't silently take over" promise holds only in the token path.
+  - **JSONC name parsed with a first-match regex** — fine for scaffolded files, unsafe for the
+    hand-edited D1/R2 configs the module invites.
+  - (Done in that pass: subprocess timeouts on npm/​wrangler.)
+- [ ] **Shared `http.get_json()` helper** — hn/hf/papers/tmdb each hand-roll a near-identical httpx
+  `_get` (now over the CLAUDE.md "three things" bar). One chokepoint = one place for timeout/retry
+  policy, and makes a future `import httpx2 as httpx` swap a one-file change. (httpx2 = Pydantic's
+  maintained httpx successor; **wait to migrate** — pydantic-ai still pins plain `httpx` as of v2.4,
+  the move lives only on its unmerged `use-httpx2` branch. Trigger: that branch shipping in a release.)
+- [ ] **`ko papers bib <id>` / `ko papers watch`** — extensions to the shipped `ko papers`
+  (lab-motivated but generic, noted 2026-07-03): `bib` = DOI→BibTeX (doi.org content
+  negotiation `Accept: application/x-bibtex`, or from OpenAlex fields; ~flag-sized).
+  `watch` = saved queries + only-new-since-last-check (OpenAlex `from_publication_date`
+  + state file in `~/.local/state/ko`); "RSS for papers", cron+`ko ai` digestible.
+- [ ] **`ko dataset get <doi|zenodo-id>`** — research-dataset fetcher. Zenodo REST is
+  keyless (`/api/records/{id}` → files + checksums): list, selectively download,
+  verify. figshare/OSF later behind the same verb. First real use: the 2DMatGMM
+  in-focus set (10.5281/zenodo.8042834) for the UTS autofocus benchmark.
 
 - [ ] **`ko yt <url>`** — YouTube → transcript / summary.
   - Transcript: **youtube-transcript-api** (v1.2.4) — hits YouTube's transcript endpoint directly, no video download; auto-captions, manual subs, translation. (yt-dlp is overkill for transcript-only.)

@@ -11,6 +11,7 @@ Current subcommands:
 - `ko exa` — semantic web search + URL → markdown (via [Exa](https://exa.ai))
 - `ko arxiv` — arxiv search + paper-to-markdown
 - `ko hf` — Hugging Face [paper pages](https://huggingface.co/papers): daily feed, semantic search, metadata, markdown (no auth)
+- `ko papers` — cross-publisher paper search + citation graph (via [OpenAlex](https://openalex.org); no auth): `search` · `get` (full text if open-access, else metadata card) · `cites`/`refs` · `similar` (needs free `S2_API_KEY`)
 - `ko hn` — Hacker News top stories, search, comment trees (via [Algolia](https://hn.algolia.com/api); no auth)
 - `ko doc` — PDF/Office/image → plain text (via [liteparse](https://developers.llamaindex.ai/liteparse/); local, fast, no models)
 - `ko x` — search recent X posts (via the official [XDK](https://docs.x.com/xdks/python/overview); needs a paid API tier for reads)
@@ -52,8 +53,9 @@ Keys live in environment variables (shell profile or `.env`) or in `~/.config/ko
 | `X_BEARER_TOKEN` | `ko x` | 💰 | X API v2 Bearer Token. Reads need a paid tier (free is ~write-only). [developer.x.com](https://developer.x.com) |
 | `TMDB_READ_ACCESS_TOKEN` | `ko tv` | free | v4 Read Access Token from [TMDB settings](https://www.themoviedb.org/settings/api). |
 | `TICKTICK_API_KEY` | `ko tt` | (TickTick sub) | TickTick app → Account → MCP → generate. Read-only here. |
+| `S2_API_KEY` | `ko papers` (optional) | free | [Semantic Scholar](https://www.semanticscholar.org/product/api) key — adds `tldr` + `similar`; everything else works keyless. |
 | — (Google OAuth) | `ko gsheets` | free | Not a key: one-off browser consent, token cached locally. See below. |
-| — | `ko arxiv`, `ko hn`, `ko hf`, `ko doc` | free | No auth at all. |
+| — | `ko arxiv`, `ko hn`, `ko hf`, `ko papers`, `ko doc` | free | No auth at all. |
 
 ## Quick start
 
