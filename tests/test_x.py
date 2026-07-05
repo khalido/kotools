@@ -47,6 +47,68 @@ def test_list_id_cache_hit(monkeypatch, tmp_path):
     assert x._list_id("AI", "ko") == "777"
 
 
+def test_resolve_list_id_url_and_name(monkeypatch, tmp_path):
+    cache = tmp_path / "x_cache.json"
+    cache.write_text('{"lists": {"ko": {"ai": "777"}}}')
+    monkeypatch.setattr(x, "CACHE_FILE", cache)
+    # bare id and URL resolve without any network / name lookup
+    assert x._resolve_list("204975651", "ko") == "204975651"
+    assert x._resolve_list("https://x.com/i/lists/204975651", "ko") == "204975651"
+    assert x._resolve_list("x.com/i/lists/999", "ko") == "999"
+    # a name still routes through the cached name→id map
+    assert x._resolve_list("AI", "ko") == "777"
+
+
+def test_search_routes_recent_vs_archive(monkeypatch):
+    calls = {}
+    empty = SimpleNamespace(includes=None, data=[])
+
+    def rec(**kw):
+        calls["endpoint"] = "recent"
+        return [empty]
+
+    def allt(**kw):
+        calls["endpoint"] = "all"
+        return [empty]
+
+    monkeypatch.setattr(
+        x, "_client", lambda: SimpleNamespace(
+            posts=SimpleNamespace(search_recent=rec, search_all=allt)
+        )
+    )
+    x.search("q", days=7)
+    assert calls["endpoint"] == "recent"  # ≤7 days → recent index
+    x.search("q", days=30)
+    assert calls["endpoint"] == "all"  # >7 days → full-archive
+
+
+def test_parse_handle():
+    assert x._parse_handle("bcherny") == "bcherny"
+    assert x._parse_handle("@bcherny") == "bcherny"
+    assert x._parse_handle("https://x.com/bcherny") == "bcherny"
+    assert x._parse_handle("https://x.com/bcherny/status/123") == "bcherny"
+    assert x._parse_handle("twitter.com/bcherny") == "bcherny"
+
+
+def test_my_lists_handles_dict_items(monkeypatch, tmp_path):
+    # regression: the XDK returns owned/followed list items as plain dicts, not objects
+    cache = tmp_path / "x_cache.json"
+    monkeypatch.setattr(x, "CACHE_FILE", cache)
+    monkeypatch.setattr(x, "_user_id", lambda h: "42")
+    page = SimpleNamespace(
+        data=[{"id": "204975651", "name": "AI", "description": "ml", "member_count": 120}]
+    )  # dict items
+    fake = SimpleNamespace(
+        users=SimpleNamespace(
+            get_owned_lists=lambda **kw: [page],
+            get_followed_lists=lambda **kw: [],
+        )
+    )
+    monkeypatch.setattr(x, "_client", lambda: fake)
+    lists = x.my_lists("ko")
+    assert [(lst.id, lst.name, lst.member_count) for lst in lists] == [("204975651", "AI", 120)]
+
+
 def test_collect_caps_at_n():
     page = SimpleNamespace(
         includes=SimpleNamespace(users=[SimpleNamespace(id=1, username="a")]),

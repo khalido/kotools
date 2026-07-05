@@ -1,31 +1,46 @@
 # ko
 
-A personal toolkit for me and my agents to quickly check or grab stuff — papers, posts, sheets, documents, the web — without leaving the terminal.
+**A personal command-line toolkit for the things I look up or grab all day** — papers, X, Hacker News, the web, Google (Sheets/Docs/Calendar/Gmail), documents — **without opening a browser tab.**
 
-Each subcommand wraps the best library or API I found for that job, with the defaults I actually want baked in and only 2–3 flags exposed. Several of the APIs are paid: life is too short to do everything yourself, and at personal scale they cost a few dollars a month. Everything is equally usable by a human skimming `--help` and by an AI agent calling it from bash.
+It's **opinionated, not generic**: each command is a thin wrapper over the *one* library or API I settled on for that job, with my preferred defaults baked in and only a couple of flags exposed. Built so a human skimming `--help` and an **AI agent calling it from bash** get the same clean, pipeable output — plain text / TSV by default, `--json` when you want structure, errors to stderr. A few of the APIs are paid; at personal scale that's a few dollars a month, and life's too short to reimplement them.
 
-Current subcommands:
+Reach for `ko` when you want the answer, not the website. `ko doctor` shows what's set up; `ko <cmd> --help` is the contract.
 
-- `ko fetch` — URL → clean markdown: articles, PDFs (saved to ~/Downloads + parsed), arxiv links, dead links via Wayback. Shortcut: `ko <url>`
-- `ko llm` — one-shot LLM call, stdin-aware: `ko hn item 123 | ko llm "summarize"`
-- `ko exa` — semantic web search + URL → markdown (via [Exa](https://exa.ai))
-- `ko arxiv` — arxiv search + paper-to-markdown
-- `ko hf` — Hugging Face [paper pages](https://huggingface.co/papers): daily feed, semantic search, metadata, markdown (no auth)
-- `ko papers` — cross-publisher paper search + citation graph (via [OpenAlex](https://openalex.org); no auth): `search` · `get` (full text if open-access, else metadata card) · `cites`/`refs` · `similar` (needs free `S2_API_KEY`)
-- `ko hn` — Hacker News top stories, search, comment trees (via [Algolia](https://hn.algolia.com/api); no auth)
-- `ko doc` — PDF/Office/image → plain text (via [liteparse](https://developers.llamaindex.ai/liteparse/); local, fast, no models)
-- `ko x` — search recent X posts (via the official [XDK](https://docs.x.com/xdks/python/overview); needs a paid API tier for reads)
-- `ko tv` — movie/TV quick check: rating, overview, where to stream (AU default; via [TMDB](https://developer.themoviedb.org))
-- `ko tt` — TickTick lists + tasks (read-only) via its hosted MCP — `ko tt lists`, `ko tt items <list>`
-- `ko gsheets` — read **& write** Google Sheets via OAuth (`get`/`find` · `set`/`put`/`header`/`add-tab`/`new`/`clear`, with overwrite guards)
-- `ko gdocs` — read **& write** Google Docs as Markdown (same OAuth token): `get` a Doc as Markdown (pipe it) · `push` a Markdown file to a **new** Doc, or **update** an existing one in place (diff + confirm) · `replace`/`append` · read `comments` / `reply` · `shade-table` (header/totals)
-- `ko cal` — Google Calendar agenda + quick-add (same token): bare `ko cal` = next 7 days · `day`/`find`/`add`/`cals`
-- `ko gmail` — read Gmail (read-only, same token): bare = recent inbox · `search "<gmail query>"` · `from <who>` · `view <id>` · `thread <id>` (whole conversation)
-- `ko agent` — pydantic-ai agents: `research` (web + papers + HN) and `tv` (what to watch in AU), with saved/resumable sessions
-- `ko prompt [name]` — kickoff briefs: my "how I build X" notes, pulled by name to load into an agent or copy-paste. Bare lists; `ko prompt <name>` prints. Add your own in `~/.config/ko/prompts/*.md`
-- `ko models` — list model strings usable with `-m` (incl. the live OpenRouter catalog)
-- `ko publish` — scaffold a site (static / markdown / Hono worker, optional PIN gate) and deploy it to Cloudflare; `ko publish preview` runs it locally first
-- `ko doctor` — every tool's setup status (keys, binaries, auth) — run this first
+## The tools
+
+| Command | What it does | What I use it for |
+|---|---|---|
+| `ko papers` | cross-publisher search + citation graph ([OpenAlex](https://openalex.org), no key) | "state of the art on X" — find a seed paper, snowball `cites`/`refs` |
+| `ko arxiv` | arxiv relevance search + paper → markdown | pull a specific paper to read or feed an agent |
+| `ko hf` | [HF Daily Papers](https://huggingface.co/papers): trending ML + linked code/models | what's hot in ML today, with repos to try |
+| `ko hn` | Hacker News top / search / comment trees (no key) | practitioner signal + the actual discussion thread |
+| `ko x` | X search, lists, user timelines (official [XDK](https://docs.x.com/xdks/python/overview)) | `ko x ai` = my AI list; search a list back months |
+| `ko exa` | semantic web search + URL → markdown ([Exa](https://exa.ai)) | find posts/lab-pages a keyword search misses |
+| `ko fetch` | any URL → clean markdown (PDF, arxiv, Wayback fallback) | `ko <url>` — read a page or PDF as text |
+| `ko doc` | PDF/Office/image → text, fully local (no models) | `ko report.pdf` — no upload, no key |
+| `ko llm` | one-shot LLM, stdin-aware, never has tools | `… \| ko llm "summarize"` inside a pipe |
+| `ko agent` | pydantic-ai agents (`research` / `tv`), resumable | a question that needs multi-source digging |
+| `ko tv` | movie/TV rating + where to stream ([TMDB](https://developer.themoviedb.org), AU) | "worth watching, and where can I?" |
+| `ko gsheets` | read **& write** Google Sheets (OAuth) | dump/read data + formulas, overwrite-guarded |
+| `ko gdocs` | Markdown ↔ Google Docs + comments | push a proposal `.md` → Doc → read feedback back |
+| `ko cal` | Google Calendar agenda + quick-add | next 7 days; "when was my last dentist?" |
+| `ko gmail` | read Gmail (read-only) | `ko gmail from alice` — inbox triage in the terminal |
+| `ko tt` | TickTick lists + tasks (read-only, via MCP) | `ko tt today` — my open tasks |
+| `ko publish` | scaffold + deploy a site to Cloudflare | ship a landing page / write-up / mini-tool |
+| `ko prompt` | my "how I build X" kickoff briefs | `ko prompt research-papers` → load into an agent |
+
+Utilities: `ko doctor` (setup status — run it first), `ko models` (model strings for `-m`), `ko billing` (credits left), `ko logs`, `ko mcp` (inspect/call MCP servers).
+
+## It composes
+
+Plain text / TSV by default (add `--json` for structure), so `ko` pipes into itself, into `ko llm`, and into standard tools:
+
+```bash
+ko hn item 48480978 | ko llm "summarize the debate; what's the consensus?"
+ko fetch https://example.com/post | ko llm "key claims as bullets"
+ko papers search "retrieval augmented generation" --json | jq -r '.[].doi'
+ko x search "claude code" --list ai --days 90     # my AI list, 3 months back
+```
 
 ## Install
 
@@ -50,70 +65,12 @@ Keys live in environment variables (shell profile or `.env`) or in `~/.config/ko
 | `EXA_API_KEY` | `ko exa`, agents | 💰 | Search $7/1k requests (contents for 10 results included); standalone contents $1/1k pages. [exa.ai](https://exa.ai) |
 | `OPENROUTER_API_KEY` | `ko agent` (default), `ko llm` | 💰 | One key, any model. Default agent model is `openrouter:z-ai/glm-5.2`; `-m` overrides. |
 | `GEMINI_API_KEY` | `ko llm` (default), `ko agent tv` | 💰 | `ko llm` default is `google:gemini-3.5-flash` (`-m`/`KO_DEFAULT_MODEL`); also the `tv` agent's default. |
-| `X_BEARER_TOKEN` | `ko x` | 💰 | X API v2 Bearer Token. Reads need a paid tier (free is ~write-only). [developer.x.com](https://developer.x.com) |
+| `X_BEARER_TOKEN` | `ko x` | 💰 | X API v2 Bearer Token. Pay-per-use since 2026 (prepaid credits, ~$0.005/post read). [developer.x.com](https://developer.x.com) |
 | `TMDB_READ_ACCESS_TOKEN` | `ko tv` | free | v4 Read Access Token from [TMDB settings](https://www.themoviedb.org/settings/api). |
 | `TICKTICK_API_KEY` | `ko tt` | (TickTick sub) | TickTick app → Account → MCP → generate. Read-only here. |
 | `S2_API_KEY` | `ko papers` (optional) | free | [Semantic Scholar](https://www.semanticscholar.org/product/api) key — adds `tldr` + `similar`; everything else works keyless. |
 | — (Google OAuth) | `ko gsheets` | free | Not a key: one-off browser consent, token cached locally. See below. |
 | — | `ko arxiv`, `ko hn`, `ko hf`, `ko papers`, `ko doc` | free | No auth at all. |
-
-## Quick start
-
-```bash
-# papers: discover on HF, read via arxiv (best quality), parse anything else locally
-ko hf top                         # today's Daily Papers by upvotes
-ko hf search "agent memory" --long
-ko hf info 2412.20138             # upvotes, github + stars, linked models/datasets
-ko arxiv search "tool use benchmark" --since 12 --long
-ko arxiv fetch 2604.02460 -o paper.md
-
-# Hacker News
-ko hn top                         # top 10 of the last 24h (hckrnews-style)
-ko hn top --n 20 --days 7         # top 20 of the week
-ko hn search "agent memory" --min-comments 50
-ko hn item 48480978               # story + comment tree (first column of top/search)
-
-# any URL → markdown (free, local extraction; Wayback fallback for dead links)
-ko https://example.com/post       # bare URLs route to fetch
-ko fetch https://x.com/paper.pdf  # PDFs download to ~/Downloads + parse
-ko fetch --archive https://dead-link.com/page   # straight to the Wayback Machine
-
-# one-shot LLM over anything (default: Gemini flash; -m for any model)
-ko hn item 48480978 | ko llm "summarize the debate, what's the consensus?"
-ko fetch https://example.com/post | ko llm "key claims as bullets"
-
-# documents — fully local, no auth
-ko doc report.pdf                 # PDF/Office/image → plain text
-ko report.pdf                     # same: bare file args route to doc
-ko doc slides.pptx -p 1-5 -o slides.txt   # Office needs `brew install --cask libreoffice`
-
-# X — needs X_BEARER_TOKEN (paid tier for reads)
-ko x ai                           # recent posts from your list named "ai"
-ko x lists                        # see your lists
-ko x search "claude code" --top   # search last 7 days by relevancy
-
-# web search — needs EXA_API_KEY
-ko exa search "claude code hooks" --since 3
-ko exa get https://example.com/post       # URL → clean markdown (handles PDF URLs too)
-
-# movies/TV — needs TMDB_READ_ACCESS_TOKEN (free)
-ko tv "dune"                    # rating + overview + where to stream in AU
-ko tv "the bear" --tv -c US     # TV only, US providers
-
-# Google Sheets — read & write, needs one-off OAuth (see below)
-# (example ID is Google's public sample sheet)
-ko gsheets info 1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms
-ko gsheets get 1Bxi... 'Class Data!A1:F6' --json
-ko gsheets find <id> "Smith"                    # search every tab → tab, ref, cell
-ko gsheets set <id> 'Sheet1!A1' '=SUM(B:B)'     # write a cell (formulas parse)
-echo '{"Sheet1!A1": [["Name","Score"],["Ann",9]]}' | ko gsheets put <id>   # bulk write
-ko gdocs get <id>                                # a Google Doc as markdown (pipe to ko llm, etc.)
-ko cal                                          # your next 7 days
-ko cal add "Dentist" 2026-07-01T14:00 -m 30     # add a 30-minute event
-ko cal find dentist --past                      # when was my last dentist appointment?
-ko gmail from alice -n 5                         # recent mail from alice
-ko gmail search "is:unread newer_than:2d"        # unread, last 2 days
-```
 
 ## Google Sheets setup (one-off) — read & write
 

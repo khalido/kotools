@@ -17,7 +17,7 @@ from . import hn as hn_mod
 from . import papers as papers_mod
 from . import tmdb as tmdb_mod
 from . import x as x_mod
-from ._cli_shared import _die, _emit_json, _fmt_day, _no_results, app
+from ._cli_shared import _die, _emit_json, _fmt_day, _no_results, _tsv_cell, app
 
 # --- sub-apps ---
 
@@ -61,11 +61,18 @@ app.add_typer(x_app, name="x")
 @arxiv_app.command("search")
 def arxiv_search(
     query: str = typer.Argument(..., help="arxiv search query"),
+    recent: bool = typer.Option(
+        False,
+        "--recent",
+        "-r",
+        help="sort newest-first instead of by relevance (for browsing an area's latest; "
+        "pair with a category query like 'cat:cs.LG'). Applies an 18-month window.",
+    ),
     since: int = typer.Option(
-        arxiv_mod.DEFAULT_SINCE_MONTHS,
+        None,
         "--since",
         "-s",
-        help="only include papers published within the last N months",
+        help="restrict to the last N months (hard filter in relevance mode)",
     ),
     n: int = typer.Option(
         arxiv_mod.DEFAULT_MAX_RESULTS, "--n", help="max results to return"
@@ -73,13 +80,14 @@ def arxiv_search(
     long: bool = typer.Option(False, "--long", "-l", help="include abstract summary"),
     as_json: bool = typer.Option(False, "--json", help="emit JSON instead of text"),
 ) -> None:
-    """Search arxiv, newest first. Defaults to the last 18 months."""
+    """Search arxiv, relevance-ranked (use --recent for newest-first).
+    Note: arxiv's API is a bit slow (~2-5s). For cross-publisher relevance, `ko papers search`."""
     try:
-        results = arxiv_mod.search(query, since_months=since, max_results=n)
+        results = arxiv_mod.search(query, max_results=n, recent=recent, since_months=since)
     except Exception as e:
         _die(str(e), as_json=as_json)
     if not results:
-        _no_results(f"No results for '{query}' in the last {since} months.", as_json)
+        _no_results(f"No results for '{query}'.", as_json)
     if as_json:
         _emit_json(results)
         return
@@ -432,7 +440,9 @@ def papers_cites(
     n: int = typer.Option(papers_mod.DEFAULT_N, "--n", help="max results"),
     as_json: bool = typer.Option(False, "--json", help="emit JSON instead of TSV"),
 ) -> None:
-    """Papers citing this one, most-cited first — 'who built on it?'"""
+    """Papers citing this one, most-cited first — 'who built on it?'
+    Tip: a famous arXiv paper may be merged into its published record and lose its standalone
+    DOI — if an arxiv id 404s, use the journal DOI, or `ko papers search "<title>"` → W-id."""
     try:
         results = papers_mod.cites(ref, n=n)
     except Exception as e:
@@ -635,20 +645,39 @@ def _echo_posts(posts: list[x_mod.Post], as_json: bool) -> None:
 @x_app.command("search")
 def x_search(
     query: str = typer.Argument(
-        ..., help="X search query (supports operators like from:user, -is:retweet)"
+        ..., help="X search query (supports operators like from:user, list:<id>, -is:retweet)"
+    ),
+    scope_list: str = typer.Option(
+        None, "--list", "-l", help="restrict to a list (name/id/url) — adds list:<id> to the query"
     ),
     n: int = typer.Option(x_mod.DEFAULT_MAX_RESULTS, "--n", help="max posts"),
     days: int = typer.Option(
-        x_mod.DEFAULT_DAYS, "--days", "-d", help="how far back (API max ~7 days)"
+        x_mod.DEFAULT_DAYS,
+        "--days",
+        "-d",
+        help="how far back; >7 switches to full-archive search (years back, costs credits/read)",
     ),
     top: bool = typer.Option(
-        False, "--top", help="sort by relevancy instead of newest first"
+        False, "--top", help="sort by relevancy instead of newest first (≤7-day only)"
     ),
     as_json: bool = typer.Option(False, "--json", help="emit JSON instead of text"),
 ) -> None:
-    """Search recent X posts. Newest first by default."""
+    """Search X posts. ≤7 days uses the recent index; >7 uses full-archive.
+    `--list ai` scopes to a list; `ko x search "claude code" --list ai --days 90`."""
+    q = query
+    if scope_list:
+        try:
+            lid = x_mod._resolve_list(scope_list, x_mod._default_handle())
+        except Exception as e:
+            _die(str(e), as_json=as_json)
+        q = f"{query} list:{lid}"
+    if days > 7:
+        note = f"full-archive search, {days}d back — costs credits per read"
+        if top:
+            note += "; --top ignored (relevancy is recent-index only)"
+        typer.echo(f"[{note}]", err=True)
     try:
-        posts = x_mod.search(query, n=n, days=days, top=top)
+        posts = x_mod.search(q, n=n, days=days, top=top)
     except Exception as e:
         _die(str(e), as_json=as_json)
     if not posts:
@@ -659,12 +688,14 @@ def x_search(
 @x_app.command("list")
 def x_list(
     name: str = typer.Argument(
-        ..., help="list name, case-insensitive (e.g. 'ai'). Shortcut: `ko x ai`"
+        ...,
+        help="list name (yours, e.g. 'ai'; shortcut `ko x ai`), a bare list id, "
+        "or an x.com/i/lists/<id> URL — id/URL read any public list",
     ),
     n: int = typer.Option(x_mod.DEFAULT_LIST_N, "--n", help="max posts"),
     as_json: bool = typer.Option(False, "--json", help="emit JSON instead of text"),
 ) -> None:
-    """Recent posts from one of your X lists, newest first."""
+    """Recent posts from an X list, newest first. By your list name, a list id, or a list URL."""
     try:
         posts = x_mod.list_posts(name, n=n)
     except Exception as e:
@@ -674,20 +705,42 @@ def x_list(
     _echo_posts(posts, as_json)
 
 
+@x_app.command("user")
+def x_user(
+    handle: str = typer.Argument(
+        ..., help="@handle, bare handle, or an x.com/<handle> profile URL"
+    ),
+    n: int = typer.Option(x_mod.DEFAULT_MAX_RESULTS, "--n", help="max posts"),
+    as_json: bool = typer.Option(False, "--json", help="emit JSON instead of text"),
+) -> None:
+    """Recent posts from one user's timeline, newest first (their tweets + retweets).
+    Goes back further than search's ~7-day window. `ko x user bcherny`."""
+    try:
+        posts = x_mod.user_posts(handle, n=n)
+    except Exception as e:
+        _die(str(e), as_json=as_json)
+    if not posts:
+        _no_results(f"No recent posts for {handle!r}.", as_json)
+    _echo_posts(posts, as_json)
+
+
 @x_app.command("lists")
 def x_lists(
     as_json: bool = typer.Option(False, "--json", help="emit JSON instead of TSV"),
 ) -> None:
-    """Your X lists (owned + followed). TSV: id, name."""
+    """Your X lists, biggest first. TSV: id, name, members, description.
+    (Shows lists you own; lists you only *follow* need a higher API tier.)"""
     try:
         lists = x_mod.my_lists()
     except Exception as e:
         _die(str(e), as_json=as_json)
+    if not lists:
+        _no_results("no lists found (or your API tier can't read them)", as_json)
     if as_json:
         _emit_json(lists)
         return
-    for lst in lists:
-        typer.echo(f"{lst.id}\t{lst.name}")
+    for lst in sorted(lists, key=lambda lst: lst.member_count, reverse=True):
+        typer.echo(f"{lst.id}\t{lst.name}\t{lst.member_count}\t{_tsv_cell(lst.description)}")
 
 
 # --- fetch command (root-level) ---

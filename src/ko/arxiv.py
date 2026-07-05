@@ -17,8 +17,8 @@ from datetime import datetime, timedelta, timezone
 import arxiv
 
 
-DEFAULT_SINCE_MONTHS = 18
 DEFAULT_MAX_RESULTS = 20
+DEFAULT_RECENT_SINCE_MONTHS = 18  # date window applied only in --recent (newest-first) mode
 
 
 @dataclass
@@ -38,27 +38,42 @@ class SearchResult:
 
 def search(
     query: str,
-    since_months: int = DEFAULT_SINCE_MONTHS,
     max_results: int = DEFAULT_MAX_RESULTS,
+    recent: bool = False,
+    since_months: int | None = None,
 ) -> list[SearchResult]:
-    """Search arxiv, newest first, stop when results get older than the cutoff.
+    """Search arxiv.
 
-    Defaults bias toward recent work — most of our searches are about what's
-    happening right now. Override since_months for a wider scan.
+    **Relevance-ranked by default** — a topical query ("language model agents")
+    returns the best-matching papers regardless of age. `recent=True` sorts
+    newest-first instead, for browsing what's just dropped in an area (pair it with
+    a category query like `cat:cs.LG`). `since_months` restricts to the last N months
+    — a hard filter in relevance mode, an early-stop in recent mode (default 18 there).
+
+    (Note: date-sort was the old default and it effectively ignored the query — arxiv's
+    API returns newest-overall when sorted by date, so topical searches came back junk.)
     """
-    cutoff = datetime.now(timezone.utc) - timedelta(days=30 * since_months)
-    client = arxiv.Client()
+    if recent and since_months is None:
+        since_months = DEFAULT_RECENT_SINCE_MONTHS
+    cutoff = (
+        datetime.now(timezone.utc) - timedelta(days=30 * since_months)
+        if since_months
+        else None
+    )
+    sort = arxiv.SortCriterion.SubmittedDate if recent else arxiv.SortCriterion.Relevance
     search_query = arxiv.Search(
         query=query,
-        max_results=max_results * 3,  # over-fetch; filter by date client-side
-        sort_by=arxiv.SortCriterion.SubmittedDate,
+        max_results=max_results * 3 if cutoff else max_results,  # over-fetch when date-filtering
+        sort_by=sort,
         sort_order=arxiv.SortOrder.Descending,
     )
 
     out: list[SearchResult] = []
-    for r in client.results(search_query):
-        if r.published < cutoff:
-            break  # sorted descending, so everything after is older too
+    for r in client_results(search_query):
+        if cutoff and r.published < cutoff:
+            if recent:
+                break  # date-sorted → everything after is older too
+            continue  # relevance-sorted → keep scanning for in-window matches
         out.append(
             SearchResult(
                 id=r.entry_id,
@@ -72,6 +87,11 @@ def search(
         if len(out) >= max_results:
             break
     return out
+
+
+def client_results(search_query):
+    """Thin seam over arxiv.Client().results — one place to mock in tests / tune retries."""
+    return arxiv.Client().results(search_query)
 
 
 def _arxiv2md_bin() -> str:

@@ -46,6 +46,12 @@ The single list of candidate subcommands. WORKLOG tracks what happened; this tra
   - **JSONC name parsed with a first-match regex** — fine for scaffolded files, unsafe for the
     hand-edited D1/R2 configs the module invites.
   - (Done in that pass: subprocess timeouts on npm/​wrangler.)
+- [ ] **`ko x` OAuth 2.0 user-context** (deferred 2026-07-05) — the app-only bearer can't reach
+  `get_me` (auto-handle), **bookmarks** (X's "save"), likes, home timeline, or *followed* lists;
+  all need a UserToken. Mirror the Google OAuth pattern (PKCE local-server flow + token cache +
+  refresh; X access tokens ~2h). Worth it mainly for **`ko x bookmarks`** (curated saves) — the
+  rest is niche. Skip unless bookmarks/likes become a habit; the bearer already covers lists +
+  search + user timelines + full-archive.
 - [ ] **Shared `http.get_json()` helper** — hn/hf/papers/tmdb each hand-roll a near-identical httpx
   `_get` (now over the CLAUDE.md "three things" bar). One chokepoint = one place for timeout/retry
   policy, and makes a future `import httpx2 as httpx` swap a one-file change. (httpx2 = Pydantic's

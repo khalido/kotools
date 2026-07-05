@@ -92,8 +92,21 @@ def papers_search(query: str, n: int = 5) -> list[Work]:
 
 @papers.tool_plain
 def papers_cites(ref: str, n: int = 10) -> list[Work]:
-    """Papers citing a given paper (by DOI or arxiv id), most-cited first. Walk the citation graph to find follow-on work."""
+    """Papers citing a given paper (by DOI or arxiv id), most-cited first — walk the citation graph forward for follow-on work.
+    If an arxiv id 404s (famous preprints get merged into their published record), papers_search the title and pass the resulting W-id or journal DOI instead."""
     return _try("papers_cites", papers_mod.cites, ref, n=n)
+
+
+@papers.tool_plain
+def papers_refs(ref: str, n: int = 10) -> list[Work]:
+    """A paper's own references (by DOI or arxiv id), most-cited first — walk the citation graph backward for foundational work. The other half of snowballing, paired with papers_cites."""
+    return _try("papers_refs", papers_mod.refs, ref, n=n)
+
+
+@papers.tool_plain
+def papers_get(ref: str) -> Work:
+    """Metadata for any paper by DOI/arxiv id (title, authors, year, journal, citations, open-access url, tldr, abstract). Works for journal papers that arxiv_fetch/hf_get can't reach; use to verify a citation is real."""
+    return _try("papers_get", papers_mod.get, ref)
 
 
 @papers.tool_plain

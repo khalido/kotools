@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import os
 import re
+import time
 from dataclasses import dataclass, field
 
 import httpx
@@ -91,7 +92,13 @@ def _resolve_id(ref: str) -> str:
 
 def _get(path: str, params: dict | None = None) -> dict:
     params = {"mailto": MAILTO, **(params or {})}
-    resp = httpx.get(f"{OPENALEX}{path}", params=params, timeout=30, follow_redirects=True)
+    # OpenAlex 503s intermittently under load — retry transient errors with a short backoff
+    for attempt in range(3):
+        resp = httpx.get(f"{OPENALEX}{path}", params=params, timeout=30, follow_redirects=True)
+        if resp.status_code in (429, 500, 502, 503) and attempt < 2:
+            time.sleep(1.0 * (attempt + 1))
+            continue
+        break
     if resp.status_code == 404:
         # preprints merged into a published record lack the DataCite DOI —
         # bites hard on famous arxiv papers (e.g. 1706.03762)

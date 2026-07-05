@@ -2,6 +2,54 @@
 
 Newest first. Big picture only — git commits have the detail; candidate ideas and decisions live in `docs/ideas.md`.
 
+## 2026-07-05 — `ko x` lists fixed (was fully broken) + read any public list
+
+- Audit (Sonnet subagent) found `ko x lists` / `ko x <name>` were **dead on arrival** — three
+  stacked bugs, all "the XDK returns untyped `data` as plain dicts, code used attribute access":
+  1. `_user_id`: `resp.data.id` on a dict → crash (killed every list/name path).
+  2. `my_lists`: `lst.id`/`lst.name` on dict items → crash.
+  3. `my_lists`: a `followed_lists` **403** (gated separately by tier) killed the whole call →
+     now per-endpoint resilient (degrades to `owned_lists`).
+  All three routed through the existing `_field()` dict/object helper.
+- **Read any public list by id/URL**: new `_resolve_list` accepts a bare list id or an
+  `x.com/i/lists/<id>` URL (no owned/followed lookup) as well as a name — so `ko x list
+  204975651`, `ko x <that-url>`, and `ko x ai` all work.
+- **New `ko x user <@handle|url>`** — one user's timeline (goes back further than search's ~7-day
+  window); `_parse_handle` accepts @name / bare / profile URL. **`ko x lists`** now shows each list's
+  **description + member_count, biggest first** (via `list_fields`).
+- **Search scoping + full-archive**: `ko x search --list <name|id|url>` scopes to a list (adds the
+  `list:<id>` operator), and `--days >7` switches from the 7-day recent index to **full-archive**
+  search (`search/all`, years back — both work on the current tier). So `ko x search "claude code"
+  --list ai --days 90` works (verified). `from:<handle>` operator also scopes to one account.
+- **Likes / bookmarks / home timeline / `get_me`: not available** — those need OAuth *user-context*
+  (UserToken), not the app-only bearer (verified: `get_me` 403s, so the token can't self-identify).
+  Smart default added: my handle resolves KO_X_HANDLE → **`[x] handle` in config.toml** → 'ko', so
+  it's noted once (dotfile-syncable) rather than hardcoded. An OAuth login flow (deferred) would
+  unlock all of the above — see docs/ideas.md.
+- Post-review nits fixed: `my_lists` now only swallows a *followed_lists* failure (an owned_lists
+  error surfaces); full-archive search notes when `--top` is ignored.
+- **Cost model documented** (X went **pay-per-use** 2026-02: prepaid credits, ~$0.005/post read,
+  $0.001 owned reads, 2M/mo cap) — in the module docstring, `_client` error, and CLAUDE.md, so a
+  big `--n`, full-archive search, or tight loop is an informed choice. No tier upgrade needed for
+  any of this. +4 offline tests. 180 passing.
+
+## 2026-07-05 — paper-tool audit + research brief
+
+- **Fixed a real `ko arxiv search` bug**: default was `sort=SubmittedDate`, which made the arxiv
+  API return newest-overall and effectively *ignore the query* — a topical search came back junk
+  (verified: "transformers" returned a probability-theory paper). Now **relevance-ranked by default**;
+  `--recent` opts into newest-first for browsing a `cat:cs.LG`. `since_months` is a hard filter in
+  relevance mode, an early-stop in recent mode. Added a `client_results` seam + 3 offline tests.
+- **`ko papers` robustness**: retry/backoff on OpenAlex 429/5xx (hit live 503s twice while testing —
+  they're frequent). Flagged the arxiv-orphan caveat in `cites` help + the agent tool (famous preprints
+  merged into a published record lose their arXiv DOI → use the journal DOI or search→W-id).
+- **Research agent upgraded**: added `papers_refs` + `papers_get` to the papers toolset (backward
+  snowball + read-any-DOI / verify-a-citation), and rewrote the agent instructions to work like a
+  researcher — seed → snowball cites/refs → triangulate ≥2 tools → judge by code+replication not
+  citation count. Paired with a new **`ko prompt research-papers`** brief (ML/AI lens; built from a
+  web scan of 2026 research practice — OpenAlex/S2/arXiv are the free composable APIs ko already wraps;
+  Papers with Code is dead since 2024). 176 tests passing.
+
 ## 2026-07-03 (later) — deps + Fable-review fixes
 
 - **Dep upgrade**: pydantic-ai-slim/pydantic-graph 2.0.0b7 → **2.4.0 stable** (dropped the beta-pin block + explicit pydantic-graph pin — transitive-only); exa-py 2.14→2.16, liteparse 2.1→2.4, openai/google-genai/mcp/typer bumps. Migrated `exa.py` off the deprecated `search_and_contents()` → `search(contents=…)`.
