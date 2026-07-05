@@ -2,6 +2,18 @@
 
 Newest first. Big picture only — git commits have the detail; candidate ideas and decisions live in `docs/ideas.md`.
 
+## 2026-07-06 — four new `ko prompt` briefs
+
+- Assessed the prompt library (Sonnet subagent mined ~25 project CLAUDE.md files) and added the
+  four highest-recurrence "how I build X" gaps, each drafted by a subagent grounded in the real
+  reference repos (no invented specifics — one hallucinated dep, `pydantic-ai-harness`, caught + fixed):
+  - **`pydantic-ai-agent`** — toolsets/output-enums/sessions/sandbox (kotools agents + jabberwocky/sift).
+    Fills the `building-pydantic-ai-agents` skill that thinker's CLAUDE.md references but never existed.
+  - **`python-cli`** — Typer layout, output contract, config/dirs split, `_route` (kotools + `ne`).
+  - **`sveltekit-embedded-ai`** — Vercel AI SDK v6, ToolLoopAgent, skills/scripts, croner (everx + chota-bot).
+  - **`local-first-python-app`** — FastAPI + vendored htmx + LanceDB + PIT guards (thinker + jabberwocky).
+  - Library now: 7 briefs. `ko prompt <name>` to load one into an agent.
+
 ## 2026-07-05 — `ko x` lists fixed (was fully broken) + read any public list
 
 - Audit (Sonnet subagent) found `ko x lists` / `ko x <name>` were **dead on arrival** — three
