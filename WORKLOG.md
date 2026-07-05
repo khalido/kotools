@@ -2,6 +2,20 @@
 
 Newest first. Big picture only — git commits have the detail; candidate ideas and decisions live in `docs/ideas.md`.
 
+## 2026-07-06 — `ko prompt opencode` + skills investigation
+
+- Added **`ko prompt opencode`** — driving OpenCode non-interactively (`opencode run "msg" -m provider/model
+  -f file`, message-first) for second opinions, with a cheap/medium/hard model-tier table (grounded in the
+  `/opencode` skill's model catalog + the CLI docs). Library now 8 briefs.
+- Investigated adding a **`ko skill install`** tool (three Sonnet miners over active repos + a Fable review).
+  **Verdict: don't build it.** The `ko prompt` parallel breaks — prompts are portable *opinions* (rightly
+  centralized here); the high-value skills mined were *procedures bound to a specific codebase* (thinker's
+  PIT invariants, nibbleedge's `ne` loop, ops' WORKLOG format). Centralizing + copying them creates two
+  sources of truth that drift. So: **repo-scoped skills live in each repo's own `.claude/skills/` (under its
+  git); global ones go straight to `~/.claude/skills/` (dotfile-synced). No distribution tooling.** If `ko
+  skill` ever earns its keep it's as `ko skill new` (a frontmatter/description scaffolder — description
+  quality was the miners' recurring failure), not an installer. Skill candidates + build order noted in docs/ideas.md.
+
 ## 2026-07-06 — four new `ko prompt` briefs
 
 - Assessed the prompt library (Sonnet subagent mined ~25 project CLAUDE.md files) and added the

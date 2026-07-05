@@ -35,6 +35,25 @@ The single list of candidate subcommands. WORKLOG tracks what happened; this tra
 
 ## Backlog (priority order; library picks researched 2026-06-11)
 
+- [ ] **Skills to build** (from the 2026-07-06 mining + Fable review; each lives in its *home repo's*
+  `.claude/skills/`, not centralized here — see WORKLOG). Build order:
+  1. **invoice** (ops) — scan WORKLOGs → hours by client → next invoice # → CSV + cover email. Bundle
+     the tally as a *script* (money needs reproducibility); LLM only does client-mapping + email.
+  2. **sheets-bulk-fix** (nibbleedge-sheets) — apply a change across ~88 client sheets via the `ne` loop;
+     encodes dry-run-on-1-first + write-then-reread verify + partial-failure resumability.
+  3. **pit-privacy-check** (thinker) — audit a change vs the privacy/PIT invariants before commit; wire
+     thinker's CLAUDE.md to point at it (maybe fold into a thinker-local code-review wrapper).
+  4. **data-pipeline-review** (global, `~/.claude/skills/`) — end-to-end audit for *silently-wrong numbers*
+     (hardcoded FY, partial-row→0); highest value-per-fire, thinnest evidence — write short, tune the
+     description hard against over-triggering vs code-review/security-review, iterate after 2-3 runs.
+  5. **drizzle-migration** (global, optional) — schema edit → generate → *review the SQL* → apply →
+     `svelte-kit sync` → repo's gate. Trigger on editing `schema.ts`, not the word "migration".
+  - Killed by review: project-orient (habit, CLAUDE.md auto-loads), gh-issue-sync (habit + no session-end
+    trigger; the sub-issue `gh api` incantation → a docs snippet instead). Skipped: semver-release, everx-feature-gate.
+  - Possible `ko skill new` scaffolder (frontmatter/description templater) if skill authoring becomes frequent.
+
+
+
 - [ ] **`ko publish` hardening** — deferred from the 2026-07-03 Fable review (real, non-urgent):
   - **`deploy` rewrites `--md` sites to SPA mode** (`publish.py` `ensure_config` defaults `spa=True`;
     md scaffolds are `spa=False`) — renaming an md site silently breaks its 404 handling (every bad
