@@ -1,6 +1,6 @@
 [project]
 name = "kotools"
-version = "0.1.0"
+version = "2026.7.9"
 description = "Ko's personal opinionated CLI — thin wrappers around SDKs I use often, built so both I and AI agents can lean on it."
 readme = "README.md"
 requires-python = ">=3.14"

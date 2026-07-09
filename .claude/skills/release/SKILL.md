@@ -98,9 +98,10 @@ the **oldest** version links to its tag (nothing earlier to compare with):
 [Unreleased]: https://github.com/khalido/kotools/compare/v2026.7.9...HEAD
 [2026.7.9]: https://github.com/khalido/kotools/releases/tag/v2026.7.9
 ```
-Bump `pyproject.toml` `version = "YYYY.M.D"` — `ko --version` reads it via
-importlib.metadata, nothing else to touch. Then `uv sync --quiet` (refreshes uv.lock's
-own-package version) and smoke it:
+Bump the version in BOTH `pyproject.toml` (`version = "YYYY.M.D"`) and
+`src/ko/__init__.py` (`__version__`) — `ko --version` reads pyproject via
+importlib.metadata, but `__init__.py` hardcodes it too (first-release fact-check
+caught them diverging). Then `uv sync --quiet` (refreshes uv.lock) and smoke it:
 ```bash
 uv build --no-sources 2>&1 | tail -2
 uv run ko --version        # must print the new version

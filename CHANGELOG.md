@@ -13,30 +13,41 @@ Cut a release with the repo's `/release` skill.
 
 ## [Unreleased]
 
+## [2026.7.9] - 2026-07-09
+
+First tagged release — everything since the repo started (2026-04). `ko` is an
+opinionated personal CLI of thin SDK wrappers, built to be driven by humans and
+AI agents over bash: `--help` is the contract, stdout is data, exit codes mean
+things, `--json` where structure matters.
+
 ### Added
 
-- `ko yt <url|id>` — YouTube → transcript (free, no key); `-s` = LLM summary,
-  `--json` = timed snippets. `ko <youtube-url>` now returns the transcript.
-- `ko brief` — morning brief: calendar + unread gmail + HN + HF papers → one
-  cheap-model synthesis; `--raw` skips the LLM.
-- `ko agent sessions summarize` — LLM title/takeaway/tags per session into a
-  SQLite index; `sessions --tag`/`--search` filter on it.
-- `ko hn top --now` — the live HN front page.
-- Agent tools: `hn_top`/`hn_front_page`, search filters passed through, and every
-  tool docstring now states its silent defaults (windows, caps, coverage).
+- **Read anything**: `ko fetch <url>` — articles, PDFs, arxiv, YouTube, DOIs →
+  markdown, with Wayback/archive.today fallbacks (bare `ko <url>` routes here);
+  `ko doc <file>` — PDF/Office/image → text, local; `ko yt <url>` — transcripts,
+  `-s` summarizes.
+- **Papers**: `ko papers` — cross-publisher search + citation graph via OpenAlex
+  (`search|get|cites|refs|similar`, no key); `ko arxiv` — relevance-ranked search
+  + paper → markdown via arxiv2md; `ko hf` — HF Daily Papers.
+- **News & social**: `ko hn` — `top` (incl. `--now` live front page), `search`,
+  `item` comment trees; `ko x` — search (incl. full-archive), lists by
+  name/id/URL, user timelines; `ko tt` — TickTick lists, read-only.
+- **Google** (one OAuth token, multi-account): `ko gsheets` read & write with a
+  clobber guard; `ko gdocs` Markdown ↔ Docs + comments; `ko cal` agenda/find/add;
+  `ko gmail` read-only search/view/thread.
+- **AI**: `ko llm` — one-shot, stdin-aware, `-m` any model whose provider key is
+  set; `ko agent research|tv` — pydantic-ai agents with saved, resumable
+  sessions; `ko agent sessions` — listing with `--tag`/`--search` filters over an
+  LLM-built SQLite index (`sessions summarize`); `ko brief` — morning brief;
+  `ko prompt` — kickoff briefs; `ko mcp` — inspect/call/overview/auth-info for
+  MCP servers.
+- **Publish**: `ko publish` — folder → Cloudflare static site (scaffolds,
+  optional PIN gate, custom domains).
+- **Meta**: `ko doctor` setup status; `ko billing` OpenRouter credits; `ko logs`
+  local command log (no args/secrets); `ko tv` ratings + where to stream.
+- **Agent contract** (AGENTS.md): stdout=data / stderr=notes, exit 0/1/2,
+  `--json` errors as `{error, code}`, bare-arg shortcuts.
 
-### Fixed
-
-- Errors are clean one-liners everywhere the contract promises: `ko gmail
-  view/thread` no longer tracebacks on a bad id, and bogus hn/x/papers inputs no
-  longer leak raw HTTP errors or API URLs.
-- `ko exa get` exits 1 when every URL fails; `ko hn search` with no results names
-  its 12-month window; `ko x lists --json` sorts biggest-first as documented.
-- A dozen smaller fixes: calendar multi-day/multi-line display, `cal find
-  --calendar`, `ko doctor` completeness, `ko logs` error field, URLs in `--json`.
-
-<!-- reference links start with the first tagged release; oldest version links to its
-tag, later ones compare with the one before (keepachangelog.com/en/2.0.0):
-[Unreleased]: https://github.com/khalido/kotools/compare/vYYYY.M.D...HEAD
-[YYYY.M.D]: https://github.com/khalido/kotools/releases/tag/vYYYY.M.D -->
+[Unreleased]: https://github.com/khalido/kotools/compare/v2026.7.9...HEAD
+[2026.7.9]: https://github.com/khalido/kotools/releases/tag/v2026.7.9
 
