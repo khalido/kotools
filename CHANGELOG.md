@@ -24,8 +24,11 @@ Cut a release with the repo's `/release` skill.
   and the config/state/cache dir paths.
 - A malformed `config.toml` now warns loudly (every command + doctor) instead of
   silently ignoring all keys and settings; README documents the three dirs.
-- Model tiers: `[llm] basic/medium/smart` in config.toml (`llm.model_for`) — cheap
-  tier drives llm/tv/brief/summarize defaults, smart drives the research agent.
+- Model tiers: `[llm] basic/medium/smart/ultra` in config.toml (`llm.model_for`) —
+  basic (deepseek-v4-pro) drives llm/tv/brief/summarize defaults, smart
+  (`~x-ai/grok-latest`) the research agent, ultra (gpt-5.6-sol) is reserved for
+  high-stakes calls. **Changed**: the everyday default moves from gemini-flash
+  direct to DeepSeek via OpenRouter — one prepaid pool, visible in `ko billing`.
 - `ko doctor` live-checks the OpenRouter key via `/credits` — proves it works and
   shows credits left, without spending tokens.
 

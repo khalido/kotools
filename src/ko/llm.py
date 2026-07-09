@@ -19,22 +19,21 @@ from pydantic_ai import Agent
 
 from ko import config
 
-# Model tiers — pick by task stakes, not habit: basic for summaries/tags/one-shots,
-# medium for real reviews/synthesis worth cents, smart for research/architecture calls.
-# Baked defaults are the models ko already runs; override per-tier in config.toml:
-#   [llm]
-#   basic = "google:gemini-3.5-flash"
-#   smart = "openrouter:openai/gpt-5.4"
+# Model tiers — pick by task stakes, not habit. Money matters for a personal tool:
+# cheap Chinese models carry basic/medium; smart is capable-but-affordable; ultra is
+# the only expensive one, reserved for calls where being wrong costs more than tokens.
+# Override per-tier in config.toml `[llm]`. Prices $/M in+out, checked 2026-07-10:
 TIERS = {
-    "basic": "google:gemini-3.5-flash",
-    "medium": "openrouter:z-ai/glm-5.2",
-    "smart": "openrouter:z-ai/glm-5.2",  # = medium until a pricier pick earns its keep
+    "basic": "openrouter:deepseek/deepseek-v4-pro",  # $0.43/$0.87 (v4-flash is 5x cheaper if this feels rich)
+    "medium": "openrouter:z-ai/glm-5.2",             # $0.53/$1.67
+    "smart": "openrouter:~x-ai/grok-latest",         # $2/$6 — alias, tracks the newest grok
+    "ultra": "openrouter:openai/gpt-5.6-sol",        # $5/$30 — high-stakes only
 }
 FALLBACK_MODEL = TIERS["basic"]
 
 
 def model_for(tier: str) -> str:
-    """The model for a tier ('basic'/'medium'/'smart'): config.toml `[llm] <tier>` → baked default."""
+    """The model for a tier ('basic'/'medium'/'smart'/'ultra'): config.toml `[llm] <tier>` → baked default."""
     return config.get("llm", tier) or TIERS[tier]
 
 DEFAULT_SYSTEM = (

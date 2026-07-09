@@ -220,7 +220,7 @@ def doctor() -> None:
         ),
         *(
             (f"{tier} tier", _llm.model_for(tier), "config" if config.get("llm", tier) else "default")
-            for tier in ("basic", "medium", "smart")
+            for tier in ("basic", "medium", "smart", "ultra")
         ),
         ("cal timezone", gcal.tz_name(), "config" if config.get("cal", "timezone") else "default"),
         ("x handle", _default_handle(), config.setting_source("KO_X_HANDLE", "x", "handle")),
