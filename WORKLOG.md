@@ -34,6 +34,11 @@ Newest first. Big picture only — git commits have the detail; candidate ideas 
 - Research scan: `ko pwc` still wait-for-API-stability; publish already on Workers Static Assets
   (deprecation scare was a false alarm); agent-self-critique idea banked in ideas.md (build when
   summarize-review loop exists — which sessions summarize now starts). 240 tests passing (was 180).
+- **Release machinery** (ported from everx-crm's `/release` skill, adapted): `.claude/skills/release/`
+  + `CHANGELOG.md` (Keep a Changelog, canonical; GitHub release derived). CalVer **PEP 440-normalized**
+  (`2026.7.9`, tag `v2026.7.9`) — diverges from everx's zero-padded form so tag == PyPI version ==
+  `ko --version`. WORKLOG stays the dev journal; CHANGELOG is release-grained facts. PyPI publish
+  slots in when the trusted-publisher action lands (tag push becomes the trigger, skill unchanged).
 
 ## 2026-07-06 — `ko prompt opencode` + skills investigation
 

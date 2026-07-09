@@ -42,6 +42,11 @@ Ko's personal opinionated CLI. Thin wrappers around SDKs I use often, built so b
 - Module-local `@dataclass` for structured returns
 - `@lru_cache` for credential/service singletons
 
+## Releasing
+`/release` (repo skill, `.claude/skills/release/`) — CalVer (`YYYY.M.D`, PEP 440), rolls commits
+into `CHANGELOG.md` (canonical) + a GitHub release (derived), fact-checked by a fresh subagent,
+human approval before tag/publish. WORKLOG = dev journal; CHANGELOG = release-grained facts.
+
 ## Adding a subcommand
 1. `src/ko/<thing>.py` — thin SDK wrapper + dataclass result types
 2. `src/ko/cli.py` — Typer subapp + commands, every flag with `help=`
