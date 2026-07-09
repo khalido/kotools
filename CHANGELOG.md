@@ -22,6 +22,8 @@ Cut a release with the repo's `/release` skill.
   config home (env var still wins).
 - `ko doctor` footer: effective settings with their source (env/config/default)
   and the config/state/cache dir paths.
+- A malformed `config.toml` now warns loudly (every command + doctor) instead of
+  silently ignoring all keys and settings; README documents the three dirs.
 
 ## [2026.7.9] - 2026-07-09
 

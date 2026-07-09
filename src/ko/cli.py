@@ -231,6 +231,10 @@ def doctor() -> None:
     Console().print(
         f"[dim]dirs: config={dirs.config_dir()} · state={dirs.state_dir()} · cache={dirs.cache_dir()}[/dim]"
     )
+    if err := config.config_error():
+        Console().print(f"[red]⚠ config.toml is malformed — keys/settings above are IGNORED: {err}[/red]")
+    elif not (dirs.config_dir() / "config.toml").exists():
+        Console().print("[dim]no config.toml (env vars + baked defaults only)[/dim]")
 
 
 @app.command("logs")

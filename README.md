@@ -72,6 +72,20 @@ Keys live in environment variables (shell profile or `.env`) or in `~/.config/ko
 | — (Google OAuth) | `ko gsheets` | free | Not a key: one-off browser consent, token cached locally. See below. |
 | — | `ko arxiv`, `ko hn`, `ko hf`, `ko papers`, `ko doc` | free | No auth at all. |
 
+## Where ko keeps things
+
+Three XDG-style dirs, three jobs (same pattern as `gh`/`opencode`; identical on macOS and Linux):
+
+| Dir | Job | Holds |
+|---|---|---|
+| `~/.config/ko/` | your config — safe to dotfile-sync | `config.toml` (keys + settings), `google_client.json`, `mcp.json`, `prompts/` overrides |
+| `~/.local/state/ko/` | machine-local state — never sync | OAuth tokens, agent sessions, `ko.db`, command logs, publish registry |
+| `~/.cache/ko/` | disposable — safe to delete | model catalogs and other regenerable caches |
+
+Each is overridable via `KO_CONFIG_DIR` / `KO_STATE_DIR` / `KO_CACHE_DIR`. `ko doctor`
+prints all three, plus every effective setting and where it resolved from
+(env / config / default) — and warns if `config.toml` is malformed.
+
 ## Google Sheets setup (one-off) — read & write
 
 `ko gsheets` runs as *you* against *your* Google account (OAuth user flow, no service account). One

@@ -24,12 +24,35 @@ _from_config: set[str] = set()
 def _data() -> dict:
     try:
         return tomllib.loads((config_dir() / "config.toml").read_text())
-    except (OSError, tomllib.TOMLDecodeError):
-        return {}
+    except OSError:
+        return {}  # no config.toml — env + baked defaults, perfectly fine
+    except tomllib.TOMLDecodeError:
+        return {}  # malformed — surfaced via config_error() (startup warning + doctor)
+
+
+@lru_cache
+def config_error() -> str | None:
+    """A parse error in config.toml, or None. A missing file is not an error.
+
+    A malformed config.toml silently disables every [keys] entry and setting —
+    the classic 'my keys stopped working' trap — so callers surface this loudly."""
+    path = config_dir() / "config.toml"
+    try:
+        tomllib.loads(path.read_text())
+        return None
+    except OSError:
+        return None
+    except tomllib.TOMLDecodeError as e:
+        return f"{path}: {e}"
 
 
 def load_keys_into_env() -> None:
-    """Inject config.toml [keys] into os.environ, without overriding real env vars."""
+    """Inject config.toml [keys] into os.environ, without overriding real env vars.
+    Warns on stderr (every command, until fixed) when config.toml is malformed."""
+    if err := config_error():
+        import sys
+
+        print(f"[ko] config.toml is malformed — keys and settings IGNORED: {err}", file=sys.stderr)
     for name, value in _data().get("keys", {}).items():
         if name not in os.environ:
             os.environ[name] = str(value)

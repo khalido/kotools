@@ -89,3 +89,28 @@ def test_telemetry_include_content_opt_in(monkeypatch, tmp_path):
 
 def _boom(*a, **k):
     raise AssertionError("_instrument must not be called when telemetry is gated off")
+
+
+# --- malformed config.toml is loud, missing is fine ---
+
+
+def test_config_error_on_malformed_toml(monkeypatch, tmp_path, capsys):
+    _with_config(monkeypatch, tmp_path, "[keys\nbroken = ")
+    config.config_error.cache_clear()
+    assert "TOML" in (config.config_error() or "") or "config.toml" in (config.config_error() or "")
+    config.load_keys_into_env()
+    assert "malformed" in capsys.readouterr().err
+    config._data.cache_clear()
+    config.config_error.cache_clear()
+
+
+def test_config_error_none_when_missing_or_valid(monkeypatch, tmp_path):
+    monkeypatch.setenv("KO_CONFIG_DIR", str(tmp_path))  # no config.toml at all
+    config._data.cache_clear()
+    config.config_error.cache_clear()
+    assert config.config_error() is None
+    _with_config(monkeypatch, tmp_path, '[llm]\nmodel = "x:y"\n')
+    config.config_error.cache_clear()
+    assert config.config_error() is None
+    config._data.cache_clear()
+    config.config_error.cache_clear()
