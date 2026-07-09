@@ -218,6 +218,10 @@ def doctor() -> None:
             config.setting("KO_AGENT_MODEL", "agents", "model", "(per-agent default)"),
             config.setting_source("KO_AGENT_MODEL", "agents", "model"),
         ),
+        *(
+            (f"{tier} tier", _llm.model_for(tier), "config" if config.get("llm", tier) else "default")
+            for tier in ("basic", "medium", "smart")
+        ),
         ("cal timezone", gcal.tz_name(), "config" if config.get("cal", "timezone") else "default"),
         ("x handle", _default_handle(), config.setting_source("KO_X_HANDLE", "x", "handle")),
         ("google account", active_account(), config.setting_source("KO_GOOGLE_ACCOUNT", "google", "account")),
@@ -235,6 +239,21 @@ def doctor() -> None:
         Console().print(f"[red]⚠ config.toml is malformed — keys/settings above are IGNORED: {err}[/red]")
     elif not (dirs.config_dir() / "config.toml").exists():
         Console().print("[dim]no config.toml (env vars + baked defaults only)[/dim]")
+
+    # live OpenRouter key check — /credits is a free authenticated GET, so this both
+    # proves the key works and shows money left (the agent-tier default rides on it)
+    if config.key_source("OPENROUTER_API_KEY"):
+        from . import billing
+
+        b = billing.openrouter()  # never raises — errors land in b.error
+        if b.error:
+            Console().print(f"[red]openrouter: key set but /credits failed — {b.error}[/red]")
+        elif b.remaining is not None:
+            Console().print(
+                f"[dim]openrouter: key works — ${b.remaining:.2f} of ${b.total:.2f} credits left"
+                + (f" ({b.trend})" if b.trend else "")
+                + "[/dim]"
+            )
 
 
 @app.command("logs")

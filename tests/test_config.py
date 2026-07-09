@@ -91,6 +91,36 @@ def _boom(*a, **k):
     raise AssertionError("_instrument must not be called when telemetry is gated off")
 
 
+# --- model tiers: config.toml [llm] <tier> overrides the baked pick ---
+
+
+def test_model_for_baked_defaults(monkeypatch, tmp_path):
+    from ko import llm
+
+    _with_config(monkeypatch, tmp_path, "")
+    assert llm.model_for("basic") == llm.TIERS["basic"]
+    assert llm.model_for("smart") == llm.TIERS["smart"]
+    config._data.cache_clear()
+
+
+def test_model_for_config_override(monkeypatch, tmp_path):
+    from ko import llm
+
+    _with_config(monkeypatch, tmp_path, '[llm]\nsmart = "openrouter:openai/gpt-5.4"\n')
+    assert llm.model_for("smart") == "openrouter:openai/gpt-5.4"
+    assert llm.model_for("basic") == llm.TIERS["basic"]  # untouched tiers keep baked picks
+    config._data.cache_clear()
+
+
+def test_default_model_rides_basic_tier(monkeypatch, tmp_path):
+    from ko import llm
+
+    _with_config(monkeypatch, tmp_path, '[llm]\nbasic = "test:cheap"\n')
+    monkeypatch.delenv("KO_DEFAULT_MODEL", raising=False)
+    assert llm.default_model() == "test:cheap"  # no [llm] model set → basic tier
+    config._data.cache_clear()
+
+
 # --- malformed config.toml is loud, missing is fine ---
 
 

@@ -24,6 +24,10 @@ Cut a release with the repo's `/release` skill.
   and the config/state/cache dir paths.
 - A malformed `config.toml` now warns loudly (every command + doctor) instead of
   silently ignoring all keys and settings; README documents the three dirs.
+- Model tiers: `[llm] basic/medium/smart` in config.toml (`llm.model_for`) — cheap
+  tier drives llm/tv/brief/summarize defaults, smart drives the research agent.
+- `ko doctor` live-checks the OpenRouter key via `/credits` — proves it works and
+  shows credits left, without spending tokens.
 
 ## [2026.7.9] - 2026-07-09
 

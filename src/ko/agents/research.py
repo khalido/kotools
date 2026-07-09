@@ -11,13 +11,13 @@ from __future__ import annotations
 
 from pydantic_ai import Agent
 
-from ko import config
+from ko import config, llm
 from ko.agents import _shared
 from ko.agents._toolsets import news, papers, web
 
 # Default model (read at import): KO_AGENT_MODEL -> `[agents] model` in config.toml ->
 # baked default; the `-m` flag overrides per-run via the model= arg (see run/repl).
-_MODEL = config.setting("KO_AGENT_MODEL", "agents", "model", "openrouter:z-ai/glm-5.2")
+_MODEL = config.setting("KO_AGENT_MODEL", "agents", "model", llm.model_for("smart"))
 
 agent = Agent(
     _MODEL,

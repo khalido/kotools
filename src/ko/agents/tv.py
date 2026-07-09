@@ -10,13 +10,13 @@ from __future__ import annotations
 
 from pydantic_ai import Agent
 
-from ko import config
+from ko import config, llm
 from ko.agents import _shared
 from ko.agents._toolsets import tmdb, web
 
 # Cheap model — this is a light task. KO_AGENT_MODEL -> `[agents] model` -> baked
 # default (read at import); the `-m` flag overrides per-run via model=.
-_MODEL = config.setting("KO_AGENT_MODEL", "agents", "model", "google:gemini-3.5-flash")
+_MODEL = config.setting("KO_AGENT_MODEL", "agents", "model", llm.model_for("basic"))
 
 # Optional personal taste profile, kept out of the code: set `[agents] tv_tastes` in
 # config.toml (or KO_TV_TASTES). Empty by default — the agent just recommends broadly.

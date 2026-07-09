@@ -219,7 +219,6 @@ def agent_sessions_summarize(
     Output: one TSV line per newly summarized session (id, title, tags) on stdout.
     Progress/counts on stderr. Exit 0 on any success; exit 1 if all attempted calls failed.
     """
-    import os
     from datetime import datetime
 
     from pydantic import BaseModel
@@ -233,7 +232,7 @@ def agent_sessions_summarize(
         summary: str
         tags: list[str]
 
-    mdl = model or os.environ.get("KO_DEFAULT_MODEL") or default_model()
+    mdl = model or default_model()  # default_model already resolves env → config → basic tier
 
     _summarizer = Agent(
         instructions=(

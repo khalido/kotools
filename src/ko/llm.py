@@ -19,7 +19,23 @@ from pydantic_ai import Agent
 
 from ko import config
 
-FALLBACK_MODEL = "google:gemini-3.5-flash"
+# Model tiers — pick by task stakes, not habit: basic for summaries/tags/one-shots,
+# medium for real reviews/synthesis worth cents, smart for research/architecture calls.
+# Baked defaults are the models ko already runs; override per-tier in config.toml:
+#   [llm]
+#   basic = "google:gemini-3.5-flash"
+#   smart = "openrouter:openai/gpt-5.4"
+TIERS = {
+    "basic": "google:gemini-3.5-flash",
+    "medium": "openrouter:z-ai/glm-5.2",
+    "smart": "openrouter:z-ai/glm-5.2",  # = medium until a pricier pick earns its keep
+}
+FALLBACK_MODEL = TIERS["basic"]
+
+
+def model_for(tier: str) -> str:
+    """The model for a tier ('basic'/'medium'/'smart'): config.toml `[llm] <tier>` → baked default."""
+    return config.get("llm", tier) or TIERS[tier]
 
 DEFAULT_SYSTEM = (
     "You are ko, a one-shot CLI helper used by humans and AI agents. "
@@ -32,7 +48,8 @@ _agent = Agent(instructions=DEFAULT_SYSTEM)
 
 
 def default_model() -> str:
-    return config.setting("KO_DEFAULT_MODEL", "llm", "model", FALLBACK_MODEL)
+    """One-shot default: KO_DEFAULT_MODEL → `[llm] model` → the basic tier."""
+    return config.setting("KO_DEFAULT_MODEL", "llm", "model", model_for("basic"))
 
 
 def run(
