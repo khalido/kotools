@@ -19,8 +19,15 @@ from rich.live import Live
 from rich.markdown import Markdown
 
 from ko import sessions
+from ko.llm import run_cost
 
 _console = Console()
+_err = Console(stderr=True)  # cost notes are notes, not data — stderr keeps pipes clean
+
+
+def _cost_note(messages: list, prior: int = 0) -> None:
+    """Print what the new messages (beyond `prior`) cost — OR actuals when available."""
+    _err.print(f"[dim]{run_cost(messages[prior:]).note}[/dim]")
 
 
 def _stream(agent: Agent, prompt: str, history: list, model: str | None = None) -> tuple[str, list]:
@@ -57,6 +64,7 @@ def run(
         result = agent.run_sync(prompt, message_history=history, model=model)
         text, messages = result.output, result.all_messages()
         print(text)
+    _cost_note(messages, prior=len(history))
     sessions.save(session_id, name, messages)
     return text
 
@@ -96,5 +104,7 @@ def repl(
             session_id = sessions.new_id()
             _console.print("[dim]context cleared (new session)[/dim]")
             continue
+        prior = len(history)
         _, history = _stream(agent, user_input, history, model=model)
+        _cost_note(history, prior=prior)
         sessions.save(session_id, name, history)

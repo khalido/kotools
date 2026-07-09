@@ -83,6 +83,8 @@ def llm_cmd(
     stdin = None if sys.stdin.isatty() else sys.stdin.read()
     try:
         typer.echo(llm_mod.run(prompt, stdin=stdin, model=model, system=system))
+        if llm_mod.last_cost:
+            typer.echo(llm_mod.last_cost.note, err=True)
     except Exception as e:
         _die(str(e))
 
@@ -287,6 +289,7 @@ def agent_sessions_summarize(
     succeeded = 0
     failed = 0
     skipped = 0  # no usable content — reported separately, NOT "already current"
+    spent = 0.0  # summed actual/estimated USD across the model calls
 
     for f, data in pending:
         sid = data.get("id", f.stem)
@@ -310,6 +313,8 @@ def agent_sessions_summarize(
                 tags=s.tags,
                 created_at=data.get("created_at", ""),
             )
+            rc = llm_mod.run_cost(result.all_messages())
+            spent += rc.usd or 0.0
             tags_str = ",".join(s.tags)
             typer.echo(f"{sid}\t{_tsv_cell(s.title)}\t{tags_str}")
             succeeded += 1
@@ -318,9 +323,10 @@ def agent_sessions_summarize(
             failed += 1
 
     skipped_note = f", {skipped} skipped (no content)" if skipped else ""
+    cost_note = f" · ${spent:.4f}" if spent else ""
     typer.echo(
         f"{succeeded} session{'s' if succeeded != 1 else ''} summarized "
-        f"({already_current} already current{skipped_note})",
+        f"({already_current} already current{skipped_note}){cost_note}",
         err=True,
     )
     if failed and succeeded == 0:
@@ -831,3 +837,5 @@ def brief_cmd(
     except Exception as e:
         _die(str(e))
     typer.echo(result)
+    if llm_mod.last_cost:
+        typer.echo(llm_mod.last_cost.note, err=True)

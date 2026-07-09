@@ -934,6 +934,8 @@ def yt_cmd(
         except Exception as e:
             _die(str(e))
         typer.echo(result)
+        if llm_mod.last_cost:
+            typer.echo(llm_mod.last_cost.note, err=True)
         return
 
     typer.echo(text)

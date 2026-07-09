@@ -13,9 +13,11 @@ from __future__ import annotations
 import json
 import os
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 from pydantic_ai import Agent
+from pydantic_ai.messages import ModelResponse
 
 from ko import config
 
@@ -24,7 +26,7 @@ from ko import config
 # the only expensive one, reserved for calls where being wrong costs more than tokens.
 # Override per-tier in config.toml `[llm]`. Prices $/M in+out, checked 2026-07-10:
 TIERS = {
-    "basic": "openrouter:deepseek/deepseek-v4-pro",  # $0.43/$0.87 (v4-flash is 5x cheaper if this feels rich)
+    "basic": "openrouter:deepseek/deepseek-v4-flash",  # $0.09/$0.18 (v4-pro $0.43/$0.87 if flash quality disappoints)
     "medium": "openrouter:z-ai/glm-5.2",             # $0.53/$1.67
     "smart": "openrouter:~x-ai/grok-latest",         # $2/$6 — alias, tracks the newest grok
     "ultra": "openrouter:openai/gpt-5.6-sol",        # $5/$30 — high-stakes only
@@ -46,6 +48,57 @@ DEFAULT_SYSTEM = (
 _agent = Agent(instructions=DEFAULT_SYSTEM)
 
 
+@dataclass
+class RunCost:
+    """What one run cost: tokens always; USD when known. `source` says how good the
+    number is — 'actual' = OpenRouter's billed cost from provider_details (exact),
+    'estimate' = genai-prices lookup (approximate, and misses brand-new models)."""
+
+    model: str
+    input_tokens: int
+    output_tokens: int
+    usd: float | None = None
+    source: str = ""
+
+    @property
+    def note(self) -> str:
+        """One stderr-ready line: `[model · 11→43 tok · $0.0012]`."""
+        cost = ""
+        if self.usd is not None:
+            approx = "" if self.source == "actual" else "~"
+            amount = f"{approx}${self.usd:.4f}" if self.usd >= 0.0001 else "<$0.0001"
+            cost = f" · {amount}"
+        return f"[{self.model} · {self.input_tokens}→{self.output_tokens} tok{cost}]"
+
+
+# Cost of the most recent llm.run() — CLI layers print .note to stderr.
+# Module-level (like config._from_config) so run()'s return stays a plain str.
+last_cost: RunCost | None = None
+
+
+def run_cost(messages: list) -> RunCost:
+    """Aggregate cost over a run's messages. OpenRouter puts the ACTUAL billed cost in
+    provider_details['cost'] — prefer it; fall back to a genai-prices estimate, which
+    can fail for brand-new models (then tokens only)."""
+    model, tin, tout, usd, source = "?", 0, 0, None, ""
+    for m in messages:
+        if not isinstance(m, ModelResponse):
+            continue
+        model = m.model_name or model
+        if m.usage:
+            tin += m.usage.input_tokens or 0
+            tout += m.usage.output_tokens or 0
+        actual = (m.provider_details or {}).get("cost")
+        if actual is not None:
+            usd, source = (usd or 0.0) + float(actual), "actual"
+        elif source != "actual":  # only estimate while no actuals seen
+            try:
+                usd, source = (usd or 0.0) + float(m.cost().total_price), "estimate"
+            except Exception:
+                pass  # model not in the genai-prices snapshot yet — tokens only
+    return RunCost(model=model, input_tokens=tin, output_tokens=tout, usd=usd, source=source)
+
+
 def default_model() -> str:
     """One-shot default: KO_DEFAULT_MODEL → `[llm] model` → the basic tier."""
     return config.setting("KO_DEFAULT_MODEL", "llm", "model", model_for("basic"))
@@ -58,10 +111,12 @@ def run(
     system: str | None = None,
 ) -> str:
     """One prompt (plus optional piped input) → one answer. No tools."""
+    global last_cost
     if stdin:
         prompt = f"{prompt}\n\n<input>\n{stdin}\n</input>"
     agent = Agent(instructions=system) if system else _agent
     result = agent.run_sync(prompt, model=model or default_model())
+    last_cost = run_cost(result.all_messages())
     return str(result.output)
 
 

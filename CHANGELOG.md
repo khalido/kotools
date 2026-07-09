@@ -31,6 +31,10 @@ Cut a release with the repo's `/release` skill.
   direct to DeepSeek via OpenRouter — one prepaid pool, visible in `ko billing`.
 - `ko doctor` live-checks the OpenRouter key via `/credits` — proves it works and
   shows credits left, without spending tokens.
+- Every LLM call now reports its cost on stderr — `[model · 66→21 tok · $0.0012]`
+  — using OpenRouter's *actual* billed cost when available (genai-prices estimate,
+  marked `~`, otherwise). Covers `ko llm`, agents, `ko brief`, `yt -s`; `sessions
+  summarize` totals its spend.
 
 ## [2026.7.9] - 2026-07-09
 

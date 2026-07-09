@@ -144,3 +144,44 @@ def test_config_error_none_when_missing_or_valid(monkeypatch, tmp_path):
     assert config.config_error() is None
     config._data.cache_clear()
     config.config_error.cache_clear()
+
+
+# --- run cost: OR actuals preferred, estimate fallback, tokens always ---
+
+
+def _resp(cost=None, tin=10, tout=5, model="m:x"):
+    from pydantic_ai.messages import ModelResponse, TextPart
+    from pydantic_ai.usage import RequestUsage
+
+    return ModelResponse(
+        parts=[TextPart(content="x")],
+        usage=RequestUsage(input_tokens=tin, output_tokens=tout),
+        model_name=model,
+        provider_details={"cost": cost} if cost is not None else None,
+    )
+
+
+def test_run_cost_prefers_openrouter_actuals():
+    from ko import llm
+
+    rc = llm.run_cost([_resp(cost=0.001), _resp(cost=0.002)])
+    assert rc.source == "actual"
+    assert abs(rc.usd - 0.003) < 1e-9
+    assert (rc.input_tokens, rc.output_tokens) == (20, 10)
+    assert "$0.0030" in rc.note and "~" not in rc.note  # actuals are exact, not approximate
+
+
+def test_run_cost_tokens_only_when_unpriceable():
+    from ko import llm
+
+    # no provider cost + model unknown to genai-prices -> tokens only, no $ in the note
+    rc = llm.run_cost([_resp(model="nonexistent:model-xyz")])
+    assert rc.usd is None
+    assert "tok" in rc.note and "$" not in rc.note
+
+
+def test_run_cost_tiny_amounts_never_show_zero():
+    from ko import llm
+
+    rc = llm.run_cost([_resp(cost=0.00001)])
+    assert "<$0.0001" in rc.note  # never a misleading "$0.0000"
