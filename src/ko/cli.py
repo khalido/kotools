@@ -33,10 +33,12 @@ def _startup(
         None, "--version", "-V", callback=_version_callback, is_eager=True, help="show version and exit"
     ),
 ) -> None:
-    """Runs before every command: make config.toml [keys] available as env vars."""
-    from . import config
+    """Runs before every command: make config.toml [keys] available as env vars,
+    and instrument LLM telemetry if opted in ([telemetry] enabled — off by default)."""
+    from . import config, telemetry
 
     config.load_keys_into_env()
+    telemetry.setup()
 
 
 @app.command("doctor")
@@ -49,6 +51,7 @@ def doctor() -> None:
     from rich.table import Table
 
     from . import config, google_auth, llm as _llm, mcp_client as mcp_client_mod
+    from . import telemetry as telemetry_mod
 
     def env(var: str) -> tuple[str, str]:
         return {
@@ -175,6 +178,16 @@ def doctor() -> None:
             "OPENROUTER_API_KEY",
             env("OPENROUTER_API_KEY"),
         ),
+        (
+            "telemetry",
+            "LLM traces → PostHog (opt-in, metadata-only by default)",
+            "[telemetry] enabled + POSTHOG_API_KEY",
+            ("✓ on", "green")
+            if telemetry_mod.enabled() and config.key_source("POSTHOG_API_KEY")
+            else ("✗ enabled but no POSTHOG_API_KEY", "red")
+            if telemetry_mod.enabled()
+            else ("– off (default)", "yellow"),
+        ),
     ]
 
     table = Table(title="ko doctor", title_justify="left")
@@ -191,6 +204,32 @@ def doctor() -> None:
     providers = sorted({m.split(":")[0] for m in extra})
     Console().print(
         f"[dim]models available to -m: {len(extra)} across {', '.join(providers) or 'none'}[/dim]"
+    )
+
+    # effective non-secret settings + where each resolves from (env / config.toml / default)
+    from . import dirs, gcal, publish as _publish
+    from .google_auth import active_account
+    from .x import _default_handle
+
+    settings = [
+        ("llm model", _llm.default_model(), config.setting_source("KO_DEFAULT_MODEL", "llm", "model")),
+        (
+            "agent model",
+            config.setting("KO_AGENT_MODEL", "agents", "model", "(per-agent default)"),
+            config.setting_source("KO_AGENT_MODEL", "agents", "model"),
+        ),
+        ("cal timezone", gcal.tz_name(), "config" if config.get("cal", "timezone") else "default"),
+        ("x handle", _default_handle(), config.setting_source("KO_X_HANDLE", "x", "handle")),
+        ("google account", active_account(), config.setting_source("KO_GOOGLE_ACCOUNT", "google", "account")),
+        ("publish domain", _publish.publish_domain() or "(workers.dev)", "config" if config.get("publish", "domain") else "default"),
+    ]
+    Console().print(
+        "[dim]settings: "
+        + " · ".join(f"{name}={val} ({src})" for name, val, src in settings)
+        + "[/dim]"
+    )
+    Console().print(
+        f"[dim]dirs: config={dirs.config_dir()} · state={dirs.state_dir()} · cache={dirs.cache_dir()}[/dim]"
     )
 
 

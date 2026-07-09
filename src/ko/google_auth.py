@@ -117,7 +117,7 @@ def id_from_url(value: str, kind: str) -> str:
 def active_account() -> str:
     """The Google account to use: `--account` (via KO_GOOGLE_ACCOUNT) → config
     `[google] account` → 'default'."""
-    return os.environ.get("KO_GOOGLE_ACCOUNT") or config.get("google", "account") or DEFAULT_ACCOUNT
+    return config.setting("KO_GOOGLE_ACCOUNT", "google", "account", DEFAULT_ACCOUNT)
 
 
 def client_file(account: str | None = None) -> Path:

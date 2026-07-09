@@ -55,7 +55,7 @@ def _default_handle() -> str:
     """My X handle for `ko x lists` / `ko x <name>`: KO_X_HANDLE env → config `[x] handle`
     → 'ko'. The app-only bearer can't self-identify (get_me needs OAuth user-context), so the
     handle is configured once, not auto-detected."""
-    return os.environ.get("KO_X_HANDLE") or config.get("x", "handle") or "ko"
+    return config.setting("KO_X_HANDLE", "x", "handle", "ko")
 
 
 @dataclass

@@ -48,3 +48,18 @@ def key_source(name: str) -> str | None:
 def get(section: str, key: str, default=None):
     """A non-secret config value, e.g. get('publish', 'domain')."""
     return (_data().get(section) or {}).get(key, default)
+
+
+def setting(env_var: str, section: str, key: str, default=None):
+    """A non-secret setting with the standard resolution chain: env var wins,
+    then config.toml `[section] key`, then the baked default."""
+    return os.environ.get(env_var) or get(section, key) or default
+
+
+def setting_source(env_var: str, section: str, key: str) -> str:
+    """Where a setting resolves from: 'env', 'config', or 'default'."""
+    if os.environ.get(env_var):
+        return "env"
+    if get(section, key):
+        return "config"
+    return "default"

@@ -13,6 +13,16 @@ Cut a release with the repo's `/release` skill.
 
 ## [Unreleased]
 
+### Added
+
+- Opt-in LLM telemetry: `[telemetry] enabled = true` + `POSTHOG_API_KEY` sends
+  provider-agnostic traces (model/tokens/cost) to PostHog via pydantic-ai OTel
+  instrumentation; off by default, metadata-only unless `include_content = true`.
+- `[llm] model` and `[agents] model` in config.toml — the default model now has a
+  config home (env var still wins).
+- `ko doctor` footer: effective settings with their source (env/config/default)
+  and the config/state/cache dir paths.
+
 ## [2026.7.9] - 2026-07-09
 
 First tagged release — everything since the repo started (2026-04). `ko` is an

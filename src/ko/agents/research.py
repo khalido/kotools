@@ -9,16 +9,15 @@ Interactive: research.repl()
 
 from __future__ import annotations
 
-import os
-
 from pydantic_ai import Agent
 
+from ko import config
 from ko.agents import _shared
 from ko.agents._toolsets import news, papers, web
 
-# Default model. KO_AGENT_MODEL (read at import) overrides the default; the `-m` flag
-# overrides per-run via the model= arg (see run/repl). KO_AGENT_MODEL is global to all agents.
-_MODEL = os.environ.get("KO_AGENT_MODEL", "openrouter:z-ai/glm-5.2")
+# Default model (read at import): KO_AGENT_MODEL -> `[agents] model` in config.toml ->
+# baked default; the `-m` flag overrides per-run via the model= arg (see run/repl).
+_MODEL = config.setting("KO_AGENT_MODEL", "agents", "model", "openrouter:z-ai/glm-5.2")
 
 agent = Agent(
     _MODEL,

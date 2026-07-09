@@ -7,7 +7,6 @@ just a different model and a smaller toolset subset.
 
 from __future__ import annotations
 
-import os
 
 from pydantic_ai import Agent
 
@@ -15,13 +14,13 @@ from ko import config
 from ko.agents import _shared
 from ko.agents._toolsets import tmdb, web
 
-# Cheap model — this is a light task. KO_AGENT_MODEL (read at import) overrides the
-# default; the `-m` flag overrides per-run via model=. KO_AGENT_MODEL is global to all agents.
-_MODEL = os.environ.get("KO_AGENT_MODEL", "google:gemini-3.5-flash")
+# Cheap model — this is a light task. KO_AGENT_MODEL -> `[agents] model` -> baked
+# default (read at import); the `-m` flag overrides per-run via model=.
+_MODEL = config.setting("KO_AGENT_MODEL", "agents", "model", "google:gemini-3.5-flash")
 
 # Optional personal taste profile, kept out of the code: set `[agents] tv_tastes` in
 # config.toml (or KO_TV_TASTES). Empty by default — the agent just recommends broadly.
-_TASTES = os.environ.get("KO_TV_TASTES") or config.get("agents", "tv_tastes", "")
+_TASTES = config.setting("KO_TV_TASTES", "agents", "tv_tastes", "")
 _taste_line = f"Ko's taste: {_TASTES}. " if _TASTES else ""
 
 agent = Agent(

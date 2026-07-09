@@ -5,7 +5,7 @@ so cost and output are predictable in pipes. Tool-use judgment belongs to
 `ko ai`, the second level.
 
 v2 pattern: one model-less Agent, model passed per run. Default model is
-cheap-tier Gemini, override via -m or KO_DEFAULT_MODEL.
+cheap-tier Gemini, override via -m, KO_DEFAULT_MODEL, or `[llm] model` in config.toml.
 """
 
 from __future__ import annotations
@@ -17,6 +17,7 @@ from pathlib import Path
 
 from pydantic_ai import Agent
 
+from ko import config
 
 FALLBACK_MODEL = "google:gemini-3.5-flash"
 
@@ -31,7 +32,7 @@ _agent = Agent(instructions=DEFAULT_SYSTEM)
 
 
 def default_model() -> str:
-    return os.environ.get("KO_DEFAULT_MODEL", FALLBACK_MODEL)
+    return config.setting("KO_DEFAULT_MODEL", "llm", "model", FALLBACK_MODEL)
 
 
 def run(
