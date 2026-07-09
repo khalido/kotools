@@ -47,9 +47,35 @@ web = FunctionToolset(
 
 
 @web.tool_plain
-def exa_search(query: str, n: int = 5) -> list[ExaResult]:
-    """Semantic web search. Returns title, URL, date, and text excerpt per result."""
-    return _try("exa_search", exa_mod.search, query, n=n, with_text=True)
+def exa_search(
+    query: str,
+    n: int = 5,
+    include_domains: list[str] | None = None,
+    exclude_domains: list[str] | None = None,
+    since_months: int | None = None,
+    start_published_date: str | None = None,
+    end_published_date: str | None = None,
+) -> list[ExaResult]:
+    """Semantic web search. Returns title, URL, date, and a text excerpt per result
+    (capped ~3000 chars — use exa_get/fetch_url when a page needs full reading).
+
+    Filter params (all optional):
+    - include_domains / exclude_domains: e.g. [".edu"] or ["reddit.com"]
+    - since_months: restrict to the last N months (ergonomic shortcut for start_published_date)
+    - start_published_date / end_published_date: YYYY-MM-DD date bounds (override since_months if both set)
+    Results cover all time by default."""
+    return _try(
+        "exa_search",
+        exa_mod.search,
+        query,
+        n=n,
+        include_domains=include_domains,
+        exclude_domains=exclude_domains,
+        since_months=since_months,
+        start_published_date=start_published_date,
+        end_published_date=end_published_date,
+        with_text=True,
+    )
 
 
 @web.tool_plain
@@ -74,7 +100,8 @@ papers = FunctionToolset(
 
 @papers.tool_plain
 def arxiv_search(query: str, n: int = 5) -> list[ArxivResult]:
-    """Search arxiv for academic papers by topic. Returns id, title, authors, abstract, pdf url."""
+    """Search arxiv for academic papers by topic. Relevance-ranked across all years (not
+    newest-first — recent work may rank low). Returns id, title, authors, abstract, pdf url."""
     return _try("arxiv_search", arxiv_mod.search, query, max_results=n)
 
 
@@ -86,7 +113,8 @@ def arxiv_fetch(arxiv_id: str) -> str:
 
 @papers.tool_plain
 def papers_search(query: str, n: int = 5) -> list[Work]:
-    """Cross-publisher paper search via OpenAlex (all journals, not just arxiv). Returns title, year, citations, DOI, journal, open-access url."""
+    """Cross-publisher paper search via OpenAlex (all journals, not just arxiv). Relevance-ranked,
+    all years. Returns title, year, citations, DOI, journal, open-access url."""
     return _try("papers_search", papers_mod.search, query, n=n)
 
 
@@ -99,7 +127,9 @@ def papers_cites(ref: str, n: int = 10) -> list[Work]:
 
 @papers.tool_plain
 def papers_refs(ref: str, n: int = 10) -> list[Work]:
-    """A paper's own references (by DOI or arxiv id), most-cited first — walk the citation graph backward for foundational work. The other half of snowballing, paired with papers_cites."""
+    """A paper's own references (by DOI or arxiv id), most-cited first — walk the citation graph backward
+    for foundational work. The other half of snowballing, paired with papers_cites. Drawn from the
+    paper's first 50 references, so a long bibliography isn't fully covered."""
     return _try("papers_refs", papers_mod.refs, ref, n=n)
 
 
@@ -111,7 +141,9 @@ def papers_get(ref: str) -> Work:
 
 @papers.tool_plain
 def hf_search(query: str, n: int = 5) -> list[Paper]:
-    """Search Hugging Face Daily Papers (trending ML research). Returns title, upvotes, id, summaries, linked repos/models."""
+    """Search Hugging Face Daily Papers (trending ML research). Only papers featured on hf.co/papers
+    are indexed — zero results ≠ the paper doesn't exist (fall back to arxiv_search/papers_search).
+    Returns title, upvotes, id, summaries, linked repos/models."""
     return _try("hf_search", hf_mod.search, query, n=n)
 
 
@@ -123,19 +155,55 @@ def hf_get(ref: str) -> str:
 
 # --- news (Hacker News) ---
 news = FunctionToolset(
-    instructions="Hacker News: practitioner signal; hn_discussion pulls a story's comment thread."
+    instructions="Hacker News: practitioner signal — comments carry deployment caveats and "
+    "failure reports that papers and blog posts omit, so use hn_discussion to sanity-check "
+    "claims found via web/paper search. hn_top for what's hot now, hn_search for a topic's "
+    "discussion history."
 )
 
 
 @news.tool_plain
-def hn_search(query: str, n: int = 10) -> list[Story]:
-    """Search Hacker News stories by keyword. Returns title, url, points, comment count, date."""
-    return _try("hn_search", hn_mod.search, query, n=n)
+def hn_top(n: int = 10, days: int = 1) -> list[Story]:
+    """Top Hacker News stories by points over the last `days` days (days=1 ≈ today's front page). The 'what's hot on HN' tool."""
+    return _try("hn_top", hn_mod.top, n=n, days=days)
+
+
+@news.tool_plain
+def hn_front_page(n: int = 10) -> list[Story]:
+    """The HN front page *right now* (live). Use for 'on HN at this moment'; hn_top instead for a points-ranked window over past days."""
+    return _try("hn_front_page", hn_mod.front_page, n=n)
+
+
+@news.tool_plain
+def hn_search(
+    query: str,
+    n: int = 10,
+    since_months: int = 12,
+    by_date: bool = False,
+    min_comments: int = 0,
+) -> list[Story]:
+    """Search Hacker News stories by keyword. Returns title, url, points, comment count, date.
+
+    Covers the last 12 months by default — pass since_months for older topics (0 = all time);
+    an empty result under the default window does NOT mean HN never discussed it.
+    Relevance order (by_date=True for newest first); min_comments skips stories with no discussion.
+    Algolia matches URLs and exact titles through plain search, so searching a URL/DOI/title
+    answers 'has this been discussed on HN?'."""
+    return _try(
+        "hn_search",
+        hn_mod.search,
+        query,
+        n=n,
+        since_months=since_months,
+        by_date=by_date,
+        min_comments=min_comments,
+    )
 
 
 @news.tool_plain
 def hn_discussion(story_id: str, max_comments: int = 30) -> dict:
-    """Fetch a Hacker News story + its comment thread (community discussion) by story id."""
+    """Fetch a Hacker News story + its comment thread (community discussion) by story id.
+    Returns the first `max_comments` comments in thread order (0 = the whole thread)."""
 
     def _do():
         story, comments = hn_mod.item(story_id, max_comments=max_comments)

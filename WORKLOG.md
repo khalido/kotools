@@ -2,6 +2,39 @@
 
 Newest first. Big picture only — git commits have the detail; candidate ideas and decisions live in `docs/ideas.md`.
 
+## 2026-07-09 — strategic review sweep + `ko brief`/`ko yt`/sessions index
+
+- **Full hands-on review** (4 Sonnet testers over every cluster + a researcher dogfooding ko + a Fable
+  feedback pass). The tool held up; the fixes below came out of real invocations, not code reading.
+- **Agent toolsets stop starving the library** (external feedback, verified + applied): `hn_top` +
+  `hn_front_page` (new `hn.front_page()` via Algolia's `front_page` tag; CLI `ko hn top --now`),
+  `hn_search` widened (since_months/by_date/min_comments), `exa_search` widened (domain/date filters).
+  **Docstring-as-contract audit**: every toolset docstring now states its silent defaults (hn's 12-month
+  window, exa's ~3000-char text cap, hf's coverage gap, papers_refs' 50-ref cap, arxiv's relevance sort) —
+  an agent must never mistake a windowed empty result for "doesn't exist". `news` instructions rewritten.
+- **Agent-contract fixes** (the 2026-07-03 pass, finished): Google `HttpError` net in `_google_errors`
+  (gmail view/thread tracebacked on a bad id; raw `<HttpError …url…>` blobs leaked into --json errors) +
+  applied to all gmail/cal/gsheets-write commands; `exa get` exits 1 when ALL urls fail; clean errors for
+  `hn item`/`x user` bogus ids (raw httpx/requests leaks); `papers search ""` = usage error; `papers cites`
+  validates W-ids (typo'd id looked like zero citations); `x lists --json` biggest-first; `hn search`
+  no-results names the 12-month window; `ko logs` error field now captures `_die`'s code label (was always
+  null); mcp inspect says "(HTML page, not an MCP endpoint?)" instead of quoting HTML; doctor lists
+  gdocs/cal/gmail + mcp + billing (needs column folds, not truncates); cal clamps ongoing multi-day events
+  to the queried window + flattens multi-line locations; `cal find --calendar`; gmail strips invisible
+  ESP padding chars; Post/Story urls included in --json (@property ≠ asdict).
+- **`ko yt <url|id>`** — youtube-transcript-api (free, keyless; manual subs preferred over auto);
+  `--json` snippets, `-s` LLM summary; `ko <youtube-url>` now routes to the transcript (fails loud on
+  no captions — the description page was a trap). Gemini video fallback deferred until it bites.
+- **`ko brief`** — deterministic gather (cal + unread gmail + hn top + hf top, each best-effort) → one
+  cheap-model synthesis; `--raw` skips the LLM. A scripted pipeline, NOT an agent loop (per ideas.md).
+- **`ko agent sessions summarize`** — SQLite index at `~/.local/state/ko/ko.db` (rebuildable projection;
+  JSON files stay source of truth): cheap-model structured output (title/takeaway/tags) over a
+  **deterministic digest** — Q&A verbatim, tool calls compressed to one `[tool: name(args…) → return…]`
+  line each, trim order never drops the first prompt or final answer. `sessions --tag/--search` filter.
+- Research scan: `ko pwc` still wait-for-API-stability; publish already on Workers Static Assets
+  (deprecation scare was a false alarm); agent-self-critique idea banked in ideas.md (build when
+  summarize-review loop exists — which sessions summarize now starts). 240 tests passing (was 180).
+
 ## 2026-07-06 — `ko prompt opencode` + skills investigation
 
 - Added **`ko prompt opencode`** — driving OpenCode non-interactively (`opencode run "msg" -m provider/model
@@ -181,6 +214,6 @@ Newest first. Big picture only — git commits have the detail; candidate ideas 
 
 - [ ] **kotools cloud backend (Cloudflare Worker + D1 + R2 on khalido.dev)** — store useful state in the cloud, not just locally: the publish registry (today `~/.local/state/ko/publish.json` → `ko publish list`), session summaries, agent memory. Local stays source-of-truth/cache; cloud is the sync + shared layer agents can read/write. Natural home for the `ko sessions summarize` index (D1 instead of local SQLite). This is also the worker that the publish tool's `--hono`/D1/R2 path would build on.
 - [ ] **Cloudflare Sandbox for agent code execution** — <https://developers.cloudflare.com/sandbox/> — a sandboxed place for agents to run throwaway code without local blast radius (the "agent writes + runs a script" need). Pairs with the cloud backend.
-- [ ] **`ko sessions summarize` → SQLite (`~/.local/state/ko/ko.db`)** — after a session, run a cheap-model pass that writes a row: `title`, a one-line `summary` (lightweight memory — the useful takeaway), `tags` (open-ended; refine the useful set over time), plus id/agent/model/timestamps. Enables "take me back to that one" and tag/topic filtering ("anything about python or HN"). The JSON session files stay the source of truth; SQLite is the index + memory layer. pydantic-ai does the summarize/tag pass.
+- [x] **`ko sessions summarize` → SQLite** — SHIPPED 2026-07-09 as `ko agent sessions summarize` (see that entry). Next iteration: the banked agent-self-critique loop in ideas.md rides on this.
 - [ ] **PyPI trusted publisher** — tag-push GitHub Action (`publish.yml`), OIDC, no long-lived tokens: https://docs.pypi.org/trusted-publishers/
 - [ ] **MCP server (`ko mcp`)** — shared-core-functions approach: CLI and MCP both wrap the same module functions. stdio for local clients; HTTP on Railway later. Stub + notes in `src/ko/mcp_server.py`.

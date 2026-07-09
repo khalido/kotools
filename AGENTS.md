@@ -20,7 +20,8 @@ they're present. If a command fails with an auth/key error, `ko doctor` tells yo
 - **`--json` for structured output.** Most read commands take `--json`. The shape is a
   **JSON array of objects** unless the command's `--help` says otherwise (a few return a
   single object — e.g. `ko tv --json` is `{top, matches}`, `ko hn item --json` is
-  `{story, comments}` — and `ko gsheets get --json` is a 2D array).
+  `{story, comments}`, `ko papers get --json` is a single work object, `ko hf info --json`
+  is a single paper object — and `ko gsheets get --json` is a 2D array).
   - Under `--json`, **errors are a JSON object on stderr**: `{"error": "...", "code": "..."}`.
   - Under `--json`, **empty results are `[]` on stdout** (plus a note on stderr), so a
     downstream `| jq` never chokes.
@@ -41,7 +42,7 @@ they're present. If a command fails with an auth/key error, `ko doctor` tells yo
 
 `ko` routes a leading bare argument deterministically (explicit command names always win):
 
-- `ko <url>` → `ko fetch <url>` (URL → markdown)
+- `ko <url>` → `ko fetch <url>` (URL → markdown; YouTube URLs return the transcript, or fail cleanly when captions are off)
 - `ko <file>` → `ko doc <file>` (PDF/Office/image → text), when the arg is an existing file
 - `ko x <name>` → `ko x list <name>` (anything after `x` that isn't an x subcommand is a list name)
 - `ko <anything> help` → `ko <anything> --help` (trailing `help` prints help at any level: `ko help`, `ko exa help`, `ko exa search help`)

@@ -185,7 +185,10 @@ def oa_url(ref: str) -> str:
 def cites(ref: str, n: int = DEFAULT_N) -> list[Work]:
     """Works citing this paper, most-cited first — the citation graph, forward."""
     rid = _resolve_id(ref)
-    wid = rid if rid.startswith("W") else _work(_get(f"/works/{rid}")).openalex_id
+    # For DOI/arxiv refs, _get already validates existence (404 → RuntimeError).
+    # For a bare W-id we need an explicit existence check — filtering cites:W<bogus>
+    # returns empty results silently, indistinguishable from a real zero-citation paper.
+    wid = _work(_get(f"/works/{rid}")).openalex_id
     data = _get(
         "/works",
         {

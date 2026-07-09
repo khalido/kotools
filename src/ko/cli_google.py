@@ -24,6 +24,15 @@ from . import gsheets as gsheets_mod
 from ._cli_shared import _die, _no_results, _tsv_cell, app
 
 
+def _http_error_msg(e: HttpError) -> str:
+    """Clean human-readable message from a Google HttpError.
+    Uses the API's own reason string (e.g. 'Unable to parse range: BadTab!A1')
+    instead of the full repr which leaks API URLs."""
+    status = e.resp.status
+    reason = e.reason or str(e.content[:120].decode("utf-8", "replace"))
+    return f"[{status}] {reason}"
+
+
 @contextmanager
 def _google_errors(as_json: bool = False):
     """One net for every Google failure mode: a domain error (403/404), a stray HttpError
@@ -31,8 +40,10 @@ def _google_errors(as_json: bool = False):
     all of them into a clean `_die` line instead of a raw traceback."""
     try:
         yield
-    except (google_auth.GoogleError, google_auth.AuthError, HttpError) as e:
+    except (google_auth.GoogleError, google_auth.AuthError) as e:
         _die(str(e), as_json=as_json)
+    except HttpError as e:
+        _die(_http_error_msg(e), as_json=as_json)
 
 # --- sub-apps ---
 
@@ -249,6 +260,9 @@ def gsheets_set(
     except (gsheets_mod.SheetsError, ValueError, json.JSONDecodeError) as e:
         typer.echo(str(e), err=True)
         raise typer.Exit(1) from None
+    except HttpError as e:
+        typer.echo(_http_error_msg(e), err=True)
+        raise typer.Exit(1) from None
     typer.echo(f"{n} cell(s) updated", err=True)
 
 
@@ -278,6 +292,9 @@ def gsheets_put(
     except (gsheets_mod.SheetsError, ValueError, json.JSONDecodeError) as e:
         typer.echo(str(e), err=True)
         raise typer.Exit(1) from None
+    except HttpError as e:
+        typer.echo(_http_error_msg(e), err=True)
+        raise typer.Exit(1) from None
     typer.echo(f"{n} cell(s) updated", err=True)
 
 
@@ -298,6 +315,8 @@ def gsheets_find(
         )
     except gsheets_mod.SheetsError as e:
         _die(str(e), as_json=as_json)
+    except HttpError as e:
+        _die(_http_error_msg(e), as_json=as_json)
     if not hits:
         _no_results("no matches", as_json)
     if as_json:
@@ -329,6 +348,9 @@ def gsheets_header(
     except (gsheets_mod.SheetsError, ValueError) as e:
         typer.echo(str(e), err=True)
         raise typer.Exit(1) from None
+    except HttpError as e:
+        typer.echo(_http_error_msg(e), err=True)
+        raise typer.Exit(1) from None
     typer.echo("header formatted", err=True)
 
 
@@ -343,6 +365,9 @@ def gsheets_add_tab(
     except gsheets_mod.SheetsError as e:
         typer.echo(str(e), err=True)
         raise typer.Exit(1) from None
+    except HttpError as e:
+        typer.echo(_http_error_msg(e), err=True)
+        raise typer.Exit(1) from None
     typer.echo(str(gid))
 
 
@@ -355,6 +380,9 @@ def gsheets_new(
         new_id = gsheets_mod.create_spreadsheet(title)
     except gsheets_mod.SheetsError as e:
         typer.echo(str(e), err=True)
+        raise typer.Exit(1) from None
+    except HttpError as e:
+        typer.echo(_http_error_msg(e), err=True)
         raise typer.Exit(1) from None
     typer.echo(new_id)
     typer.echo(f"https://docs.google.com/spreadsheets/d/{new_id}/edit", err=True)
@@ -370,6 +398,9 @@ def gsheets_clear(
         cleared = gsheets_mod.clear_range(gsheets_mod.sheet_id(spreadsheet_id), range_name)
     except gsheets_mod.SheetsError as e:
         typer.echo(str(e), err=True)
+        raise typer.Exit(1) from None
+    except HttpError as e:
+        typer.echo(_http_error_msg(e), err=True)
         raise typer.Exit(1) from None
     typer.echo(f"cleared {cleared}", err=True)
 
@@ -654,15 +685,23 @@ def gdocs_accounts() -> None:
 # --- cal helpers ---
 
 
-def _fmt_events(events) -> None:
-    """Print events grouped by day, human-readable, in the local zone."""
+def _fmt_events(events, window_start: str | None = None) -> None:
+    """Print events grouped by day, human-readable, in the local zone.
+
+    `window_start` (YYYY-MM-DD) clamps the grouping date for all-day events that started
+    before the requested window — so a multi-day event returned by the API shows under the
+    queried day rather than its original start date."""
     from datetime import datetime
 
     zone = gcal_mod.tz()
     last_day = None
     for ev in events:
         if ev.all_day:
-            day, when = ev.start, "all day"
+            # Clamp: an ongoing all-day event whose start precedes the window boundary should
+            # appear under the first day the user asked about, not the day it originally started.
+            raw_day = ev.start
+            day = max(raw_day, window_start) if window_start and raw_day < window_start else raw_day
+            when = "all day"
         else:
             dt = datetime.fromisoformat(ev.start).astimezone(zone)
             day, when = dt.date().isoformat(), dt.strftime("%H:%M")
@@ -670,18 +709,21 @@ def _fmt_events(events) -> None:
             header = datetime.strptime(day, "%Y-%m-%d").strftime("%a %d %b")
             typer.echo(f"\n{header}")
             last_day = day
-        loc = f"  @ {ev.location}" if ev.location else ""
+        loc = f"  @ {ev.location.replace(chr(10), ', ').replace(chr(13), '')}" if ev.location else ""
         typer.echo(f"  {when:>7}  {ev.summary}  [{ev.calendar_name}]{loc}")
 
 
-def _emit_events(events, as_json: bool) -> bool:
-    """JSON or grouped text. Returns False if there were no events (and not JSON)."""
+def _emit_events(events, as_json: bool, window_start: str | None = None) -> bool:
+    """JSON or grouped text. Returns False if there were no events (and not JSON).
+
+    `window_start` (YYYY-MM-DD) is forwarded to `_fmt_events` to clamp all-day event headers
+    for bounded views like `--today` / `cal day`."""
     if as_json:
         typer.echo(json.dumps([asdict(e) for e in events], default=str))
         return True
     if not events:
         return False
-    _fmt_events(events)
+    _fmt_events(events, window_start=window_start)
     return True
 
 
@@ -706,14 +748,20 @@ def _cal_main(
     _set_account(account)
     if ctx.invoked_subcommand is not None:
         return
+    from datetime import datetime as _dt
     n = 1 if today else days
-    try:
-        ids = gcal_mod.resolve_calendar_ids(calendar) if calendar else None
-        events = gcal_mod.list_events(days=n, calendar_ids=ids)
-    except gcal_mod.CalError as e:
-        typer.echo(str(e), err=True)
-        raise typer.Exit(1) from None
-    if not _emit_events(events, as_json):
+    # For bounded views, clamp all-day event headers to today so ongoing multi-day events
+    # don't appear under their original start date header (e.g. a Jul 5–12 event shows
+    # under "today" when you run `ko cal --today`, not under "Sun 05 Jul").
+    win_start = _dt.now(gcal_mod.tz()).date().isoformat()
+    with _google_errors(as_json):
+        try:
+            ids = gcal_mod.resolve_calendar_ids(calendar) if calendar else None
+            events = gcal_mod.list_events(days=n, calendar_ids=ids)
+        except gcal_mod.CalError as e:
+            typer.echo(str(e), err=True)
+            raise typer.Exit(1) from None
+    if not _emit_events(events, as_json, window_start=win_start):
         typer.echo(f"nothing in the next {n} day(s)", err=True)
 
 
@@ -728,18 +776,19 @@ def cal_day(
     """All events for a single day."""
     from datetime import datetime, timedelta
 
-    try:
-        _, val = gcal_mod.parse_when(date_str)
-        d = val.date() if isinstance(val, datetime) else val
-        start = datetime(d.year, d.month, d.day, tzinfo=gcal_mod.tz())
-        ids = gcal_mod.resolve_calendar_ids(calendar) if calendar else None
-        events = gcal_mod.list_events(
-            time_min=start, time_max=start + timedelta(days=1), calendar_ids=ids
-        )
-    except (gcal_mod.CalError, ValueError) as e:
-        typer.echo(str(e), err=True)
-        raise typer.Exit(1) from None
-    if not _emit_events(events, as_json):
+    with _google_errors(as_json):
+        try:
+            _, val = gcal_mod.parse_when(date_str)
+            d = val.date() if isinstance(val, datetime) else val
+            start = datetime(d.year, d.month, d.day, tzinfo=gcal_mod.tz())
+            ids = gcal_mod.resolve_calendar_ids(calendar) if calendar else None
+            events = gcal_mod.list_events(
+                time_min=start, time_max=start + timedelta(days=1), calendar_ids=ids
+            )
+        except (gcal_mod.CalError, ValueError) as e:
+            typer.echo(str(e), err=True)
+            raise typer.Exit(1) from None
+    if not _emit_events(events, as_json, window_start=d.isoformat()):
         typer.echo(f"nothing on {date_str}", err=True)
 
 
@@ -754,11 +803,12 @@ def cal_add(
     cal: str = typer.Option("primary", "--cal", help="calendar id (default: primary)"),
 ) -> None:
     """Create an event. Timed if WHEN has a time (T), else all-day. Prints the event id."""
-    try:
-        ev = gcal_mod.create_event(title, when, end=end, calendar_id=cal, minutes=minutes)
-    except (gcal_mod.CalError, ValueError) as e:
-        typer.echo(str(e), err=True)
-        raise typer.Exit(1) from None
+    with _google_errors():
+        try:
+            ev = gcal_mod.create_event(title, when, end=end, calendar_id=cal, minutes=minutes)
+        except (gcal_mod.CalError, ValueError) as e:
+            typer.echo(str(e), err=True)
+            raise typer.Exit(1) from None
     typer.echo(f"created: {ev.summary}  {ev.start}  [{ev.calendar_id}]", err=True)
     typer.echo(ev.id)
 
@@ -770,14 +820,19 @@ def cal_find(
     past: bool = typer.Option(
         False, "--past", "-p", help="search the past, not the future ('when was my last X')"
     ),
+    calendar: list[str] = typer.Option(
+        None, "--calendar", "-c", help="limit to these calendar(s) by name or id; repeatable"
+    ),
     as_json: bool = typer.Option(False, "--json", help="emit JSON"),
 ) -> None:
     """Find events whose title matches TEXT. Forward by default; `--past` for 'when was my last X'."""
-    try:
-        events = gcal_mod.search_events(text, days=days, past=past)
-    except gcal_mod.CalError as e:
-        typer.echo(str(e), err=True)
-        raise typer.Exit(1) from None
+    with _google_errors(as_json):
+        try:
+            ids = gcal_mod.resolve_calendar_ids(calendar) if calendar else None
+            events = gcal_mod.search_events(text, days=days, past=past, calendar_ids=ids)
+        except gcal_mod.CalError as e:
+            typer.echo(str(e), err=True)
+            raise typer.Exit(1) from None
     if not _emit_events(events, as_json):
         typer.echo(f"no {'past' if past else 'upcoming'} '{text}' within {days} day(s)", err=True)
 
@@ -785,11 +840,12 @@ def cal_find(
 @cal_app.command("cals")
 def cal_cals(as_json: bool = typer.Option(False, "--json", help="emit JSON")) -> None:
     """List calendars (TSV: id, name, role, primary)."""
-    try:
-        cals = gcal_mod.list_calendars()
-    except gcal_mod.CalError as e:
-        typer.echo(str(e), err=True)
-        raise typer.Exit(1) from None
+    with _google_errors(as_json):
+        try:
+            cals = gcal_mod.list_calendars()
+        except gcal_mod.CalError as e:
+            typer.echo(str(e), err=True)
+            raise typer.Exit(1) from None
     if as_json:
         typer.echo(json.dumps([asdict(c) for c in cals]))
         return
@@ -855,11 +911,8 @@ def _gmail_main(
     _set_account(account)
     if ctx.invoked_subcommand is not None:
         return
-    try:
+    with _google_errors(as_json):
         msgs = gmail_mod.recent(n=n, unread=unread)
-    except gmail_mod.GmailError as e:
-        typer.echo(str(e), err=True)
-        raise typer.Exit(1) from None
     _emit_messages(msgs, as_json)
 
 
@@ -872,11 +925,8 @@ def gmail_search(
 ) -> None:
     """Search with Gmail's own query syntax (passed verbatim): `ko gmail search is:unread newer_than:2d`."""
     q = " ".join(query) + (" is:unread" if unread else "")
-    try:
+    with _google_errors(as_json):
         msgs = gmail_mod.search(q, n=n)
-    except gmail_mod.GmailError as e:
-        typer.echo(str(e), err=True)
-        raise typer.Exit(1) from None
     _emit_messages(msgs, as_json)
 
 
@@ -888,11 +938,8 @@ def gmail_from(
     as_json: bool = typer.Option(False, "--json", help="emit JSON"),
 ) -> None:
     """Recent mail from a person (shortcut for `search from:<who>`)."""
-    try:
+    with _google_errors(as_json):
         msgs = gmail_mod.from_sender(who, n=n, unread=unread)
-    except gmail_mod.GmailError as e:
-        typer.echo(str(e), err=True)
-        raise typer.Exit(1) from None
     _emit_messages(msgs, as_json)
 
 
@@ -904,11 +951,8 @@ def gmail_view(
     ),
 ) -> None:
     """Read one message: headers + plain-text body."""
-    try:
+    with _google_errors():
         meta, body = gmail_mod.get_message(msg_id)
-    except gmail_mod.GmailError as e:
-        typer.echo(str(e), err=True)
-        raise typer.Exit(1) from None
     typer.echo(f"From:    {meta.from_}")
     typer.echo(f"Date:    {meta.date}")
     typer.echo(f"Subject: {meta.subject}\n")
@@ -925,11 +969,8 @@ def gmail_thread(
     ),
 ) -> None:
     """Read a whole conversation: every message in the thread, oldest first."""
-    try:
+    with _google_errors():
         msgs = gmail_mod.get_thread(thread_id)
-    except gmail_mod.GmailError as e:
-        typer.echo(str(e), err=True)
-        raise typer.Exit(1) from None
     if not msgs:
         typer.echo("no messages", err=True)
         return

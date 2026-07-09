@@ -10,13 +10,14 @@ from pathlib import Path
 import typer
 
 from . import billing as billing_mod
+from . import brief as brief_mod
 from . import llm as llm_mod
 from . import mcp_client as mcp_client_mod
 from . import prompt as prompt_mod
 from . import publish as publish_mod
 from . import ticktick as ticktick_mod
 from .agents import research_run, research_repl, tv_run, tv_repl
-from ._cli_shared import _die, _emit_json, _no_results, app
+from ._cli_shared import _die, _emit_json, _no_results, _tsv_cell, app
 
 # --- sub-apps ---
 
@@ -153,21 +154,178 @@ def agent_tv(
         _die(str(e))
 
 
-@agent_app.command("sessions")
+sessions_app = typer.Typer(
+    help="Saved agent sessions: bare = list; `summarize` = build the SQLite index.",
+    invoke_without_command=True,
+)
+agent_app.add_typer(sessions_app, name="sessions")
+
+
+@sessions_app.callback()
 def agent_sessions(
+    ctx: typer.Context,
     as_json: bool = typer.Option(False, "--json", help="emit JSON instead of TSV"),
+    tag: str = typer.Option(None, "--tag", help="filter to sessions tagged with this word"),
+    search: str = typer.Option(
+        None, "--search", help="case-insensitive substring filter over title + summary"
+    ),
 ) -> None:
-    """List saved agent sessions, newest first (TSV: id, agent, model, title)."""
+    """List saved agent sessions, newest first (TSV: id, agent, model, title, summary, tags).
+
+    Title and tags come from the DB index when summarized (run `ko agent sessions summarize`);
+    unsummarized sessions show the raw first-prompt title with no summary.
+    Use --tag or --search to filter after summarizing.
+    """
+    if ctx.invoked_subcommand:
+        return
     from ko import sessions
 
-    rows = sessions.listing()
+    rows = sessions.listing(tag=tag, search=search)
     if not rows:
+        # "no sessions yet" would mislead when a filter excluded everything
+        if tag or search:
+            what = f"tag '{tag}'" if tag else f"search '{search}'"
+            _no_results(f"no sessions match {what}", as_json)
         _no_results("no sessions yet", as_json)
     if as_json:
         typer.echo(json.dumps(rows, default=str))
         return
     for s in rows:
-        typer.echo(f"{s['id']}\t{s['agent']}\t{s['model']}\t{s['title']}")
+        tags_str = ",".join(s.get("tags") or [])
+        summary = _tsv_cell(s.get("summary") or "")  # LLM-written free text — escape for TSV
+        title = _tsv_cell(s.get("title") or "")
+        typer.echo(f"{s['id']}\t{s['agent']}\t{s['model']}\t{title}\t{summary}\t{tags_str}")
+
+
+@sessions_app.command("summarize")
+def agent_sessions_summarize(
+    n: int = typer.Option(
+        None, "--n", help="max sessions to summarize this run (default: all pending)"
+    ),
+    model: str = typer.Option(
+        None,
+        "--model",
+        "-m",
+        help="model for summarization (default: KO_DEFAULT_MODEL)",
+    ),
+) -> None:
+    """Summarize unsummarized (or stale) agent sessions into the SQLite index.
+
+    For each session file that has no DB row or whose file mtime is newer than
+    the last summarized_at timestamp, makes ONE cheap model call (structured output)
+    to extract a title (≤8 words), a one-sentence summary, and 3-5 topic tags.
+    Writes results to ~/.local/state/ko/ko.db.
+
+    Output: one TSV line per newly summarized session (id, title, tags) on stdout.
+    Progress/counts on stderr. Exit 0 on any success; exit 1 if all attempted calls failed.
+    """
+    import os
+    from datetime import datetime
+
+    from pydantic import BaseModel
+    from pydantic_ai import Agent
+
+    from ko import sessions
+    from ko.llm import default_model
+
+    class SessionSummary(BaseModel):
+        title: str
+        summary: str
+        tags: list[str]
+
+    mdl = model or os.environ.get("KO_DEFAULT_MODEL") or default_model()
+
+    _summarizer = Agent(
+        instructions=(
+            "You summarize agent conversation sessions. "
+            "Given a digest of a user–AI session, return:\n"
+            "- title: ≤8 words capturing the core topic (not a generic label)\n"
+            "- summary: ONE sentence with the useful takeaway (what was found/decided, not just the topic)\n"
+            "- tags: 3-5 lowercase single words for topic filtering\n"
+            "Be specific. 'Researched pydantic-ai agents' is bad; "
+            "'How pydantic-ai FunctionToolsets compose with streaming' is good."
+        ),
+        output_type=SessionSummary,
+    )
+
+    sdir = sessions.sessions_dir()
+    all_files = sorted(sdir.glob("*.json"), reverse=True)
+
+    pending: list[tuple[Path, dict]] = []
+    already_current = 0
+
+    for f in all_files:
+        try:
+            data = json.loads(f.read_text())
+        except (OSError, ValueError):
+            continue
+        sid = data.get("id", f.stem)
+        row = sessions.get_session_row(sid)
+        if row:
+            # stale if the file was modified after the last summarize
+            # Use float timestamps for sub-second accuracy (isoformat at seconds
+            # precision can round a 10ms touch into the same second as summarized_at)
+            file_mtime_f = f.stat().st_mtime
+            summarized_at_str = row.get("summarized_at") or ""
+            summarized_at_f: float = 0.0
+            if summarized_at_str:
+                try:
+                    summarized_at_f = datetime.fromisoformat(summarized_at_str).timestamp()
+                except ValueError:
+                    summarized_at_f = 0.0
+            if file_mtime_f <= summarized_at_f:
+                already_current += 1
+                continue
+        pending.append((f, data))
+
+    if n is not None:
+        pending = pending[:n]
+
+    if not pending:
+        typer.echo(f"0 sessions summarized ({already_current} already current)", err=True)
+        return
+
+    succeeded = 0
+    failed = 0
+    skipped = 0  # no usable content — reported separately, NOT "already current"
+
+    for f, data in pending:
+        sid = data.get("id", f.stem)
+        msgs = data.get("messages", [])
+        digest = sessions._digest(msgs)
+        if not digest.strip():
+            typer.echo(f"skip {sid}: no usable content", err=True)
+            skipped += 1
+            continue
+        try:
+            result = _summarizer.run_sync(
+                f"Summarize this session:\n\n{digest}", model=mdl
+            )
+            s: SessionSummary = result.output
+            sessions.upsert_session_summary(
+                id=sid,
+                agent=data.get("agent", "unknown"),
+                model=data.get("model", "unknown"),
+                title=s.title,
+                summary=s.summary,
+                tags=s.tags,
+                created_at=data.get("created_at", ""),
+            )
+            tags_str = ",".join(s.tags)
+            typer.echo(f"{sid}\t{_tsv_cell(s.title)}\t{tags_str}")
+            succeeded += 1
+        except Exception as e:
+            typer.echo(f"error summarizing {sid}: {e}", err=True)
+            failed += 1
+
+    skipped_note = f", {skipped} skipped (no content)" if skipped else ""
+    typer.echo(
+        f"{succeeded} session{'s' if succeeded != 1 else ''} summarized "
+        f"({already_current} already current{skipped_note})",
+        err=True,
+    )
+    if failed and succeeded == 0:
+        raise typer.Exit(1)
 
 
 # --- ticktick commands ---
@@ -621,3 +779,56 @@ def mcp_servers(
         else:
             kind, target = "http", cfg.get("url", "?")
         typer.echo(f"{name}\t{kind}\t{target}")
+
+
+# --- brief command (root-level) ---
+
+
+@app.command("brief")
+def brief_cmd(
+    raw: bool = typer.Option(
+        False, "--raw", help="print gathered sections verbatim, skip the LLM entirely"
+    ),
+    model: str = typer.Option(
+        None,
+        "--model",
+        "-m",
+        help=f"model for synthesis (default: KO_DEFAULT_MODEL or {llm_mod.FALLBACK_MODEL})",
+        autocompletion=llm_mod.available_models,
+    ),
+) -> None:
+    """Morning brief: calendar + unread email + HN top 10 + AI papers → LLM synthesis.
+    Prioritizes, not just concatenates — actionable email is triaged out of newsletter noise.
+
+    Sources are best-effort: a misconfigured or unauthenticated source (e.g. no Google
+    auth) becomes a one-liner note rather than an error. Use --raw to inspect gathered
+    data or skip the LLM.
+
+    Sends calendar and email content to the configured LLM. Use --raw for a local-only view.
+    """
+    sections = brief_mod.gather()
+
+    if raw:
+        typer.echo(brief_mod.render_raw(sections))
+        return
+
+    # If every section is a failure note (starts with '('), die cleanly rather than
+    # paying for an empty synthesis. A section is a note if its text is a single-line
+    # error note matching the _try() pattern.
+    meaningful = [
+        (t, txt) for t, txt in sections
+        if not (txt.startswith(f"({t}:") and "\n" not in txt)
+    ]
+    if not meaningful:
+        _die(
+            "all sources failed — run `ko brief --raw` to see details, "
+            "or check `ko doctor` for auth/key issues"
+        )
+
+    content = brief_mod.render_raw(sections)
+    typer.echo("[gathering brief…]", err=True)
+    try:
+        result = llm_mod.run(brief_mod.BRIEF_SYSTEM, stdin=content, model=model)
+    except Exception as e:
+        _die(str(e))
+    typer.echo(result)

@@ -109,7 +109,12 @@ def _probe(url: str, headers: dict[str, str]) -> str:
         r = httpx.post(url, json=body, headers=h, timeout=8.0)
     except httpx.HTTPError as e:
         return f"could not reach {url}: {e}"
-    snippet = " ".join(r.text.split())[:300]
+    ct = r.headers.get("content-type", "")
+    body_start = r.text.lstrip()[:9].lower()
+    if "html" in ct.lower() or body_start.startswith("<!doctype") or body_start.startswith("<html"):
+        snippet = "(HTML page, not an MCP endpoint?)"
+    else:
+        snippet = " ".join(r.text.split())[:300]
     parts = [f"HTTP {r.status_code}: {snippet}" if snippet else f"HTTP {r.status_code}"]
     www = r.headers.get("www-authenticate")
     if www:

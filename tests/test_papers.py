@@ -174,3 +174,24 @@ def test_fetch_doi_re_matches(url, doi):
 )
 def test_fetch_doi_re_ignores(url):
     assert fetch._DOI_RE.search(url) is None
+
+
+# --- cites W-id existence check ---
+
+
+def test_cites_wid_fetches_work_to_validate(monkeypatch):
+    """cites() must hit /works/W<id> to validate existence before filtering, so a bogus
+    W-id raises a RuntimeError rather than silently returning an empty list."""
+    fetched = []
+
+    def fake_get(path, params=None):
+        fetched.append(path)
+        if "/works/W99999999" in path and (params is None or "filter" not in params):
+            raise RuntimeError("OpenAlex has no record for W99999999")
+        return {"results": []}
+
+    monkeypatch.setattr(papers, "_get", fake_get)
+    with pytest.raises(RuntimeError, match="W99999999"):
+        papers.cites("W99999999")
+    # The existence-check fetch must have been attempted
+    assert any("W99999999" in p for p in fetched)

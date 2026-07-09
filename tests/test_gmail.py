@@ -74,3 +74,31 @@ def test_short_from_helper():
     assert _short_from("Alice Smith <alice@x.com>") == "Alice Smith"
     assert _short_from("<bob@x.com>") == "bob@x.com"
     assert _short_from("plain@x.com") == "plain@x.com"
+
+
+def test_clean_snippet_strips_invisible_chars():
+    """Invisible ESP padding chars are removed from snippets."""
+    cgj = "͏"   # COMBINING GRAPHEME JOINER — the main offender
+    zwsp = "​"  # ZERO WIDTH SPACE
+    zwnj = "‌"  # ZERO WIDTH NON-JOINER
+    zwj = "‍"   # ZERO WIDTH JOINER
+    bom = "﻿"   # BOM / zero-width no-break space
+
+    padded = f"Hello{cgj}{zwsp}{zwnj}{zwj}{bom} world"
+    assert gmail._clean_snippet(padded) == "Hello world"
+    assert gmail._clean_snippet("plain text") == "plain text"  # no-op on clean text
+
+
+def test_message_snippet_is_cleaned():
+    """_message() strips invisible chars from snippets in addition to html-unescaping."""
+    cgj = "͏"
+    m = {
+        "id": "x",
+        "threadId": "t",
+        "snippet": f"Limited time offer{cgj}{cgj} &amp; deal",
+        "payload": {"headers": []},
+    }
+    msg = gmail._message(m)
+    assert "͏" not in msg.snippet
+    assert "&amp;" not in msg.snippet  # html-unescape still works
+    assert "Limited time offer & deal" == msg.snippet

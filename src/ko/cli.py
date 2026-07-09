@@ -48,7 +48,7 @@ def doctor() -> None:
     from rich.console import Console
     from rich.table import Table
 
-    from . import config, google_auth, llm as _llm
+    from . import config, google_auth, llm as _llm, mcp_client as mcp_client_mod
 
     def env(var: str) -> tuple[str, str]:
         return {
@@ -65,9 +65,26 @@ def doctor() -> None:
     default = _llm.default_model()
     default_key = _llm.PROVIDER_KEYS.get(default.split(":")[0], "")
 
+    try:
+        _mcp_servers = mcp_client_mod.load_servers()
+        _mcp_status = (
+            (f"✓ {len(_mcp_servers)} server{'s' if len(_mcp_servers) != 1 else ''} configured", "green")
+            if _mcp_servers
+            else ("– no mcp.json", "yellow")
+        )
+    except mcp_client_mod.MCPTestError:
+        _mcp_status = ("✗ invalid mcp.json", "red")
+
     rows: list[tuple[str, str, str, tuple[str, str]]] = [
         ("hn", "Hacker News top/search/comments", "—", ("✓ no auth", "green")),
         ("hf", "HF papers: daily feed, search, metadata", "—", ("✓ no auth", "green")),
+        ("yt", "YouTube → transcript (no auth, no download)", "—", ("✓ no auth", "green")),
+        (
+            "brief",
+            "morning brief (cal+gmail+hn+hf → LLM)",
+            f"{default_key or '?'} + Google auth (optional-degrade)",
+            env(default_key) if default_key else ("? unknown provider", "yellow"),
+        ),
         (
             "papers",
             "cross-publisher paper search + citation graph",
@@ -104,7 +121,7 @@ def doctor() -> None:
         ("x", "X posts (paid tier for reads)", "X_BEARER_TOKEN", env("X_BEARER_TOKEN")),
         (
             "tt",
-            "TickTick lists/tasks (read-only, via MCP)",
+            "TickTick lists/tasks (read-only, via MCP) — developer.ticktick.com",
             "TICKTICK_API_KEY",
             env("TICKTICK_API_KEY"),
         ),
@@ -127,7 +144,7 @@ def doctor() -> None:
         ),
         (
             "tv",
-            "movie/TV info + where to stream",
+            "movie/TV info + where to stream — themoviedb.org API settings",
             "TMDB_READ_ACCESS_TOKEN",
             env("TMDB_READ_ACCESS_TOKEN"),
         ),
@@ -141,12 +158,29 @@ def doctor() -> None:
             if google_auth.client_file().exists()
             else ("✗ no client file", "red"),
         ),
+        (
+            "gdocs/cal/gmail",
+            "Google Docs/Calendar/Gmail (shares gsheets token; gmail read-only)",
+            "OAuth client + token (same as gsheets)",
+            (f"✓ authed ({google_auth.active_account()})", "green")
+            if google_auth.token_file().exists()
+            else ("– run `ko gsheets auth`", "yellow")
+            if google_auth.client_file().exists()
+            else ("✗ no client file", "red"),
+        ),
+        ("mcp", "inspect/call MCP servers by name or url", "~/.config/ko/mcp.json", _mcp_status),
+        (
+            "billing",
+            "balance + usage across paid services (OpenRouter)",
+            "OPENROUTER_API_KEY",
+            env("OPENROUTER_API_KEY"),
+        ),
     ]
 
     table = Table(title="ko doctor", title_justify="left")
     table.add_column("tool", style="bold")
     table.add_column("does")
-    table.add_column("needs", style="dim")
+    table.add_column("needs", style="dim", overflow="fold")
     table.add_column("status")
     for name, does, needs, (status, color) in rows:
         table.add_row(name, does, needs, f"[{color}]{status}[/{color}]")
@@ -254,10 +288,15 @@ def main() -> None:
     label = _cmd_label(sys.argv[1:])
     start = time.monotonic()
     code, err = 0, None
+    from . import _cli_shared as _shared
+    _shared._last_error = None  # reset per-command so a prior run's label doesn't bleed through
     try:
         app()
     except SystemExit as e:
         code = e.code if isinstance(e.code, int) else (1 if e.code else 0)
+        # _die() raises typer.Exit (a SystemExit); pick up the error code label it recorded.
+        if code not in (0, None) and err is None:
+            err = _shared._last_error
         raise
     except BaseException as e:
         code, err = 1, type(e).__name__

@@ -38,6 +38,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 
+import requests
 from xdk import Client
 
 from . import config
@@ -184,7 +185,15 @@ def _user_id(handle: str) -> str:
     cache = _cache()
     if uid := cache.get("users", {}).get(handle):
         return uid
-    resp = _client().users.get_by_username(username=handle)
+    try:
+        resp = _client().users.get_by_username(username=handle)
+    except requests.exceptions.HTTPError as e:
+        status = e.response.status_code if e.response is not None else 0
+        if status in (400, 404):
+            raise RuntimeError(f"no X user @{handle}") from None
+        raise RuntimeError(
+            f"X API error {status} looking up @{handle}: {e}"
+        ) from None
     data = _field(resp, "data")  # dict or object per SDK path; None for unknown/suspended
     if not data:
         raise RuntimeError(f"no X user @{handle}")

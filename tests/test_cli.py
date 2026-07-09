@@ -11,7 +11,7 @@ import json
 import pytest
 import typer
 
-from ko import cli, cli_ai
+from ko import cli, cli_ai, _cli_shared
 
 
 def test_die_plain_text_to_stderr(capsys):
@@ -128,6 +128,29 @@ def test_no_results_plain_note_to_stderr_exit0(capsys):
     out = capsys.readouterr()
     assert out.out == ""  # no stdout in text mode
     assert out.err.strip() == "No results for 'x'."
+
+
+def test_die_records_error_label_for_logging(capsys):
+    # _die() must populate _last_error with the `code` label (never the message) so
+    # cli.main()'s log event captures useful error context without leaking user data.
+    _cli_shared._last_error = None
+    with pytest.raises(typer.Exit):
+        cli._die("secret query text", code="auth")
+    assert _cli_shared._last_error == "auth"  # code label, not the message
+
+
+def test_die_error_label_default_code(capsys):
+    _cli_shared._last_error = None
+    with pytest.raises(typer.Exit):
+        cli._die("something broke")
+    assert _cli_shared._last_error == "error"  # default code
+
+
+def test_die_error_label_usage_code(capsys):
+    _cli_shared._last_error = None
+    with pytest.raises(typer.Exit):
+        cli._die("bad arg", code="usage")
+    assert _cli_shared._last_error == "usage"
 
 
 def test_fmt_day_humanizes_and_drops_time():

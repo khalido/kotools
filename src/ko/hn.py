@@ -1,8 +1,10 @@
 """Hacker News via the Algolia API (hn.algolia.com). No auth, no key.
 
-Three primitives matching how I actually read HN:
+Four primitives matching how I actually read HN:
 - `top` — top stories by points in a day window (my hckrnews.com top-10/20 habit;
   top-by-points ≈ hckrnews's front-page filter, since stories can't score without front-paging)
+- `front_page` — what's on the front page *right now* (Algolia's `front_page` tag only
+  marks the current page, so it can't do past windows — that's `top`'s job)
 - `search` — relevance search, restricted to the last year by default
 - `item` — one story + its comment tree as readable text
 
@@ -49,7 +51,15 @@ class Comment:
 
 def _get(path: str, params: dict | None = None) -> dict:
     resp = httpx.get(f"{ALGOLIA}/{path}", params=params, timeout=30)
-    resp.raise_for_status()
+    try:
+        resp.raise_for_status()
+    except httpx.HTTPStatusError as e:
+        status = e.response.status_code
+        # Extract a user-friendly id from the path for item lookups
+        if status == 404 and path.startswith("items/"):
+            item_id = path.split("/", 1)[1]
+            raise RuntimeError(f"HN item {item_id} not found") from None
+        raise RuntimeError(f"HN API error {status}") from None
     return resp.json()
 
 
@@ -75,6 +85,17 @@ def top(n: int = DEFAULT_TOP_N, days: int = 1) -> list[Story]:
             "hitsPerPage": n,
         },
     )
+    stories = [_story(h) for h in data["hits"]]
+    return sorted(stories, key=lambda s: s.points, reverse=True)
+
+
+def front_page(n: int = DEFAULT_TOP_N) -> list[Story]:
+    """Stories on the HN front page *right now* (Algolia's `front_page` tag).
+
+    Live only — the tag marks the current page, so past windows need `top`.
+    Ordering ≈ points (Algolia doesn't expose HN's actual rank).
+    """
+    data = _get("search", {"tags": "front_page", "hitsPerPage": n})
     stories = [_story(h) for h in data["hits"]]
     return sorted(stories, key=lambda s: s.points, reverse=True)
 

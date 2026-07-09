@@ -70,6 +70,48 @@ def test_load_servers_expands_env(monkeypatch, tmp_path):
     assert servers["s"]["headers"]["Authorization"] == "Bearer secret123"  # secret never in the file
 
 
+def test_probe_replaces_html_body_with_terse_note(monkeypatch):
+    """_probe should NOT quote raw HTML into the error — it's useless noise.
+    Instead it emits a terse '(HTML page, not an MCP endpoint?)' hint."""
+    import httpx
+
+    html_body = "<!DOCTYPE html><html><head><title>App</title></head><body><h1>Not found</h1></body></html>"
+
+    class FakeResponse:
+        status_code = 404
+        text = html_body
+        headers = {"content-type": "text/html; charset=utf-8"}
+
+        def get(self, key, default=""):
+            return self.headers.get(key, default)
+
+    monkeypatch.setattr(httpx, "post", lambda *a, **kw: FakeResponse())
+    result = mcp_client._probe("http://example.com/mcp", {})
+    assert "HTML page" in result
+    assert "DOCTYPE" not in result  # raw HTML must not appear
+    assert "404" in result  # status code is preserved
+
+
+def test_probe_keeps_json_error_snippet(monkeypatch):
+    """Non-HTML error bodies (JSON payloads) should keep the current 300-char quote."""
+    import httpx
+
+    json_body = '{"error": "endpoint not configured", "code": "not_found"}'
+
+    class FakeResponse:
+        status_code = 503
+        text = json_body
+        headers = {"content-type": "application/json"}
+
+        def get(self, key, default=""):
+            return self.headers.get(key, default)
+
+    monkeypatch.setattr(httpx, "post", lambda *a, **kw: FakeResponse())
+    result = mcp_client._probe("http://example.com/mcp", {})
+    assert "endpoint not configured" in result  # JSON snippet preserved
+    assert "503" in result
+
+
 def test_load_and_resolve_by_name_with_header_override(monkeypatch, tmp_path):
     monkeypatch.setenv("KO_CONFIG_DIR", str(tmp_path))
     (tmp_path / "mcp.json").write_text(

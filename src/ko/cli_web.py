@@ -17,6 +17,7 @@ from . import hn as hn_mod
 from . import papers as papers_mod
 from . import tmdb as tmdb_mod
 from . import x as x_mod
+from . import yt as yt_mod
 from ._cli_shared import _die, _emit_json, _fmt_day, _no_results, _tsv_cell, app
 
 # --- sub-apps ---
@@ -219,10 +220,10 @@ def exa_get(
         _die(str(e))
     missing = [u for u in urls if u not in contents]
     if missing:  # don't let failed URLs vanish silently — an agent should know it's partial
-        typer.echo(
-            f"[fetched {len(contents)} of {len(urls)}; no content for: {', '.join(missing)}]",
-            err=True,
-        )
+        note = f"fetched {len(contents)} of {len(urls)}; no content for: {', '.join(missing)}"
+        typer.echo(f"[{note}]", err=True)
+    if not contents:  # all URLs failed → runtime error (no output to give)
+        _die(f"no content returned for any of the {len(urls)} URL(s)")
     sections = [f"# {url}\n\n{text}" for url, text in contents.items()]
     combined = "\n\n---\n\n".join(sections)
     if out is None:
@@ -381,6 +382,8 @@ def papers_search(
 ) -> None:
     """Search articles across all publishers, relevance order.
     TSV: year, cites, oa_status, title, doi, journal."""
+    if not query.strip():
+        _die("query cannot be empty", as_json=as_json, code="usage")
     try:
         results = papers_mod.search(query, n=n)
     except Exception as e:
@@ -489,7 +492,9 @@ def papers_similar(
 
 def _echo_stories(stories: list[hn_mod.Story], as_json: bool) -> None:
     if as_json:
-        _emit_json(stories)
+        # asdict() misses @property fields (url is a field; hn_url is a property) —
+        # inject hn_url explicitly so JSON consumers get the HN discussion link too.
+        typer.echo(json.dumps([{**asdict(s), "hn_url": s.hn_url} for s in stories], default=str))
         return
     for s in stories:
         date = s.created_at.strftime("%Y-%m-%d")
@@ -509,11 +514,14 @@ def hn_top(
     days: int = typer.Option(
         1, "--days", "-d", help="window: top stories of the last N days"
     ),
+    now: bool = typer.Option(
+        False, "--now", help="the live front page (right now) instead of top-by-points; ignores --days"
+    ),
     as_json: bool = typer.Option(False, "--json", help="emit JSON instead of text"),
 ) -> None:
-    """Top stories by points, last 24h by default. First column is the id for `ko hn item`."""
+    """Top stories by points, last 24h by default (`--now` = the live front page). First column is the id for `ko hn item`."""
     try:
-        stories = hn_mod.top(n=n, days=days)
+        stories = hn_mod.front_page(n=n) if now else hn_mod.top(n=n, days=days)
     except Exception as e:
         _die(str(e), as_json=as_json)
     _echo_stories(stories, as_json)
@@ -545,7 +553,8 @@ def hn_search(
     except Exception as e:
         _die(str(e), as_json=as_json)
     if not results:
-        _no_results(f"No results for '{query}'.", as_json)
+        window = f" in the last {since} months (use --since 0 for all time)" if since else ""
+        _no_results(f"No results for '{query}'{window}.", as_json)
     _echo_stories(results, as_json)
 
 
@@ -626,7 +635,9 @@ def doc(
 
 def _echo_posts(posts: list[x_mod.Post], as_json: bool) -> None:
     if as_json:
-        _emit_json(posts)
+        # asdict() misses @property fields — inject url explicitly so JSON consumers
+        # get the post link (text path already shows it via the property directly).
+        typer.echo(json.dumps([{**asdict(p), "url": p.url} for p in posts], default=str))
         return
     for p in posts:
         date = p.created_at.strftime("%Y-%m-%d")
@@ -650,7 +661,11 @@ def x_search(
     scope_list: str = typer.Option(
         None, "--list", "-l", help="restrict to a list (name/id/url) — adds list:<id> to the query"
     ),
-    n: int = typer.Option(x_mod.DEFAULT_MAX_RESULTS, "--n", help="max posts"),
+    n: int = typer.Option(
+        x_mod.DEFAULT_MAX_RESULTS,
+        "--n",
+        help="max posts; API minimum 10 per read (X bills per post read) — smaller --n just truncates the display",
+    ),
     days: int = typer.Option(
         x_mod.DEFAULT_DAYS,
         "--days",
@@ -692,7 +707,11 @@ def x_list(
         help="list name (yours, e.g. 'ai'; shortcut `ko x ai`), a bare list id, "
         "or an x.com/i/lists/<id> URL — id/URL read any public list",
     ),
-    n: int = typer.Option(x_mod.DEFAULT_LIST_N, "--n", help="max posts"),
+    n: int = typer.Option(
+        x_mod.DEFAULT_LIST_N,
+        "--n",
+        help="max posts; API minimum 10 per read (X bills per post read) — smaller --n just truncates the display",
+    ),
     as_json: bool = typer.Option(False, "--json", help="emit JSON instead of text"),
 ) -> None:
     """Recent posts from an X list, newest first. By your list name, a list id, or a list URL."""
@@ -710,7 +729,11 @@ def x_user(
     handle: str = typer.Argument(
         ..., help="@handle, bare handle, or an x.com/<handle> profile URL"
     ),
-    n: int = typer.Option(x_mod.DEFAULT_MAX_RESULTS, "--n", help="max posts"),
+    n: int = typer.Option(
+        x_mod.DEFAULT_MAX_RESULTS,
+        "--n",
+        help="max posts; API minimum 5 per read (X bills per post read) — smaller --n just truncates the display",
+    ),
     as_json: bool = typer.Option(False, "--json", help="emit JSON instead of text"),
 ) -> None:
     """Recent posts from one user's timeline, newest first (their tweets + retweets).
@@ -736,10 +759,11 @@ def x_lists(
         _die(str(e), as_json=as_json)
     if not lists:
         _no_results("no lists found (or your API tier can't read them)", as_json)
+    lists = sorted(lists, key=lambda lst: lst.member_count, reverse=True)
     if as_json:
         _emit_json(lists)
         return
-    for lst in sorted(lists, key=lambda lst: lst.member_count, reverse=True):
+    for lst in lists:
         typer.echo(f"{lst.id}\t{lst.name}\t{lst.member_count}\t{_tsv_cell(lst.description)}")
 
 
@@ -838,3 +862,78 @@ def tv(
             f"{t.title} ({t.year or '—'}, {t.kind}) ★{t.rating:.1f}" for t in rest[:n]
         )
         typer.echo(f"\nOther matches: {others}")
+
+
+# --- yt command (root-level) ---
+
+
+def _yt_models() -> list[str]:
+    """Lazy model completion — cli_web doesn't import llm at module load."""
+    from . import llm as llm_mod
+
+    return llm_mod.available_models()
+
+
+@app.command("yt")
+def yt_cmd(
+    url_or_id: str = typer.Argument(..., help="YouTube URL or 11-char video id"),
+    summarize: bool = typer.Option(
+        False, "--summarize", "-s", help="pipe the transcript through the LLM (key points, who should watch)"
+    ),
+    model: str = typer.Option(
+        None,
+        "--model",
+        "-m",
+        help="model for --summarize (ignored without -s)",
+        autocompletion=_yt_models,
+    ),
+    as_json: bool = typer.Option(
+        False, "--json", help="emit [{start, text, duration}] snippets instead of plain text"
+    ),
+) -> None:
+    """YouTube → transcript (plain text, pipeable). No auth, no download.
+
+    `ko yt <url>` → transcript to stdout (pipe to `ko llm` or redirect to a file).
+    `ko yt <url> -s` → one-shot LLM summary (key points, notable claims, who should watch).
+    `ko yt <url> --json` → [{start, text, duration}] snippet array.
+
+    Shortcut: `ko <youtube-url>` routes here via bare-url dispatch in fetch.
+    Fails cleanly when captions are disabled (no silent fall-through to the description page).
+    """
+    try:
+        vid = yt_mod.video_id(url_or_id)
+    except ValueError as e:
+        _die(str(e), as_json=as_json, code="usage")
+
+    if as_json:
+        try:
+            segs = yt_mod.snippets(vid)
+        except yt_mod.YtError as e:
+            _die(str(e), as_json=as_json)
+        typer.echo(json.dumps([{"start": s.start, "text": s.text, "duration": s.duration} for s in segs]))
+        return
+
+    try:
+        text = yt_mod.transcript(vid)
+    except yt_mod.YtError as e:
+        _die(str(e), as_json=as_json)
+
+    # Rough token estimate: ~4 chars/token is the heuristic used across the codebase.
+    token_est = len(text) // 4
+    typer.echo(f"[{vid}  ~{token_est:,} tokens]", err=True)
+
+    if summarize:
+        from . import llm as llm_mod
+
+        prompt = (
+            "Summarize this video transcript: key points, notable claims, who should watch. "
+            "Concise bullets, no preamble."
+        )
+        try:
+            result = llm_mod.run(prompt, stdin=text, model=model)
+        except Exception as e:
+            _die(str(e))
+        typer.echo(result)
+        return
+
+    typer.echo(text)

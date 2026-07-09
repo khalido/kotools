@@ -332,6 +332,15 @@ wheels = [
 ]
 
 [[package]]
+name = "defusedxml"
+version = "0.7.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/0f/d5/c66da9b79e5bdb124974bfe172b4daf3c984ebd9c2a06e2b8a4dc7331c72/defusedxml-0.7.1.tar.gz", hash = "sha256:1bb3032db185915b62d7c6209c5a8792be6a32ab2fedacc84e01b52c51aa3e69", size = 75520, upload-time = "2021-03-08T10:59:26.269Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/07/6c/aa3f2f849e01cb6a001cd8554a88d4c77c5c1a31c95bdf1cf9301e6d9ef4/defusedxml-0.7.1-py2.py3-none-any.whl", hash = "sha256:a352e7e428770286cc899e2542b6cdaedb2b4953ff269a210103ec58f6198a61", size = 25604, upload-time = "2021-03-08T10:59:24.45Z" },
+]
+
+[[package]]
 name = "distro"
 version = "1.9.0"
 source = { registry = "https://pypi.org/simple" }
@@ -830,10 +839,12 @@ dependencies = [
     { name = "loguru" },
     { name = "mcp", extra = ["cli"] },
     { name = "pydantic-ai-slim", extra = ["google", "mcp", "openrouter"] },
+    { name = "requests" },
     { name = "trafilatura" },
     { name = "typer" },
     { name = "tzdata" },
     { name = "xdk" },
+    { name = "youtube-transcript-api" },
 ]
 
 [package.dev-dependencies]
@@ -855,10 +866,12 @@ requires-dist = [
     { name = "loguru", specifier = "~=0.7.3" },
     { name = "mcp", extras = ["cli"], specifier = ">=1.28.0" },
     { name = "pydantic-ai-slim", extras = ["google", "openrouter", "mcp"], specifier = ">=2.4,<3" },
+    { name = "requests", specifier = ">=2.33.1" },
     { name = "trafilatura", specifier = ">=2.1.0" },
     { name = "typer", specifier = ">=0.26.7" },
     { name = "tzdata", specifier = ">=2025.1" },
     { name = "xdk", specifier = ">=0.9.0" },
+    { name = "youtube-transcript-api", specifier = ">=1.2.4" },
 ]
 
 [package.metadata.requires-dev]
@@ -1886,4 +1899,17 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/09/3c/6940c6e94d4f96f5f048bb11e7303cfe09ca5bc4fd95f25d461f350b3b58/xdk-0.9.0.tar.gz", hash = "sha256:0fab8a1649cb92b824f3ff0b579a2e8bcce42a5c378298a4e381f0d1f40191d6", size = 404139, upload-time = "2026-02-28T01:17:14.879Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/0b/37/b7e57c9fe9c4f383afc1a4b16451373ee5ae96dd25b02e1c0dd347b30423/xdk-0.9.0-py3-none-any.whl", hash = "sha256:042555e661c1ee772e085d9eb4df0a335b1f81dcfb9ae7fba1a32d950cd6a4ef", size = 172500, upload-time = "2026-02-28T01:17:13.356Z" },
+]
+
+[[package]]
+name = "youtube-transcript-api"
+version = "1.2.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "defusedxml" },
+    { name = "requests" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/60/43/4104185a2eaa839daa693b30e15c37e7e58795e8e09ec414f22b3db54bec/youtube_transcript_api-1.2.4.tar.gz", hash = "sha256:b72d0e96a335df599d67cee51d49e143cff4f45b84bcafc202ff51291603ddcd", size = 469839, upload-time = "2026-01-29T09:09:17.088Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/be/95/129ea37efd6cd6ed00f62baae6543345c677810b8a3bf0026756e1d3cf3c/youtube_transcript_api-1.2.4-py3-none-any.whl", hash = "sha256:03878759356da5caf5edac77431780b91448fb3d8c21d4496015bdc8a7bc43ff", size = 485227, upload-time = "2026-01-29T09:09:15.427Z" },
 ]

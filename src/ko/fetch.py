@@ -27,6 +27,7 @@ import trafilatura
 
 from . import arxiv as arxiv_mod
 from . import doc as doc_mod
+from . import yt as yt_mod
 
 
 DOWNLOADS = Path.home() / "Downloads"
@@ -43,6 +44,13 @@ _ARXIV_MIN_CHARS = 2000
 # or extract to nothing, so resolve the open-access copy via OpenAlex first.
 # [^\s?#] stops before query strings/fragments (?utm=… isn't part of the DOI).
 _DOI_RE = re.compile(r"(?:doi\.org/|doi:|^)(10\.\d{4,}/[^\s?#]+)", re.I)
+# YouTube URLs — routed to the transcript path. We check the domain early and deterministically.
+# Deliberately fails loud (no trafilatura fallback) when no transcript exists — the description
+# page is less useful than an honest error.
+_YT_RE = re.compile(
+    r"(?:https?://)?(?:www\.)?"
+    r"(?:youtube\.com/(?:watch|shorts|live|embed|v/)|youtu\.be/)"
+)
 
 
 @dataclass
@@ -154,6 +162,17 @@ def fetch(
     save: bool = True,
 ) -> Fetched:
     """One URL → markdown/text, routed by what it is. See module docstring."""
+    # YouTube URLs → transcript. Must be early and deterministic: no fallback to trafilatura
+    # (the description page is worse than an honest error when captions are disabled).
+    if _YT_RE.match(url):
+        try:
+            vid = yt_mod.video_id(url)
+            text = yt_mod.transcript(vid)
+        except (yt_mod.YtError, ValueError) as e:  # ValueError: yt-looking URL, no id in it
+            raise RuntimeError(str(e)) from None
+        return Fetched(
+            text=text, source="yt", note=f"youtube transcript {vid}  ~{len(text) // 4:,} tokens"
+        )
     if arxiv_id := _arxiv_id(url):
         md = arxiv_mod.fetch(arxiv_id)
         if len(md) >= _ARXIV_MIN_CHARS:  # arxiv2md got a real render

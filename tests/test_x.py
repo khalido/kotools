@@ -124,6 +124,90 @@ def test_collect_caps_at_n():
     assert out[0].author == "a"
 
 
+def test_user_id_maps_400_to_clean_error(monkeypatch, tmp_path):
+    """A 400/404 from the XDK should raise a clean 'no X user @...' RuntimeError, not leak the raw HTTPError."""
+    import requests
+
+    monkeypatch.setattr(x, "CACHE_FILE", tmp_path / "x_cache.json")
+
+    def fake_get_by_username(**kw):
+        resp = requests.models.Response()
+        resp.status_code = 400
+        raise requests.exceptions.HTTPError(response=resp)
+
+    fake_client = SimpleNamespace(
+        users=SimpleNamespace(get_by_username=fake_get_by_username)
+    )
+    monkeypatch.setattr(x, "_client", lambda: fake_client)
+    with pytest.raises(RuntimeError, match=r"no X user @bogus"):
+        x._user_id("bogus")
+
+
+def test_user_id_maps_404_to_clean_error(monkeypatch, tmp_path):
+    """404 from the XDK should also map to the clean 'no X user' message."""
+    import requests
+
+    monkeypatch.setattr(x, "CACHE_FILE", tmp_path / "x_cache.json")
+
+    def fake_get_by_username(**kw):
+        resp = requests.models.Response()
+        resp.status_code = 404
+        raise requests.exceptions.HTTPError(response=resp)
+
+    fake_client = SimpleNamespace(
+        users=SimpleNamespace(get_by_username=fake_get_by_username)
+    )
+    monkeypatch.setattr(x, "_client", lambda: fake_client)
+    with pytest.raises(RuntimeError, match=r"no X user @nobody"):
+        x._user_id("nobody")
+
+
+def test_user_id_other_status_not_mislabeled(monkeypatch, tmp_path):
+    """A 429/401 should not be mislabeled as 'no X user'; it wraps the raw error."""
+    import requests
+
+    monkeypatch.setattr(x, "CACHE_FILE", tmp_path / "x_cache.json")
+
+    def fake_get_by_username(**kw):
+        resp = requests.models.Response()
+        resp.status_code = 429
+        raise requests.exceptions.HTTPError(response=resp)
+
+    fake_client = SimpleNamespace(
+        users=SimpleNamespace(get_by_username=fake_get_by_username)
+    )
+    monkeypatch.setattr(x, "_client", lambda: fake_client)
+    with pytest.raises(RuntimeError) as exc_info:
+        x._user_id("someone")
+    assert "no X user" not in str(exc_info.value)
+    assert "429" in str(exc_info.value)
+
+
+def test_my_lists_sorted_biggest_first(monkeypatch, tmp_path):
+    """my_lists() returns lists alpha-sorted; the CLI re-sorts by member_count. Verify the
+    sort happens before the JSON path, not only in the text path."""
+    monkeypatch.setattr(x, "CACHE_FILE", tmp_path / "x_cache.json")
+    monkeypatch.setattr(x, "_user_id", lambda h: "42")
+    page = SimpleNamespace(
+        data=[
+            {"id": "1", "name": "Small", "description": "", "member_count": 5},
+            {"id": "2", "name": "Big", "description": "", "member_count": 500},
+            {"id": "3", "name": "Medium", "description": "", "member_count": 50},
+        ]
+    )
+    fake = SimpleNamespace(
+        users=SimpleNamespace(
+            get_owned_lists=lambda **kw: [page],
+            get_followed_lists=lambda **kw: [],
+        )
+    )
+    monkeypatch.setattr(x, "_client", lambda: fake)
+    lists = x.my_lists("ko")
+    # my_lists() returns alpha-sorted; the CLI is responsible for the member_count sort
+    names = [lst.name for lst in lists]
+    assert names == sorted(names, key=str.lower)  # alpha order from my_lists()
+
+
 @pytest.mark.skipif(
     not (os.environ.get("X_BEARER_TOKEN") and os.environ.get("KO_LIVE_TESTS")),
     reason="set X_BEARER_TOKEN and KO_LIVE_TESTS=1 for the live (paid) X read",

@@ -124,3 +124,80 @@ def test_tz_name_default_and_override(monkeypatch):
     assert gcal.tz_name() == "Australia/Sydney"
     monkeypatch.setattr(gcal.config, "get", lambda *a, **k: "Europe/Berlin")
     assert gcal.tz_name() == "Europe/Berlin"
+
+
+# --- cli_google helpers (offline, no network) ---
+
+
+def test_fmt_events_clamps_multiday_allday_to_window_start(capsys):
+    """A multi-day all-day event that started before the queried window should appear under
+    the window's first day header, not its original start-date header."""
+    from ko.cli_google import _fmt_events
+
+    ev = gcal.CalEvent(
+        id="e1", summary="Conference", start="2026-07-05", end="2026-07-12",
+        all_day=True, calendar_id="c", calendar_name="Cal",
+    )
+    _fmt_events([ev], window_start="2026-07-09")
+    out = capsys.readouterr().out
+    # Header should reflect the clamped date (Wed 09 Jul), NOT the original start (Sun 05 Jul)
+    assert "09 Jul" in out
+    assert "05 Jul" not in out
+
+
+def test_fmt_events_no_clamp_when_start_within_window(capsys):
+    """An event that starts on the queried day should still show its own date header."""
+    from ko.cli_google import _fmt_events
+
+    ev = gcal.CalEvent(
+        id="e2", summary="Sprint planning", start="2026-07-09", end="2026-07-10",
+        all_day=True, calendar_id="c", calendar_name="Cal",
+    )
+    _fmt_events([ev], window_start="2026-07-09")
+    out = capsys.readouterr().out
+    assert "09 Jul" in out
+
+
+def test_fmt_events_no_window_start_uses_original_date(capsys):
+    """Without a window_start, the full-agenda view shows events under their real start date."""
+    from ko.cli_google import _fmt_events
+
+    ev = gcal.CalEvent(
+        id="e3", summary="Holiday", start="2026-07-01", end="2026-07-15",
+        all_day=True, calendar_id="c", calendar_name="Cal",
+    )
+    _fmt_events([ev], window_start=None)
+    out = capsys.readouterr().out
+    assert "01 Jul" in out
+
+
+def test_fmt_events_location_newlines_flattened(capsys):
+    """Multi-line Google addresses are collapsed to ', '-separated one-liners."""
+    from ko.cli_google import _fmt_events
+
+    ev = gcal.CalEvent(
+        id="e4", summary="Meeting", start="2026-07-09T10:00:00+10:00", end="2026-07-09T11:00:00+10:00",
+        all_day=False, calendar_id="c", calendar_name="Cal",
+        location="Level 3\n123 Main St\nSydney NSW 2000",
+    )
+    _fmt_events([ev])
+    out = capsys.readouterr().out
+    assert "\n" not in out.split("@", 1)[-1].split("\n")[0]  # no raw newlines in the location part
+    assert "Level 3, 123 Main St, Sydney NSW 2000" in out
+
+
+def test_http_error_msg_extracts_clean_reason():
+    """_http_error_msg should return '[<status>] <reason>' without the URL blob."""
+    import json
+    from unittest.mock import MagicMock
+    from googleapiclient.errors import HttpError
+    from ko.cli_google import _http_error_msg
+
+    content = json.dumps({"error": {"message": "Invalid id value", "code": 400}}).encode()
+    resp = MagicMock()
+    resp.status = 400
+    resp.reason = "Bad Request"
+    e = HttpError(resp=resp, content=content)
+    msg = _http_error_msg(e)
+    assert msg == "[400] Invalid id value"
+    assert "http" not in msg.lower()  # no URL leakage

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import base64
 import html
+import re
 from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
 
@@ -36,6 +37,10 @@ class GmailError(GoogleError):
 
 
 def _handle(e: HttpError, context: str) -> None:
+    # Gmail says 400 "Invalid id value" for malformed message/thread ids — speak
+    # in ko's voice, not the API's ("no message with id 'X'", not "[400] Invalid id value")
+    if e.resp.status == 400 and "invalid id" in (e.reason or "").lower():
+        raise GmailError(f"no message or thread with id {context!r}") from e
     raise_for_status(
         e,
         context,
@@ -56,6 +61,18 @@ def _fmt_date(raw: str) -> str:
         return raw
 
 
+_INVISIBLE_CHARS_RE = re.compile(
+    "[͏"          # U+034F COMBINING GRAPHEME JOINER (common ESP padding trick)
+    "​-‍"   # U+200B ZWSP, U+200C ZWNJ, U+200D ZWJ
+    "﻿]"          # U+FEFF BOM / zero-width no-break space
+)
+
+
+def _clean_snippet(text: str) -> str:
+    """Strip invisible padding characters inserted by marketing ESPs."""
+    return _INVISIBLE_CHARS_RE.sub("", text)
+
+
 def _message(m: dict) -> GmailMessage:
     """Build a GmailMessage from a messages.get response (metadata or full)."""
     h = {x["name"].lower(): x["value"] for x in m.get("payload", {}).get("headers", [])}
@@ -66,7 +83,7 @@ def _message(m: dict) -> GmailMessage:
         from_=h.get("from", ""),
         to=h.get("to", ""),
         subject=h.get("subject", "(no subject)"),
-        snippet=html.unescape(m.get("snippet", "")),
+        snippet=_clean_snippet(html.unescape(m.get("snippet", ""))),
         unread="UNREAD" in m.get("labelIds", []),
     )
 

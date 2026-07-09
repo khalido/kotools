@@ -2,6 +2,8 @@
 
 from datetime import datetime, timezone
 
+import pytest
+
 from ko import hn
 
 
@@ -64,6 +66,23 @@ def test_search_passes_numeric_filters_as_list(monkeypatch):
     assert "num_comments>=30" in nf
 
 
+def test_front_page_uses_live_tag(monkeypatch):
+    """front_page hits Algolia's `front_page` tag with no date filter — it's the live page,
+    not a points-per-window query (that's `top`)."""
+    captured = {}
+
+    def fake_get(path, params):
+        captured["path"] = path
+        captured["params"] = params
+        return {"hits": []}
+
+    monkeypatch.setattr(hn, "_get", fake_get)
+    hn.front_page(n=15)
+    assert captured["params"]["tags"] == "front_page"
+    assert captured["params"]["hitsPerPage"] == 15
+    assert "numericFilters" not in captured["params"]
+
+
 def test_story_from_hit():
     s = hn._story(
         {
@@ -79,3 +98,29 @@ def test_story_from_hit():
     assert s.num_comments == 0
     assert s.hn_url.endswith("id=123")
     assert s.created_at == datetime.fromtimestamp(1750000000, tz=timezone.utc)
+
+
+def test_get_404_raises_clean_not_found(monkeypatch):
+    """_get on items/<id> with a 404 should raise a clean RuntimeError, not leak httpx internals."""
+    import httpx
+
+    def fake_get(url, params, timeout):
+        resp = httpx.Response(404, request=httpx.Request("GET", url))
+        return resp
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    with pytest.raises(RuntimeError, match=r"HN item 9999999 not found"):
+        hn._get("items/9999999")
+
+
+def test_get_non_404_raises_generic_error(monkeypatch):
+    """_get on a non-404 HTTP error should raise a clean 'HN API error <status>' RuntimeError."""
+    import httpx
+
+    def fake_get(url, params, timeout):
+        resp = httpx.Response(503, request=httpx.Request("GET", url))
+        return resp
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    with pytest.raises(RuntimeError, match=r"HN API error 503"):
+        hn._get("search")
