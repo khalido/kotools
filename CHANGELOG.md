@@ -35,6 +35,10 @@ Cut a release with the repo's `/release` skill.
   — using OpenRouter's *actual* billed cost when available (genai-prices estimate,
   marked `~`, otherwise). Covers `ko llm`, agents, `ko brief`, `yt -s`; `sessions
   summarize` totals its spend.
+- `ko refs` — manage the `~/code/refs` reference-repo folder: bare = parallel
+  `--ff-only` pull of all clones (only moved HEADs printed), `setup` bootstraps
+  the baked list + `~/.config/ko/refs.txt` on any machine, `add <url>` clones and
+  remembers, `list` = TSV.
 
 ## [2026.7.9] - 2026-07-09
 

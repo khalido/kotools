@@ -256,6 +256,176 @@ def doctor() -> None:
             )
 
 
+# --- refs: reference-repo folder manager ---
+
+refs_app = typer.Typer(
+    help="Manage the ~/code/refs folder of read-only reference repos. Bare `ko refs` = pull "
+    "all clones (parallel, --ff-only). Also: setup (bootstrap the baked-in set), add <url>, list.",
+    invoke_without_command=True,
+)
+app.add_typer(refs_app, name="refs")
+
+
+def _refs_pull(yes: bool, jobs: int) -> None:
+    import sys
+    import textwrap
+
+    from . import refs as refs_mod
+
+    base = refs_mod.refs_dir()
+    if not base.is_dir():
+        _die(f"refs dir {base} does not exist — run `ko refs setup` first")
+    repos, skipped = refs_mod.find_repos(base)
+    if not repos:
+        _no_results(f"no git repos in {base}", False)
+    typer.echo(f"Found {len(repos)} git repos in {base}:", err=True)
+    typer.echo(
+        textwrap.fill(
+            ", ".join(repos), width=80, initial_indent="  ",
+            subsequent_indent="  ", break_on_hyphens=False,
+        ),
+        err=True,
+    )
+    # confirm only on a TTY — agents/pipes proceed (an --ff-only pull of read-only
+    # clones is safe, and the agent contract bans interactive prompts)
+    if not yes and sys.stdin.isatty():
+        confirm = input("Proceed with update? [Y/n] ").strip().lower()
+        if confirm and not confirm.startswith("y"):
+            typer.echo("Aborted.", err=True)
+            raise typer.Exit(0)
+    results = []
+    for res in refs_mod.pull_all(base, repos, jobs=jobs):
+        if res.change:
+            typer.echo(f"{res.repo}: {res.change}")  # stdout: what actually moved
+        elif not res.ok:
+            typer.echo(f"{res.repo}: FAILED", err=True)
+            typer.echo(res.error, err=True)
+        results.append(res)
+    updated = sum(1 for r in results if r.change)
+    failed = [r.repo for r in results if not r.ok]
+    parts = [f"{updated} updated", f"{len(results) - updated - len(failed)} already up to date"]
+    if failed:
+        parts.append(f"{len(failed)} failed ({', '.join(failed)})")
+    typer.echo(", ".join(parts), err=True)
+    if skipped:
+        typer.echo(f"Skipped {len(skipped)} non-git dir(s): {', '.join(skipped)}", err=True)
+    if failed:
+        raise typer.Exit(1)
+
+
+@refs_app.callback()
+def refs_main(
+    ctx: typer.Context,
+    yes: bool = typer.Option(False, "--yes", "-y", help="skip the confirm prompt (TTY only; pipes never prompt)"),
+    jobs: int = typer.Option(8, "--jobs", "-j", help="max concurrent pulls"),
+) -> None:
+    """Bare `ko refs` = pull all reference repos (same as `ko refs pull`)."""
+    if ctx.invoked_subcommand:
+        return
+    _refs_pull(yes, jobs)
+
+
+@refs_app.command("pull")
+def refs_pull(
+    yes: bool = typer.Option(False, "--yes", "-y", help="skip the confirm prompt (TTY only; pipes never prompt)"),
+    jobs: int = typer.Option(8, "--jobs", "-j", help="max concurrent pulls"),
+) -> None:
+    """Update all clones: parallel `git pull --ff-only --prune`; prints only repos whose
+    HEAD actually moved (`repo: old -> new` via git describe). Exit 1 if any failed."""
+    _refs_pull(yes, jobs)
+
+
+@refs_app.command("setup")
+def refs_setup() -> None:
+    """Idempotent bootstrap: create the refs dir, write its CLAUDE.md (only if missing —
+    it accumulates takeaways), clone every baked-in + refs.txt repo not already present."""
+    from . import refs as refs_mod
+
+    base = refs_mod.refs_dir()
+    base.mkdir(parents=True, exist_ok=True)
+    if refs_mod.write_claude_md(base):
+        typer.echo(f"wrote {refs_mod.claude_md(base)}", err=True)
+    urls = [url for _, url, _ in refs_mod.BAKED_REPOS] + refs_mod.extra_repos()
+    cloned, present, failed = [], [], []
+    for url in urls:
+        name = refs_mod.repo_name(url)
+        if (base / name).exists():
+            present.append(name)
+            continue
+        res = refs_mod.clone(base, url)
+        if res.ok:
+            cloned.append(name)
+            typer.echo(f"cloned {name}")
+        else:
+            failed.append(name)
+            typer.echo(f"{name}: FAILED", err=True)
+            typer.echo(res.error, err=True)
+    parts = [f"{len(cloned)} cloned", f"{len(present)} already present"]
+    if failed:
+        parts.append(f"{len(failed)} failed ({', '.join(failed)})")
+    typer.echo(", ".join(parts), err=True)
+    if failed:
+        raise typer.Exit(1)
+
+
+@refs_app.command("add")
+def refs_add(
+    url: str = typer.Argument(..., help="git URL to clone, e.g. https://github.com/owner/repo"),
+    note: str = typer.Option(
+        "(no deep dive yet)", "--note", help="one-line note for the CLAUDE.md repo list"
+    ),
+) -> None:
+    """Clone a repo into the refs dir, remember it in ~/.config/ko/refs.txt (so `setup`
+    restores it on any machine), and stub an entry in the folder's CLAUDE.md."""
+    from . import refs as refs_mod
+
+    base = refs_mod.refs_dir()
+    base.mkdir(parents=True, exist_ok=True)
+    try:
+        name = refs_mod.repo_name(url)
+    except ValueError as e:
+        _die(str(e), code="usage")
+    if (base / name).exists():
+        _die(f"{base / name} already exists")
+    res = refs_mod.clone(base, url)
+    if not res.ok:
+        typer.echo(res.error, err=True)
+        _die(f"clone failed for {url}")
+    refs_mod.append_claude_entry(base, url, note)
+    remembered = refs_mod.remember_extra(url)
+    typer.echo(f"cloned {name}")
+    typer.echo(
+        f"[noted in CLAUDE.md{'; remembered in ' + str(refs_mod.extras_file()) if remembered else ''}]",
+        err=True,
+    )
+
+
+@refs_app.command("list")
+def refs_list(
+    as_json: bool = typer.Option(False, "--json", help="emit JSON instead of TSV"),
+) -> None:
+    """All cloned refs (TSV: name, version via git describe, origin URL)."""
+    from . import refs as refs_mod
+
+    base = refs_mod.refs_dir()
+    if not base.is_dir():
+        _no_results(f"refs dir {base} does not exist — run `ko refs setup`", as_json)
+    repos, _ = refs_mod.find_repos(base)
+    if not repos:
+        _no_results(f"no git repos in {base}", as_json)
+    rows = [
+        {"name": r, "version": refs_mod.describe(base, r), "origin": refs_mod.origin_url(base, r)}
+        for r in repos
+    ]
+    if as_json:
+        import json
+
+        typer.echo(json.dumps(rows))
+        return
+    for row in rows:
+        typer.echo(f"{row['name']}\t{row['version']}\t{row['origin']}")
+
+
 @app.command("logs")
 def logs_cmd(
     n: int = typer.Option(20, "--n", help="how many recent events"),
