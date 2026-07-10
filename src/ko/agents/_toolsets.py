@@ -223,8 +223,10 @@ def hn_discussion(story_id: str, max_comments: int = 30) -> dict:
 # --- files (read-only, confined to ~/code — the repo-explorer's tools) ---
 files = FunctionToolset(
     instructions="Files: read-only access under the code root. Survey cheap first "
-    "(list_dir/find_files), grep to locate, read_file only the few files that matter. "
-    "All paths are relative to the code root; .git and hidden dirs are off-limits."
+    "(list_dir/glob), grep to locate, read_file the few files that matter. Listings "
+    "show ≈token sizes — a small file (under ~2k tok) is cheaper to read whole in one "
+    "call than to grep. All paths are relative to the code root; .git and hidden dirs "
+    "are off-limits."
 )
 
 
@@ -254,11 +256,11 @@ def grep(pattern: str, path: str = ".", glob: str | None = None, limit: int = 10
 
 
 @files.tool_plain
-def find_files(glob: str, path: str = ".") -> str:
-    """Find files by NAME glob (e.g. '*.md', '**/agent*.py') under `path`; .gitignore
-    respected, hidden dirs (.git/.venv, installed packages) excluded, capped at 200.
-    Use to map a repo's shape before reading anything."""
-    return _files_mod.find_files(glob, path=path)
+def glob(pattern: str, path: str = ".") -> str:
+    """Find files by NAME glob pattern (e.g. '*.md', '**/agent*.py') under `path`;
+    .gitignore respected, hidden dirs (.git/.venv, installed packages) excluded,
+    capped at 200. Use to map a repo's shape before reading anything."""
+    return _files_mod.glob(pattern, path=path)
 
 
 # --- tmdb (movies / TV) ---

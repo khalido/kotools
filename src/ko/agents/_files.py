@@ -71,9 +71,11 @@ def list_dir(path: str = ".") -> str:
         if e.is_dir():
             return f"{e.name}/"
         try:
-            return f"{e.name}  ({e.stat().st_size:,}B)"
+            size = e.stat().st_size
         except OSError:  # broken symlink — stat follows the (dead) target
             return f"{e.name}  (broken symlink)"
+        # ≈tokens (bytes/4) so the model can judge "read it whole" vs "grep first"
+        return f"{e.name}  ({size:,}B ≈{size // 4:,} tok)"
 
     lines = [_entry(e) for e in entries[:MAX_LIST_ENTRIES]]
     if len(entries) > MAX_LIST_ENTRIES:
@@ -93,7 +95,7 @@ def read_file(path: str, offset: int = 0, limit: int = MAX_READ_LINES) -> str:
     size = f.stat().st_size
     if size > MAX_READ_BYTES:
         return (
-            f"(file is {size:,} bytes — too large to read whole; "
+            f"(file is {size:,} bytes ≈{size // 4:,} tokens — too large to read whole; "
             f"grep it to locate the relevant lines instead)"
         )
     raw = f.read_bytes()
@@ -141,14 +143,15 @@ def grep(pattern: str, path: str = ".", glob: str | None = None, limit: int = MA
     return "\n".join(out)
 
 
-def find_files(glob: str, path: str = ".") -> str:
-    """Find files by NAME glob (e.g. '*.py', '**/test_*.ts') via `rg --files`
+def glob(pattern: str, path: str = ".") -> str:
+    """Find files by NAME glob pattern (e.g. '*.py', '**/test_*.ts') via `rg --files`
     (respects .gitignore; hidden dirs like .git/.venv and installed packages are
-    excluded). Capped; paths relative to the code root."""
+    excluded). Capped; paths relative to the code root. (Named/shaped like Claude
+    Code's Glob tool — the signature models are trained on.)"""
     d = _resolve(path)
     try:
         proc = subprocess.run(
-            ["rg", "--files", "-g", glob, str(d)], capture_output=True, text=True, timeout=30
+            ["rg", "--files", "-g", pattern, str(d)], capture_output=True, text=True, timeout=30
         )
     except FileNotFoundError:
         raise ModelRetry("ripgrep (rg) is not installed — use list_dir to navigate instead.")

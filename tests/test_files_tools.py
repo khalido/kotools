@@ -89,6 +89,7 @@ def test_list_dir_dirs_first_hidden_skipped(root: Path) -> None:
     out = _files.list_dir("proj")
     assert out.splitlines()[0] == "src/"
     assert "README.md" in out and ".hidden" not in out
+    assert "≈" in out and "tok)" in out  # token estimate so the model can judge read-whole vs grep
 
 
 # --- grep / find_files (real ripgrep, local files only) ---
@@ -106,8 +107,8 @@ def test_grep_no_matches(root: Path) -> None:
 
 
 @needs_rg
-def test_find_files(root: Path) -> None:
-    out = _files.find_files("*.py", "proj")
+def test_glob(root: Path) -> None:
+    out = _files.glob("*.py", "proj")
     assert out.strip() == "proj/src/main.py"
 
 
@@ -165,4 +166,4 @@ def test_grep_timeout_is_modelretry(root: Path, monkeypatch) -> None:
     with pytest.raises(ModelRetry, match="timed out"):
         _files.grep("x", "proj")
     with pytest.raises(ModelRetry, match="timed out"):
-        _files.find_files("*.py", "proj")
+        _files.glob("*.py", "proj")
