@@ -240,6 +240,20 @@ def doctor() -> None:
     elif not (dirs.config_dir() / "config.toml").exists():
         Console().print("[dim]no config.toml (env vars + baked defaults only)[/dim]")
 
+    # refs folder: count + disk weight, flagging clones heavy enough to care about
+    from . import refs as refs_mod
+
+    _refs_base = refs_mod.refs_dir()
+    if _refs_base.is_dir():
+        _sizes = refs_mod.sizes(_refs_base)
+        if _sizes:
+            _total = sum(b for _, b in _sizes)
+            _big = [(n, b) for n, b in _sizes if b > 500 * 1024 * 1024]
+            line = f"refs: {len(_sizes)} repos · {_total / 1e9:.1f} GB at {_refs_base}"
+            if _big:
+                line += "  [red]⚠ big: " + ", ".join(f"{n} {b / 1e9:.1f} GB" for n, b in _big) + "[/red]"
+            Console().print(f"[dim]{line}[/dim]")
+
     # live OpenRouter key check — /credits is a free authenticated GET, so this both
     # proves the key works and shows money left (the agent-tier default rides on it)
     if config.key_source("OPENROUTER_API_KEY"):

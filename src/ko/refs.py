@@ -240,3 +240,20 @@ def append_claude_entry(base: Path, url: str, note: str = "(no deep dive yet)") 
         write_claude_md(base)
     with f.open("a") as fh:
         fh.write(_bullet(repo_name(url), url, note) + "\n")
+
+
+def sizes(base: Path) -> list[tuple[str, int]]:
+    """(repo name, bytes on disk) per clone, biggest first — via `du -sk` (fast,
+    counts .git history too, which is most of a clone's weight)."""
+    repos, _ = find_repos(base)
+    if not repos:
+        return []
+    proc = subprocess.run(
+        ["du", "-sk", *(str(base / r) for r in repos)], capture_output=True, text=True
+    )
+    out = []
+    for line in proc.stdout.splitlines():
+        kb, _, path = line.partition("\t")
+        if kb.strip().isdigit():
+            out.append((Path(path).name, int(kb) * 1024))
+    return sorted(out, key=lambda t: t[1], reverse=True)

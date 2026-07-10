@@ -127,3 +127,13 @@ def test_append_claude_entry_stub(tmp_path: Path) -> None:
     refs.append_claude_entry(tmp_path, "https://github.com/owner/thing")
     text = refs.claude_md(tmp_path).read_text()
     assert "- `thing/` — [owner/thing](https://github.com/owner/thing) — (no deep dive yet)" in text
+
+
+def test_sizes_biggest_first(tmp_path: Path) -> None:
+    for name, kb in (("small", 1), ("big", 100)):
+        d = tmp_path / name
+        (d / ".git").mkdir(parents=True)
+        (d / "blob").write_bytes(b"x" * kb * 1024)
+    result = refs.sizes(tmp_path)
+    assert [n for n, _ in result] == ["big", "small"]
+    assert all(b > 0 for _, b in result)
