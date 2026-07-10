@@ -167,3 +167,16 @@ def test_grep_timeout_is_modelretry(root: Path, monkeypatch) -> None:
         _files.grep("x", "proj")
     with pytest.raises(ModelRetry, match="timed out"):
         _files.glob("*.py", "proj")
+
+
+@needs_rg
+def test_grep_files_only_mode(root: Path) -> None:
+    out = _files.grep("hello", "proj", files_only=True)
+    assert out.strip() == "proj/src/main.py"  # paths only, no :line: content
+
+
+@needs_rg
+def test_grep_context_lines(root: Path) -> None:
+    (root / "ctx.txt").write_text("before\nTARGET\nafter\n")
+    out = _files.grep("TARGET", "ctx.txt", context=1)
+    assert "before" in out and "after" in out

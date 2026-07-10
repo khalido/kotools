@@ -66,6 +66,16 @@ human approval before tag/publish. WORKLOG = dev journal; CHANGELOG = release-gr
 1. Add/extend a `FunctionToolset` in `agents/_toolsets.py` if new tools are needed.
 2. `agents/<name>.py` — `Agent(model, instructions=..., toolsets=[...])` + thin `run`/`repl` binding `_shared`.
 3. Export in `agents/__init__.py`; add a `@agent_app.command` in `cli.py`.
+4. **Close the loop — the toolset eval method** (house method for any toolset work, proven
+   2026-07-10 on the files tools): after building or changing tools, (a) run the agent on 1-2
+   real questions (cheap — cents), (b) have a subagent READ THE SESSION TRACES
+   (`~/.local/state/ko/sessions/` keeps full tool calls/returns): flailing? repeated calls?
+   params the model *invented*? (that's a tool gap — the files `grep` gained `limit` exactly
+   this way), (c) a separate fresh-context adversarial review of the tool code. Each pass
+   catches what the others can't: traces find ergonomics, review finds crashes, and
+   prior-alignment (do names/shapes match what models are trained on — Claude Code's
+   Read/Grep/Glob, rg semantics?) finds friction. The tools' heaviest user is the model —
+   let it review them.
 
 ## Google auth (gsheets)
 - OAuth user flow (desktop app). First command triggers browser consent, token cached at `~/.local/state/ko/google_token.json`.

@@ -246,13 +246,22 @@ def read_file(path: str, offset: int = 0, limit: int = 400) -> str:
 
 
 @files.tool_plain
-def grep(pattern: str, path: str = ".", glob: str | None = None, limit: int = 100) -> str:
+def grep(
+    pattern: str,
+    path: str = ".",
+    glob: str | None = None,
+    limit: int = 100,
+    context: int = 0,
+    files_only: bool = False,
+) -> str:
     """Regex-search file CONTENTS (ripgrep: smart-case, .gitignore respected) under
-    `path`. Returns `file:line: text`, at most `limit` matches (default 100, max 200) —
-    pass a small `limit` when you only need a few examples; narrow with `glob`
-    (e.g. '*.py') or a deeper path when truncated. The fastest way to find where
-    something is implemented."""
-    return _files_mod.grep(pattern, path=path, glob=glob, limit=limit)
+    `path`. Returns `file:line: text`, at most `limit` matches (default 100, max 200).
+    `context=N` shows N lines around each match (max 10) — often saves a read_file.
+    `files_only=True` returns just the matching file paths (survey mode). Narrow with
+    `glob` (e.g. '*.py') or a deeper path when truncated."""
+    return _files_mod.grep(
+        pattern, path=path, glob=glob, limit=limit, context=context, files_only=files_only
+    )
 
 
 @files.tool_plain

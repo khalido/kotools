@@ -113,13 +113,26 @@ def read_file(path: str, offset: int = 0, limit: int = MAX_READ_LINES) -> str:
     return "\n".join(out) or "(empty file)"
 
 
-def grep(pattern: str, path: str = ".", glob: str | None = None, limit: int = MAX_GREP_LINES) -> str:
+def grep(
+    pattern: str,
+    path: str = ".",
+    glob: str | None = None,
+    limit: int = MAX_GREP_LINES,
+    context: int = 0,
+    files_only: bool = False,
+) -> str:
     """Regex search file CONTENTS via ripgrep (smart-case, respects .gitignore).
-    Returns `file:line: text`, at most `limit` matches (the eval showed models
-    reach for a limit param — give them the real one)."""
+    Thin rg passthrough behind the containment guard — params mirror Claude Code's
+    Grep (glob filter, context lines, files-with-matches mode) so models get the
+    shapes they were trained on. `file:line: text`, at most `limit` matches."""
     d = _resolve(path)
     limit = max(1, min(limit, 2 * MAX_GREP_LINES))
-    cmd = ["rg", "-n", "--no-heading", "-S", "--max-columns", "300"]
+    if files_only:
+        cmd = ["rg", "-l", "-S"]
+    else:
+        cmd = ["rg", "-n", "--no-heading", "-S", "--max-columns", "300"]
+        if context:
+            cmd += ["-C", str(min(context, 10))]
     if glob:
         cmd += ["-g", glob]
     cmd += [pattern, str(d)]
