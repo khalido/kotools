@@ -16,7 +16,7 @@ from . import mcp_client as mcp_client_mod
 from . import prompt as prompt_mod
 from . import publish as publish_mod
 from . import ticktick as ticktick_mod
-from .agents import research_run, research_repl, tv_run, tv_repl
+from .agents import repo_run, repo_repl, research_run, research_repl, tv_run, tv_repl
 from ._cli_shared import _die, _emit_json, _no_results, _tsv_cell, app
 
 # --- sub-apps ---
@@ -124,6 +124,32 @@ def agent_research(
             research_run(prompt, model=model, resume=resume)  # prints itself; resume continues a session
         else:
             research_repl(model=model, resume=resume)
+    except FileNotFoundError:
+        _die(f"no saved session {resume!r} — see `ko agent sessions`")
+    except typer.Exit:
+        raise
+    except Exception as e:
+        _die(str(e))
+
+
+@agent_app.command("repo")
+def agent_repo(
+    prompt: str = typer.Argument(
+        None, help="what to find/explain, naming the repo(s) if you can — e.g. "
+        "'how does refs/llm register plugins?'; omit for interactive mode"
+    ),
+    model: str = typer.Option(None, "--model", "-m", help="model override (default: basic tier)"),
+    resume: str = typer.Option(
+        None, "--resume", "-r", help="resume a saved session id (enters interactive mode)"
+    ),
+) -> None:
+    """Repo-explorer: answers 'how does repo X do Y' over ~/code (read-only; own repos +
+    refs/ reference clones; knows the refs/CLAUDE.md map). Cheap model, cites file:line."""
+    try:
+        if prompt:
+            repo_run(prompt, model=model, resume=resume)
+        else:
+            repo_repl(model=model, resume=resume)
     except FileNotFoundError:
         _die(f"no saved session {resume!r} — see `ko agent sessions`")
     except typer.Exit:

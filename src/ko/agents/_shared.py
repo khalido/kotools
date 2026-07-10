@@ -26,8 +26,10 @@ _err = Console(stderr=True)  # cost notes are notes, not data — stderr keeps p
 
 
 def _cost_note(messages: list, prior: int = 0) -> None:
-    """Print what the new messages (beyond `prior`) cost — OR actuals when available."""
-    _err.print(f"[dim]{run_cost(messages[prior:]).note}[/dim]")
+    """Print what the new messages (beyond `prior`) cost — OR actuals when available.
+    markup=False: the note's own [brackets] would otherwise parse as rich tags and
+    silently swallow the whole line."""
+    _err.print(run_cost(messages[prior:]).note, style="dim", markup=False, highlight=False)
 
 
 def _stream(agent: Agent, prompt: str, history: list, model: str | None = None) -> tuple[str, list]:

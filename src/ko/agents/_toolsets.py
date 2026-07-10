@@ -20,6 +20,7 @@ from ko import hf as hf_mod
 from ko import hn as hn_mod
 from ko import papers as papers_mod
 from ko import tmdb as tmdb_mod
+from ko.agents import _files as _files_mod
 from ko.arxiv import SearchResult as ArxivResult
 from ko.exa import ExaResult
 from ko.hf import Paper
@@ -217,6 +218,45 @@ def hn_discussion(story_id: str, max_comments: int = 30) -> dict:
         }
 
     return _try("hn_discussion", _do)
+
+
+# --- files (read-only, confined to ~/code — the repo-explorer's tools) ---
+files = FunctionToolset(
+    instructions="Files: read-only access under the code root. Survey cheap first "
+    "(list_dir/find_files), grep to locate, read_file only the few files that matter. "
+    "All paths are relative to the code root; .git and hidden dirs are off-limits."
+)
+
+
+@files.tool_plain
+def list_dir(path: str = ".") -> str:
+    """List a directory under the code root: subdirs first ('name/'), then files with
+    sizes. Hidden entries skipped; capped at 200. Start here to orient in a repo."""
+    return _files_mod.list_dir(path)
+
+
+@files.tool_plain
+def read_file(path: str, offset: int = 0, limit: int = 400) -> str:
+    """Read a file's text with line numbers (cite findings as file:line). Returns at
+    most `limit` lines from `offset` — a continuation pointer appears when truncated.
+    Binary files return a placeholder."""
+    return _files_mod.read_file(path, offset=offset, limit=limit)
+
+
+@files.tool_plain
+def grep(pattern: str, path: str = ".", glob: str | None = None) -> str:
+    """Regex-search file CONTENTS (ripgrep: smart-case, .gitignore respected) under
+    `path`. Returns `file:line: text`, capped at 100 matches — narrow with `glob`
+    (e.g. '*.py') or a deeper path when truncated. The fastest way to find where
+    something is implemented."""
+    return _files_mod.grep(pattern, path=path, glob=glob)
+
+
+@files.tool_plain
+def find_files(glob: str, path: str = ".") -> str:
+    """Find files by NAME glob (e.g. '*.md', '**/agent*.py') under `path`; .gitignore
+    respected, capped at 200. Use to map a repo's shape before reading anything."""
+    return _files_mod.find_files(glob, path=path)
 
 
 # --- tmdb (movies / TV) ---
