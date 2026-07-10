@@ -33,6 +33,37 @@ The single list of candidate subcommands. WORKLOG tracks what happened; this tra
 - [x] **Bare-link shortcut: `ko <url>`** — SHIPPED 2026-06-13 with fetch. — paste a link as the only arg, ko detects it's a URL (deterministic: scheme/domain pattern, no LLM) and routes to `ko fetch`, which sniffs YouTube/PDF/article/dead-link under the hood. The "I just want the markdown of this thing" zero-thought path.
 - [x] **`ko papers search|get|cites|refs|similar`** — SHIPPED 2026-07-03 as designed (`docs/papers-cli-design.md`): OpenAlex backbone (no key), S2 tldr/similar behind optional `S2_API_KEY`, DOI routing in `fetch.py` (doi.org URLs → OA copy first — verified live on a Nature DOI that previously extracted to nothing), `papers_search`/`papers_cites` added to the research agent's toolset. Zero new deps. ⚠️ found live: occasional OpenAlex bad-merge records (wrong title, right abstract) — search the title and use the W-id when a record looks off.
 
+## `ko agent repo` — cheap repo-explorer agent (designed 2026-07-10; build-ready)
+
+The want: "how does reference repo X do Y / find me something relevant" answered by a
+**basic-tier** model with read-only access to `~/code` (+ refs). Decision after a source
+dive on `pydantic-ai-harness` (now in refs — takeaways in refs/CLAUDE.md):
+
+- **v1: hand-roll a read-only `files` FunctionToolset** in `_toolsets.py` (~5 tools:
+  `list_dir`, `read_file` (line-capped, binary guard), `grep` (shell out to `rg`, capped),
+  `find_files`, maybe `git_log`), rooted at `~/code`. **Read-only by construction — no
+  write tools exist**, which beats harness's approach (its FileSystem has no `read_only`
+  flag; write tools stay in the model's tool list and fail via ModelRetry — token waste
+  and confusion for a cheap model). Port ONE thing from harness: its TOCTTOU-safe path
+  containment (resolve symlinks with `realpath` BEFORE the `is_relative_to(root)` check).
+  Then `ko agent repo` = the usual ~15-line agent file: basic tier, instructions = the
+  refs CLAUDE.md explore method (survey cheap → read only the few files that matter →
+  cite file:line; docs/ and examples/ first).
+- **Don't adopt `pydantic-ai-harness` yet** — same call as fastmcp (adopt late): it's
+  explicitly alpha (0.x, "minor releases may break"), imports pydantic-ai *private*
+  internals with cross-version shims, and monty (the Rust sandboxed-Python interpreter
+  behind CodeMode) is 0.0.17. **Adoption triggers**: harness ~0.1/stable or bundled into
+  pydantic-ai; FileSystem grows a real read-only mode; or we want CodeMode.
+- **CodeMode: skip for this use case.** Its win is batching many tool calls into one
+  model round-trip of generated Python — valuable for strong models with big tool
+  surfaces, wrong for a cheap explorer (monty's Python subset: no classes, no time, no
+  third-party imports — a flailing hazard for basic-tier models; plain tool calls are
+  the right altitude). **But monty itself is the watch item**: a local Rust-sandboxed
+  Python is a lighter answer than the Cloudflare Sandbox idea (Infra) for the "agent
+  writes + runs a throwaway script" need. Revisit when monty isn't 0.0.x.
+- Harness's `RepoContext` (experimental) auto-loads CLAUDE.md/AGENTS.md up the tree —
+  nice idea to steal as one cheap tool (`read_repo_context(repo)`) rather than adopt.
+
 ## Backlog (priority order; library picks researched 2026-06-11)
 
 - [ ] **Skills to build** (from the 2026-07-06 mining + Fable review; each lives in its *home repo's*
