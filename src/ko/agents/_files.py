@@ -21,6 +21,8 @@ from pydantic_ai import ModelRetry
 from ko import config
 
 MAX_READ_LINES = 400
+MAX_READ_BYTES = 1_000_000  # refuse whole-file reads beyond this — grep instead
+MAX_LINE_CHARS = 500  # a minified one-liner must not blow the context
 MAX_GREP_LINES = 100
 MAX_LIST_ENTRIES = 200
 MAX_FIND_RESULTS = 200
@@ -65,10 +67,15 @@ def list_dir(path: str = ".") -> str:
         (p for p in d.iterdir() if not p.name.startswith(".")),
         key=lambda p: (p.is_file(), p.name.lower()),
     )
-    lines = [
-        f"{e.name}/" if e.is_dir() else f"{e.name}  ({e.stat().st_size:,}B)"
-        for e in entries[:MAX_LIST_ENTRIES]
-    ]
+    def _entry(e: Path) -> str:
+        if e.is_dir():
+            return f"{e.name}/"
+        try:
+            return f"{e.name}  ({e.stat().st_size:,}B)"
+        except OSError:  # broken symlink — stat follows the (dead) target
+            return f"{e.name}  (broken symlink)"
+
+    lines = [_entry(e) for e in entries[:MAX_LIST_ENTRIES]]
     if len(entries) > MAX_LIST_ENTRIES:
         lines.append(f"[+{len(entries) - MAX_LIST_ENTRIES} more entries]")
     return "\n".join(lines) or "(empty)"
@@ -83,22 +90,33 @@ def read_file(path: str, offset: int = 0, limit: int = MAX_READ_LINES) -> str:
         parent = f.parent
         hint = list_dir(str(parent.relative_to(code_root().resolve()) or ".")) if parent.is_dir() else "(parent missing too)"
         raise ModelRetry(f"'{path}' does not exist. In its directory:\n{hint}")
+    size = f.stat().st_size
+    if size > MAX_READ_BYTES:
+        return (
+            f"(file is {size:,} bytes — too large to read whole; "
+            f"grep it to locate the relevant lines instead)"
+        )
     raw = f.read_bytes()
     if b"\x00" in raw[:8192]:
         return f"(binary file, {len(raw):,} bytes — not readable as text)"
     lines = raw.decode("utf-8", errors="replace").splitlines()
-    window = lines[offset : offset + limit]
+    window = [
+        ln if len(ln) <= MAX_LINE_CHARS else ln[:MAX_LINE_CHARS] + "…[line truncated]"
+        for ln in lines[offset : offset + limit]
+    ]
     out = [f"{offset + i + 1}: {ln}" for i, ln in enumerate(window)]
-    remaining = len(lines) - offset - len(window)
+    remaining = len(lines) - offset - len(window)  # window == the emitted slice
     if remaining > 0:
         out.append(f"[+{remaining} more lines — call read_file(path, offset={offset + limit})]")
     return "\n".join(out) or "(empty file)"
 
 
-def grep(pattern: str, path: str = ".", glob: str | None = None) -> str:
+def grep(pattern: str, path: str = ".", glob: str | None = None, limit: int = MAX_GREP_LINES) -> str:
     """Regex search file CONTENTS via ripgrep (smart-case, respects .gitignore).
-    Returns `file:line: text`, capped — narrow the pattern/path/glob when truncated."""
+    Returns `file:line: text`, at most `limit` matches (the eval showed models
+    reach for a limit param — give them the real one)."""
     d = _resolve(path)
+    limit = max(1, min(limit, 2 * MAX_GREP_LINES))
     cmd = ["rg", "-n", "--no-heading", "-S", "--max-columns", "300"]
     if glob:
         cmd += ["-g", glob]
@@ -107,21 +125,26 @@ def grep(pattern: str, path: str = ".", glob: str | None = None) -> str:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     except FileNotFoundError:
         raise ModelRetry("ripgrep (rg) is not installed on this machine — use find_files + read_file instead.")
+    except subprocess.TimeoutExpired:
+        raise ModelRetry("search timed out (30s) — scope to a subdirectory or add a glob.")
     if proc.returncode not in (0, 1):  # 1 = no matches; anything else is a real error
         raise ModelRetry(f"search failed: {proc.stderr.strip()[:200]}")
     root = str(code_root().resolve()) + "/"
     lines = [ln.replace(root, "", 1) for ln in proc.stdout.splitlines()]
     if not lines:
         return "(no matches)"
-    out = lines[:MAX_GREP_LINES]
-    if len(lines) > MAX_GREP_LINES:
-        out.append(f"[+{len(lines) - MAX_GREP_LINES} more matches — narrow the pattern, path, or glob]")
+    out = lines[:limit]
+    if len(lines) > limit:
+        out.append(
+            f"[+{len(lines) - limit} more matches — scope to a subdirectory, add a glob, or tighten the pattern]"
+        )
     return "\n".join(out)
 
 
 def find_files(glob: str, path: str = ".") -> str:
     """Find files by NAME glob (e.g. '*.py', '**/test_*.ts') via `rg --files`
-    (respects .gitignore). Capped; paths relative to the code root."""
+    (respects .gitignore; hidden dirs like .git/.venv and installed packages are
+    excluded). Capped; paths relative to the code root."""
     d = _resolve(path)
     try:
         proc = subprocess.run(
@@ -129,6 +152,10 @@ def find_files(glob: str, path: str = ".") -> str:
         )
     except FileNotFoundError:
         raise ModelRetry("ripgrep (rg) is not installed — use list_dir to navigate instead.")
+    except subprocess.TimeoutExpired:
+        raise ModelRetry("find timed out (30s) — scope to a subdirectory.")
+    if proc.returncode not in (0, 1):
+        raise ModelRetry(f"find failed: {proc.stderr.strip()[:200]}")
     root = str(code_root().resolve()) + "/"
     lines = [ln.replace(root, "", 1) for ln in proc.stdout.splitlines()]
     if not lines:

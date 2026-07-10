@@ -244,18 +244,20 @@ def read_file(path: str, offset: int = 0, limit: int = 400) -> str:
 
 
 @files.tool_plain
-def grep(pattern: str, path: str = ".", glob: str | None = None) -> str:
+def grep(pattern: str, path: str = ".", glob: str | None = None, limit: int = 100) -> str:
     """Regex-search file CONTENTS (ripgrep: smart-case, .gitignore respected) under
-    `path`. Returns `file:line: text`, capped at 100 matches — narrow with `glob`
+    `path`. Returns `file:line: text`, at most `limit` matches (default 100, max 200) —
+    pass a small `limit` when you only need a few examples; narrow with `glob`
     (e.g. '*.py') or a deeper path when truncated. The fastest way to find where
     something is implemented."""
-    return _files_mod.grep(pattern, path=path, glob=glob)
+    return _files_mod.grep(pattern, path=path, glob=glob, limit=limit)
 
 
 @files.tool_plain
 def find_files(glob: str, path: str = ".") -> str:
     """Find files by NAME glob (e.g. '*.md', '**/agent*.py') under `path`; .gitignore
-    respected, capped at 200. Use to map a repo's shape before reading anything."""
+    respected, hidden dirs (.git/.venv, installed packages) excluded, capped at 200.
+    Use to map a repo's shape before reading anything."""
     return _files_mod.find_files(glob, path=path)
 
 

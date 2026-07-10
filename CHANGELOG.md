@@ -42,7 +42,10 @@ Cut a release with the repo's `/release` skill.
   flags clones over 500MB.
 - `ko agent repo` — repo-explorer agent: "how does repo X do Y" over `~/code`
   (read-only by construction; ripgrep search; knows the refs/CLAUDE.md map;
-  cites file:line; basic tier — ~$0.0005 a run).
+  cites file:line; basic tier — under a cent a run). Hardened after a
+  trace-eval + review pass: huge/minified files can't blow the context,
+  broken symlinks and rg timeouts degrade cleanly, and `grep` grew the
+  `limit` param the model reached for.
 
 ## [2026.7.9] - 2026-07-09
 

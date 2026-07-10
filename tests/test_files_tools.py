@@ -122,3 +122,47 @@ def test_refs_overview_head_caps_and_points(root: Path, monkeypatch) -> None:
     out = _files.refs_overview_head()
     assert out.startswith("l0")
     assert "[+50 more lines — read_file('refs/CLAUDE.md')]" in out
+
+
+# --- post-review hardening: broken symlinks, big files, long lines, grep limit ---
+
+
+def test_list_dir_broken_symlink_no_crash(root: Path) -> None:
+    (root / "proj" / "dangling").symlink_to(root / "proj" / "gone.txt")  # target never exists
+    out = _files.list_dir("proj")
+    assert "dangling  (broken symlink)" in out  # noted, not crashed
+
+
+def test_read_file_refuses_huge_files(root: Path) -> None:
+    big = root / "huge.json"
+    big.write_bytes(b"x" * (_files.MAX_READ_BYTES + 1))
+    out = _files.read_file("huge.json")
+    assert "too large" in out and "grep" in out
+
+
+def test_read_file_truncates_minified_lines(root: Path) -> None:
+    (root / "min.js").write_text("a" * 5000)  # one giant line
+    out = _files.read_file("min.js")
+    assert len(out) < 1000 and "[line truncated]" in out
+
+
+@needs_rg
+def test_grep_limit_param(root: Path) -> None:
+    (root / "many.txt").write_text("\n".join(f"match {i}" for i in range(50)))
+    out = _files.grep("match", "many.txt", limit=5)
+    body = [ln for ln in out.splitlines() if not ln.startswith("[+")]
+    assert len(body) == 5
+    assert "[+45 more matches" in out
+
+
+def test_grep_timeout_is_modelretry(root: Path, monkeypatch) -> None:
+    import subprocess as sp
+
+    def _boom(*a, **k):
+        raise sp.TimeoutExpired(cmd="rg", timeout=30)
+
+    monkeypatch.setattr(_files.subprocess, "run", _boom)
+    with pytest.raises(ModelRetry, match="timed out"):
+        _files.grep("x", "proj")
+    with pytest.raises(ModelRetry, match="timed out"):
+        _files.find_files("*.py", "proj")
