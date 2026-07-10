@@ -33,7 +33,11 @@ The single list of candidate subcommands. WORKLOG tracks what happened; this tra
 - [x] **Bare-link shortcut: `ko <url>`** — SHIPPED 2026-06-13 with fetch. — paste a link as the only arg, ko detects it's a URL (deterministic: scheme/domain pattern, no LLM) and routes to `ko fetch`, which sniffs YouTube/PDF/article/dead-link under the hood. The "I just want the markdown of this thing" zero-thought path.
 - [x] **`ko papers search|get|cites|refs|similar`** — SHIPPED 2026-07-03 as designed (`docs/papers-cli-design.md`): OpenAlex backbone (no key), S2 tldr/similar behind optional `S2_API_KEY`, DOI routing in `fetch.py` (doi.org URLs → OA copy first — verified live on a Nature DOI that previously extracted to nothing), `papers_search`/`papers_cites` added to the research agent's toolset. Zero new deps. ⚠️ found live: occasional OpenAlex bad-merge records (wrong title, right abstract) — search the title and use the W-id when a record looks off.
 
-## `ko agent repo` — cheap repo-explorer agent (designed 2026-07-10; build-ready)
+## `ko agent repo` — cheap repo-explorer agent (SHIPPED 2026-07-10, as designed below)
+
+Built same day: `agents/_files.py` + `files` toolset + `agents/repo.py` + `ko agent repo`.
+Live: answered "how does harness prevent path traversal" with exact quotes + file:line,
+using the refs/CLAUDE.md takeaways, for $0.0005/run on deepseek-flash. Design notes kept:
 
 The want: "how does reference repo X do Y / find me something relevant" answered by a
 **basic-tier** model with read-only access to `~/code` (+ refs). Decision after a source

@@ -38,7 +38,11 @@ Cut a release with the repo's `/release` skill.
 - `ko refs` — manage the `~/code/refs` reference-repo folder: bare = parallel
   `--ff-only` pull of all clones (only moved HEADs printed), `setup` bootstraps
   the baked list + `~/.config/ko/refs.txt` on any machine, `add <url>` clones and
-  remembers, `list` = TSV.
+  remembers, `list` = TSV. `ko doctor` shows the folder's disk footprint and
+  flags clones over 500MB.
+- `ko agent repo` — repo-explorer agent: "how does repo X do Y" over `~/code`
+  (read-only by construction; ripgrep search; knows the refs/CLAUDE.md map;
+  cites file:line; basic tier — ~$0.0005 a run).
 
 ## [2026.7.9] - 2026-07-09
 
