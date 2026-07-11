@@ -32,6 +32,8 @@ HEAD_LINES = 200  # max memory lines injected into instructions
 
 
 def memory_dir(agent: str) -> Path:
+    if Path(agent).name != agent or agent.startswith("."):  # factory is public API — keep it honest
+        raise ValueError(f"agent name must be a plain name, got {agent!r}")
     d = state_dir() / "memory" / agent
     d.mkdir(parents=True, exist_ok=True)
     return d
@@ -42,7 +44,11 @@ def shared_file() -> Path:
 
 
 def _resolve_note(agent: str, name: str) -> Path:
-    """Containment for the workspace: inside the agent's own memory dir, .md only."""
+    """Containment for the workspace: the agent's own memory dir is FLAT — plain
+    .md names only (subdir names used to escape into an uncaught FileNotFoundError,
+    and wouldn't show in the injection listing anyway)."""
+    if Path(name).name != name:
+        raise ModelRetry(f"'{name}' — use a plain name like 'memory.md' or 'notes.md' (no folders).")
     root = memory_dir(agent).resolve()
     full = (root / name).resolve()
     if not full.is_relative_to(root):
@@ -57,9 +63,10 @@ def _notes(agent: str) -> list[str]:
     return sorted(p.name for p in root.glob("*.md"))
 
 
-def _head(text: str, budget: int = HEAD_LINES) -> str:
+def _head(text: str, budget: int = HEAD_LINES, hint: str | None = f"read_note('{MEMORY_FILE}') for all") -> str:
     """Pin-aware head: pinned lines always included; the tail keeps its NEWEST lines
-    (entries append at the bottom) with a truncation marker pointing at the rest."""
+    (entries append at the bottom) with a truncation marker pointing at the rest.
+    `hint=None` for files no tool can read back (the shared memory)."""
     lines = text.splitlines()
     if len(lines) <= budget:
         return text
@@ -70,7 +77,9 @@ def _head(text: str, budget: int = HEAD_LINES) -> str:
         pinned, tail = [], lines
     keep = max(budget - len(pinned), 0)
     dropped = len(tail) - keep
-    marker = [f"[…{dropped} older lines truncated — read_note('{MEMORY_FILE}') for all]"]
+    if dropped <= 0:  # everything pinned / nothing to drop — no noise marker
+        return text
+    marker = [f"[…{dropped} older lines truncated{' — ' + hint if hint else ''}]"]
     return "\n".join(pinned + marker + tail[-keep:] if keep else pinned + marker)
 
 
@@ -79,14 +88,15 @@ def instructions_block(agent: str) -> str:
     then the agent's own memory.md head, then a listing of its other notes."""
     parts: list[str] = []
     try:
-        shared = shared_file().read_text().strip()
+        shared = shared_file().read_text(errors="replace").strip()
         if shared:
-            parts.append(f"## Shared memory (about Ko — {shared_file()})\n\n{_head(shared)}")
+            # hint=None: no tool reads the shared file — a read_note hint would misdirect
+            parts.append(f"## Shared memory (about Ko — {shared_file()})\n\n{_head(shared, hint=None)}")
     except OSError:
         pass
     own = memory_dir(agent) / MEMORY_FILE
     try:
-        text = own.read_text().strip()
+        text = own.read_text(errors="replace").strip()
     except OSError:
         text = ""
     parts.append(
@@ -135,7 +145,7 @@ def memory_toolset(agent: str) -> FunctionToolset:
         """Create or overwrite one of your notes (NOT memory.md — that anchor only
         changes via append_memory/edit_note, so it can't be clobbered wholesale)."""
         f = _resolve_note(agent, name)
-        if f.name == MEMORY_FILE:
+        if f.name.lower() == MEMORY_FILE:  # .lower(): APFS is case-insensitive — 'MEMORY.MD' IS the anchor
             raise ModelRetry("memory.md can't be overwritten — append_memory or edit_note it.")
         f.write_text(content.rstrip() + "\n")
         return f"wrote {len(content.splitlines())} line(s) to {name}"

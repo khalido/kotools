@@ -27,7 +27,8 @@ def _tool(ts, name):
 
 
 def test_note_escape_blocked(dirs) -> None:
-    with pytest.raises(ModelRetry, match="outside"):
+    # the plain-name guard fires before containment ever needs to — same protection, earlier
+    with pytest.raises(ModelRetry, match="plain name"):
         _memory._resolve_note("repo", "../research/memory.md")
 
 
@@ -116,3 +117,49 @@ def test_instructions_block_includes_shared(dirs) -> None:
     block = _memory.instructions_block("research")
     assert "Shared memory" in block and "tight summaries" in block
     assert "(empty — you have not saved anything yet)" in block
+
+
+# --- Fable-review fix pass: case bypass, subdirs, symlinks, keep=0 branch ---
+
+
+def test_write_note_anchor_case_insensitive(dirs) -> None:
+    ts = _memory.memory_toolset("repo")
+    _tool(ts, "append_memory")("- precious")
+    with pytest.raises(ModelRetry, match="can't be overwritten"):
+        _tool(ts, "write_note")("MEMORY.MD", "clobbered")  # APFS: same file as memory.md
+    assert "precious" in _tool(ts, "read_note")()
+
+
+def test_subdir_names_rejected_cleanly(dirs) -> None:
+    with pytest.raises(ModelRetry, match="plain name"):
+        _memory._resolve_note("repo", "sub/notes.md")
+    with pytest.raises(ModelRetry, match="plain name"):
+        _memory._resolve_note("repo", "/etc/x.md")
+
+
+def test_symlink_escape_blocked(dirs, tmp_path) -> None:
+    outside = tmp_path / "outside.md"
+    outside.write_text("secret")
+    (_memory.memory_dir("repo") / "sneaky.md").symlink_to(outside)
+    with pytest.raises(ModelRetry, match="outside"):
+        _memory._resolve_note("repo", "sneaky.md")
+
+
+def test_head_budget_smaller_than_pin(dirs) -> None:
+    pinned = [f"pin {i}" for i in range(8)] + [_memory.PIN_MARKER]
+    tail = [f"entry {i}" for i in range(5)]
+    out = _memory._head("\n".join(pinned + tail), budget=3)
+    assert "pin 0" in out and _memory.PIN_MARKER in out  # all pins survive
+    assert "entry" not in out.replace("older lines", "")  # whole tail dropped
+    assert "…5 older lines truncated" in out
+
+
+def test_head_pin_on_last_line_no_noise_marker(dirs) -> None:
+    lines = [f"pin {i}" for i in range(250)] + [_memory.PIN_MARKER]
+    out = _memory._head("\n".join(lines), budget=200)
+    assert "truncated" not in out  # nothing droppable — no [+0] noise
+
+
+def test_memory_dir_rejects_path_tricks(dirs) -> None:
+    with pytest.raises(ValueError):
+        _memory.memory_dir("../escape")
