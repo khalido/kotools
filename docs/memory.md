@@ -2,6 +2,37 @@
 
 > **Status: planning (2026-06-27), not built.** A *separable component* — designed so it could later
 > graduate to its own GitHub repo. Companion research at the bottom.
+
+## v1 first: per-agent memory.md (designed 2026-07-11 — the cheap layer BEFORE any of the below)
+
+Researched against thinker's working SiftWorkspace, pydantic-deepagents, and hermes-agent (all in
+refs; subagent report). memory.md = **what an agent holds in its head** (working context +
+accumulated judgment); the vector store below = searchable external memory. Complementary — build
+the cheap one first, defer everything else in this doc.
+
+- **Two tiers.** Per-agent `~/.local/state/ko/memory/<agent>/memory.md` (machine-local learned
+  knowledge — state dir; sessions remain the source of truth) + one shared
+  `~/.config/ko/memory.md` (user preferences / standing context — dotfile-synced; this IS
+  ideas.md's `context.md`, upgraded to agent-writable). Shared injects into every agent first,
+  then the agent's own. tv agent: skip (stateless lookups).
+- **Injection** = the exact `@agent.instructions` mechanism repo.py already uses for
+  refs/CLAUDE.md: head-cap 200 lines + truncation pointer (thinker), plus deepagents' **pin
+  marker** (`<!-- ko:pin-end -->`): foundational notes above the pin always survive; the tail
+  below is recency-truncated. Prefix-cache-friendly (same string per step).
+- **Write tools** (new `agents/_memory.py`, ~50 lines + 3 tools): `read_memory` (full file),
+  `write_memory` (append-only — safer than overwrite), `edit_memory` (thinker's
+  uniqueness-guarded find-and-replace: old_string must occur exactly once, ModelRetry otherwise).
+  Scoped to the agent's own memory dir — NOT the general files toolset (which stays read-only by
+  construction).
+- **Curation lives in instructions, not code** (thinker's discipline, observed working over 8
+  months of real memories — 22-52 lines/agent, no bloat): update slowly (only likely-to-recur
+  items), bump dates/counts in-place, DELETE stale entries, keep under ~100 lines. Shared memory
+  gets different rules: durable user-style facts only, no topic findings.
+- **Relation to the big plan**: skip libSQL/vector/MCP/distiller/decay for now. When the
+  distiller eventually exists it reads memory.md files as one of its sources. refs/CLAUDE.md is
+  effectively the repo agent's domain memory already — the subagent's own dogfood run measured
+  ~2x token cost exploring a repo missing from that map, which is the strongest evidence memory
+  injection pays for itself.
 >
 > **Principle: own the memory layer.** The learning is the point, and it's a tool I reach for when I
 > need it. Outsourcing to an all-in-one (mem0 / Zep / Letta) puts it out of my hands. So: build a
