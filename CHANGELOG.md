@@ -42,7 +42,11 @@ Cut a release with the repo's `/release` skill.
   flags clones over 500MB.
 - `ko agent repo` — repo-explorer agent: "how does repo X do Y" over `~/code`
   (read-only by construction; ripgrep search; knows the refs/CLAUDE.md map;
-  cites file:line; basic tier — under a cent a run). Hardened after a
+  cites file:line; basic tier — under a cent a run).
+- Agent memory: research + repo agents keep a per-agent markdown workspace
+  (`memory.md` anchor injected each run + free-form notes; append/edit tools
+  with a uniqueness guard), plus a shared hand-edited `~/.config/ko/memory.md`
+  injected everywhere. A fresh run recalls what a prior run saved. Hardened after a
   trace-eval + review pass: huge/minified files can't blow the context,
   broken symlinks and rg timeouts degrade cleanly, and `grep` grew the
   `limit` param the model reached for.

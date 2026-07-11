@@ -13,6 +13,7 @@ from pydantic_ai import Agent
 
 from ko import config, llm
 from ko.agents import _shared
+from ko.agents._memory import instructions_block, memory_toolset
 from ko.agents._toolsets import news, papers, web
 
 # Default model (read at import): KO_AGENT_MODEL -> `[agents] model` in config.toml ->
@@ -31,8 +32,14 @@ agent = Agent(
         "(it lags and is prestige-biased). Verify a citation is real (papers_get) before relying "
         "on it. Reply in markdown with headers, bullets, and cited URLs/DOIs; be concise."
     ),
-    toolsets=[web, papers, news],
+    toolsets=[web, papers, news, memory_toolset("research")],
 )
+
+
+@agent.instructions
+def _memory() -> str:
+    """Shared + own memory.md, head-capped — see agents/_memory.py."""
+    return instructions_block("research")
 
 
 def run(prompt: str, model: str | None = None, resume: str | None = None) -> str:

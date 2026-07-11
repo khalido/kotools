@@ -17,6 +17,7 @@ from pydantic_ai import Agent
 from ko import config, llm
 from ko.agents import _shared
 from ko.agents._files import refs_overview_head
+from ko.agents._memory import instructions_block, memory_toolset
 from ko.agents._toolsets import files
 
 _MODEL = config.setting("KO_AGENT_MODEL", "agents", "model", llm.model_for("basic"))
@@ -38,7 +39,7 @@ agent = Agent(
         "If you learned something durable about a ref repo, say so at the end — "
         "takeaways get added to refs/CLAUDE.md."
     ),
-    toolsets=[files],
+    toolsets=[files, memory_toolset("repo")],
 )
 
 
@@ -46,6 +47,12 @@ agent = Agent(
 def _refs_map() -> str:
     """Fresh each run — refs/CLAUDE.md accumulates takeaways between runs."""
     return f"## refs/ map (from refs/CLAUDE.md)\n\n{refs_overview_head()}"
+
+
+@agent.instructions
+def _memory() -> str:
+    """Shared + own memory.md, head-capped — see agents/_memory.py."""
+    return instructions_block("repo")
 
 
 def run(prompt: str, model: str | None = None, resume: str | None = None) -> str:

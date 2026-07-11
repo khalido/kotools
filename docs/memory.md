@@ -3,7 +3,10 @@
 > **Status: planning (2026-06-27), not built.** A *separable component* — designed so it could later
 > graduate to its own GitHub repo. Companion research at the bottom.
 
-## v1 first: per-agent memory.md (designed 2026-07-11 — the cheap layer BEFORE any of the below)
+## v1 first: per-agent memory.md (SHIPPED 2026-07-11 as designed — `agents/_memory.py`)
+
+Live-verified same day: repo agent appended to its memory, a FRESH run answered from the
+injection alone (zero tool calls, $0.0003). Design notes kept:
 
 Researched against thinker's working SiftWorkspace, pydantic-deepagents, and hermes-agent (all in
 refs; subagent report). memory.md = **what an agent holds in its head** (working context +
