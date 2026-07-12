@@ -2,6 +2,35 @@
 
 Newest first. Big picture only — git commits have the detail; candidate ideas and decisions live in `docs/ideas.md`.
 
+## 2026-07-10/11 — money layer, refs, repo agent, memory (post-release arc)
+
+- **First release cut**: v2026.7.9 tagged + GitHub release via the new `/release` skill
+  (everx pattern + Keep a Changelog 2.0.0; CHANGELOG.md canonical). PyPI deferred until
+  the trusted publisher is registered (user).
+- **Money-first LLM layer**: `[llm] basic/medium/smart/ultra` tiers (deepseek-v4-flash /
+  glm-5.2 / `~x-ai/grok-latest` / gpt-5.6-sol — priced via OR catalog); every LLM call
+  prints a stderr cost note using **OpenRouter's actual billed cost** from
+  provider_details (genai-prices estimate crashes on brand-new models — actuals aren't
+  just better, they're the only reliable path); doctor live-checks the OR key via
+  /credits ($ left + trend). Config: `config.setting()` chain, `[telemetry]` opt-in
+  (pydantic-ai OTel → PostHog, off by default, GH #2 awaits the key flip), loud
+  malformed-config.toml warning, doctor settings/dirs footer.
+- **`ko refs`** (pull/setup/add/list — gitupdateall.py port; refs.txt machine list;
+  doctor disk footprint, openclaw flagged at 1.9GB) and **`ko agent repo`** — the
+  cheap repo-explorer (read-only files toolset confined to ~/code, refs/CLAUDE.md map
+  injected per run, ~$0.001/question). Tools aligned to Claude Code priors (glob rename,
+  grep limit/context/files_only — the model *invented* the limit param in traces).
+- **The toolset eval loop became house method** (CLAUDE.md "Adding an agent" step 4):
+  run the agent → subagent reads session traces → fresh adversarial review →
+  prior-alignment check. Three passes on the files tools each caught what the others
+  couldn't (10MB single-line read, broken-symlink crash, invented params).
+- **Per-agent markdown memory** (docs/memory.md "v1 first", researched vs
+  thinker/deepagents/hermes): `~/.local/state/ko/memory/<agent>/` workspaces
+  (memory.md anchor + free-form notes; append/uniqueness-edit tools; pin marker) +
+  shared `~/.config/ko/memory.md`. Live-verified cross-run recall ($0.0003). Fable
+  review caught an APFS case bypass that clobbered the anchor + a subdir crash — both
+  fixed with regressions. 309 tests passing (was 180 at the week's start).
+
 ## 2026-07-09 — strategic review sweep + `ko brief`/`ko yt`/sessions index
 
 - **Full hands-on review** (4 Sonnet testers over every cluster + a researcher dogfooding ko + a Fable
