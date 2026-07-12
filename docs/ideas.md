@@ -68,6 +68,20 @@ dive on `pydantic-ai-harness` (now in refs — takeaways in refs/CLAUDE.md):
 - Harness's `RepoContext` (experimental) auto-loads CLAUDE.md/AGENTS.md up the tree —
   nice idea to steal as one cheap tool (`read_repo_context(repo)`) rather than adopt.
 
+## `ko agent repo` friction (from the 2026-07-12 refs-map sweep — 21 real runs, $0.09)
+
+The sweep that filled refs/CLAUDE.md (19 missing + 2 stub entries) doubled as an eval. Candidates,
+none urgent:
+- [ ] **Hard scope constraint** — the `pi` run confidently described sibling `pi-autoresearch`
+  instead (context bleed between adjacent refs). Instructions ask for scope discipline; a real
+  `--root refs/<name>` that re-roots the files toolset would make it impossible rather than polite.
+- [ ] **Structured output for bulk use** — orchestrators distilling free-markdown answers into map
+  bullets is post-processing an agent could skip: `ko agent repo --json` with a small output_type
+  (answer, key_files, one_liner). Only worth it if bulk sweeps recur.
+- Noted, no action: cheap model ignores "2-3 sentences" brevity asks (returns 3-8 paragraphs —
+  prompt-side, not tool-side); cost notes could carry a caller label (orchestrators can label their
+  own logs); 4-way parallel `ko agent repo` runs were flawless.
+
 ## Backlog (priority order; library picks researched 2026-06-11)
 
 - [ ] **Skills to build** (from the 2026-07-06 mining + Fable review; each lives in its *home repo's*
