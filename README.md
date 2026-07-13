@@ -18,8 +18,11 @@ Reach for `ko` when you want the answer, not the website. `ko doctor` shows what
 | `ko exa` | semantic web search + URL → markdown ([Exa](https://exa.ai)) | find posts/lab-pages a keyword search misses |
 | `ko fetch` | any URL → clean markdown (PDF, arxiv, Wayback fallback) | `ko <url>` — read a page or PDF as text |
 | `ko doc` | PDF/Office/image → text, fully local (no models) | `ko report.pdf` — no upload, no key |
+| `ko yt` | YouTube → transcript (free, no key); `-s` summarizes | "what does this 40-min talk actually say" |
 | `ko llm` | one-shot LLM, stdin-aware, never has tools | `… \| ko llm "summarize"` inside a pipe |
-| `ko agent` | pydantic-ai agents (`research` / `tv`), resumable | a question that needs multi-source digging |
+| `ko ai` | **the default agent** — every tool above + memory | "find X, read it, tell me what matters" |
+| `ko agent` | specialist agents (`research`/`repo`/`tv`), resumable | deep literature digs; "how does repo X do Y" |
+| `ko brief` | morning brief: calendar + mail + HN + papers → one summary | the day's triage in one read |
 | `ko tv` | movie/TV rating + where to stream ([TMDB](https://developer.themoviedb.org), AU) | "worth watching, and where can I?" |
 | `ko gsheets` | read **& write** Google Sheets (OAuth) | dump/read data + formulas, overwrite-guarded |
 | `ko gdocs` | Markdown ↔ Google Docs + comments | push a proposal `.md` → Doc → read feedback back |
@@ -28,8 +31,9 @@ Reach for `ko` when you want the answer, not the website. `ko doctor` shows what
 | `ko tt` | TickTick lists + tasks (read-only, via MCP) | `ko tt today` — my open tasks |
 | `ko publish` | scaffold + deploy a site to Cloudflare | ship a landing page / write-up / mini-tool |
 | `ko prompt` | my "how I build X" kickoff briefs | `ko prompt research-papers` → load into an agent |
+| `ko refs` | manage `~/code/refs` (reference repo clones) | `ko refs` pulls all; `add <url>` clones + remembers |
 
-Utilities: `ko doctor` (setup status — run it first), `ko models` (model strings for `-m`), `ko billing` (credits left), `ko logs`, `ko mcp` (inspect/call MCP servers).
+Utilities: `ko doctor` (setup status — run it first), `ko models` (model strings for `-m`), `ko billing` (credits left), `ko logs`, `ko mcp` (inspect/call MCP servers). Every LLM call prints its cost to stderr — OpenRouter's actual billed cost when available. Agents keep their own markdown memory (plus a shared `~/.config/ko/memory.md` about you) and save resumable sessions; `ko agent sessions summarize` builds a searchable index of them.
 
 ## It composes
 
@@ -63,8 +67,8 @@ Keys live in environment variables (shell profile or `.env`) or in `~/.config/ko
 | Env var | Used by | Paid? | Notes |
 |---|---|---|---|
 | `EXA_API_KEY` | `ko exa`, agents | 💰 | Search $7/1k requests (contents for 10 results included); standalone contents $1/1k pages. [exa.ai](https://exa.ai) |
-| `OPENROUTER_API_KEY` | `ko agent` (default), `ko llm` | 💰 | One key, any model. Default agent model is `openrouter:z-ai/glm-5.2`; `-m` overrides. |
-| `GEMINI_API_KEY` | `ko llm` (default), `ko agent tv` | 💰 | `ko llm` default is `google:gemini-3.5-flash` (`-m`/`KO_DEFAULT_MODEL`); also the `tv` agent's default. |
+| `OPENROUTER_API_KEY` | `ko llm`, `ko ai`, agents, `ko brief` — the default for everything | 💰 | One prepaid pool, any model. Baked model tiers ride on it: basic = deepseek-v4-flash (llm/brief/summarize), medium = glm-5.2 (`ko ai`), smart = grok-latest (research). Override per-tier in `[llm]`; `-m` per run. `ko billing`/doctor show $ left; every call prints its actual cost to stderr. |
+| `GEMINI_API_KEY` | `-m google:…` escape hatch | 💰 | Direct Gemini — handy when the OpenRouter pool runs dry (`-m google:gemini-3.5-flash`) or for Gemini-only features later. |
 | `X_BEARER_TOKEN` | `ko x` | 💰 | X API v2 Bearer Token. Pay-per-use since 2026 (prepaid credits, ~$0.005/post read). [developer.x.com](https://developer.x.com) |
 | `TMDB_READ_ACCESS_TOKEN` | `ko tv` | free | v4 Read Access Token from [TMDB settings](https://www.themoviedb.org/settings/api). |
 | `TICKTICK_API_KEY` | `ko tt` | (TickTick sub) | TickTick app → Account → MCP → generate. Read-only here. |
