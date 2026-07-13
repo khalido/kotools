@@ -32,13 +32,15 @@ def _cost_note(messages: list, prior: int = 0) -> None:
     _err.print(run_cost(messages[prior:]).note, style="dim", markup=False, highlight=False)
 
 
-def _stream(agent: Agent, prompt: str, history: list, model: str | None = None) -> tuple[str, list]:
+def _stream(
+    agent: Agent, prompt: str, history: list, model: str | None = None, limits=None
+) -> tuple[str, list]:
     """Run one turn with live markdown output. Returns (text, full message history).
 
     v2: run_stream_sync returns the result directly (not a context manager), and
     stream_text(delta=False) yields the full text so far each tick.
     """
-    result = agent.run_stream_sync(prompt, message_history=history, model=model)
+    result = agent.run_stream_sync(prompt, message_history=history, model=model, usage_limits=limits)
     text = ""
     with Live(console=_console, refresh_per_second=15) as live:
         for text in result.stream_text():
@@ -52,6 +54,7 @@ def run(
     name: str = "agent",
     model: str | None = None,
     resume: str | None = None,
+    limits=None,
 ) -> str:
     """One-shot. Streams pretty markdown to a TTY; plain text when piped. Saves the session.
 
@@ -61,9 +64,9 @@ def run(
     session_id = resume or sessions.new_id()
     history = sessions.load(resume) if resume else []
     if _console.is_terminal:
-        text, messages = _stream(agent, prompt, history, model=model)
+        text, messages = _stream(agent, prompt, history, model=model, limits=limits)
     else:
-        result = agent.run_sync(prompt, message_history=history, model=model)
+        result = agent.run_sync(prompt, message_history=history, model=model, usage_limits=limits)
         text, messages = result.output, result.all_messages()
         print(text)
     _cost_note(messages, prior=len(history))
@@ -77,6 +80,7 @@ def repl(
     name: str | None = None,
     model: str | None = None,
     resume: str | None = None,
+    limits=None,
 ) -> None:
     """Interactive session; history preserved across turns and saved after each.
 
@@ -107,6 +111,6 @@ def repl(
             _console.print("[dim]context cleared (new session)[/dim]")
             continue
         prior = len(history)
-        _, history = _stream(agent, user_input, history, model=model)
+        _, history = _stream(agent, user_input, history, model=model, limits=limits)
         _cost_note(history, prior=prior)
         sessions.save(session_id, name, history)

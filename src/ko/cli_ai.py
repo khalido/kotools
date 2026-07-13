@@ -16,7 +16,7 @@ from . import mcp_client as mcp_client_mod
 from . import prompt as prompt_mod
 from . import publish as publish_mod
 from . import ticktick as ticktick_mod
-from .agents import repo_run, repo_repl, research_run, research_repl, tv_run, tv_repl
+from .agents import ai_run, ai_repl, repo_run, repo_repl, research_run, research_repl, tv_run, tv_repl
 from ._cli_shared import _die, _emit_json, _no_results, _tsv_cell, app
 
 # --- sub-apps ---
@@ -101,6 +101,34 @@ def models_cmd(
     llm_mod.refresh_openrouter_models(force=refresh)
     for name in sorted(llm_mod.available_models()):
         typer.echo(name)
+
+
+@app.command("ai")
+def ai_cmd(
+    prompt: str = typer.Argument(
+        None, help="what you want done/answered; omit to enter interactive mode"
+    ),
+    model: str = typer.Option(
+        None, "--model", "-m", help="model override (default: the medium tier)",
+        autocompletion=llm_mod.available_models,
+    ),
+    resume: str = typer.Option(
+        None, "--resume", "-r", help="resume a saved session id"
+    ),
+) -> None:
+    """ko's default agent — all toolsets (web, papers, HN, movies, ~/code files read-only)
+    + its own memory. One-shot or REPL; sessions saved; capped at 30 model requests/run."""
+    try:
+        if prompt:
+            ai_run(prompt, model=model, resume=resume)
+        else:
+            ai_repl(model=model, resume=resume)
+    except FileNotFoundError:
+        _die(f"no saved session {resume!r} — see `ko agent sessions`")
+    except typer.Exit:
+        raise
+    except Exception as e:
+        _die(str(e))
 
 
 # --- agent commands ---

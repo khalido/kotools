@@ -1,3 +1,6 @@
+from ko.agents.ai import agent as ai_agent
+from ko.agents.ai import repl as ai_repl
+from ko.agents.ai import run as ai_run
 from ko.agents.repo import agent as repo_agent
 from ko.agents.repo import repl as repo_repl
 from ko.agents.repo import run as repo_run
@@ -9,6 +12,9 @@ from ko.agents.tv import repl as tv_repl
 from ko.agents.tv import run as tv_run
 
 __all__ = [
+    "ai_agent",
+    "ai_run",
+    "ai_repl",
     "repo_agent",
     "repo_run",
     "repo_repl",

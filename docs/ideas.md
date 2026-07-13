@@ -17,7 +17,7 @@ The single list of candidate subcommands. WORKLOG tracks what happened; this tra
 2. **PyPI publish** (user, token coming): `uv build --no-sources && uv publish`.
 3. **`ko note`** — append-and-review Google Doc (tiny; prepend timestamped blocks; needs gdocs auth). See the `ko note` entry below.
 4. **`ko brief`** — morning brief: deterministic gather (`cal` filtered + `gmail` unread + `hn`/papers + `tt`) → one cheap-model synthesis in my voice; `--raw` skips the LLM. A scripted pipeline, NOT an agent loop.
-5. **`ko ai`** — Layer 2 agent (the big one; full design below). Now also folds in MCP toolsets + telemetry (see those bullets).
+5. **`ko ai`** — SHIPPED 2026-07-13 (v1: all toolsets + own memory, medium tier, 30-request cap; skills/MCP-toolsets still future — design below).
 6. **Telemetry → PostHog** (auto-on when key set): command-log loguru sink; LLM traces via pydantic-ai `InstrumentationSettings` → local + PostHog (rides on `ko ai`). See Infra (a)/(b).
 7. **MCP server** (`ko mcp serve`, FastMCP) + **bundled default servers** (railway/context7); **Telegram bridge** — all ride on `ko ai`.
 8. **Far future:** agent fleet / remote sandboxes — `docs/remote.md` (planning) + `docs/fleet.md` (brief).

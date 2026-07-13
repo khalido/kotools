@@ -163,3 +163,18 @@ def test_head_pin_on_last_line_no_noise_marker(dirs) -> None:
 def test_memory_dir_rejects_path_tricks(dirs) -> None:
     with pytest.raises(ValueError):
         _memory.memory_dir("../escape")
+
+
+# --- the default agent assembles everything (offline shape check) ---
+
+
+def test_ai_agent_has_all_toolsets(dirs) -> None:
+    from ko.agents import ai
+
+    names = set()
+    for ts in ai.agent.toolsets:
+        names.update(getattr(ts, "tools", {}).keys())
+    # one representative tool per toolset, plus memory
+    for expected in ("exa_search", "papers_search", "hn_top", "tv_lookup", "grep", "append_memory"):
+        assert expected in names, f"missing {expected}"
+    assert ai._LIMITS.request_limit == 30

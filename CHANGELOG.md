@@ -43,6 +43,9 @@ Cut a release with the repo's `/release` skill.
 - `ko agent repo` — repo-explorer agent: "how does repo X do Y" over `~/code`
   (read-only by construction; ripgrep search; knows the refs/CLAUDE.md map;
   cites file:line; basic tier — under a cent a run).
+- `ko ai "<prompt>"` — the default agent: every toolset (web, papers, HN,
+  movies, read-only ~/code files) plus its own memory; medium-tier model,
+  hard-capped at 30 model requests per run. One-shot or REPL.
 - Agent memory: research + repo agents keep a per-agent markdown workspace
   (`memory.md` anchor injected each run + free-form notes; append/edit tools
   with a uniqueness guard), plus a shared hand-edited `~/.config/ko/memory.md`
