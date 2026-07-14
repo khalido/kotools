@@ -109,6 +109,15 @@ none urgent:
   speed only bites in build pipelines over many files. Trigger = adding pre-rendering
   (static HTML / MDX) to publish; then satteri vs remark is the real comparison. Its docs
   don't advertise a TOC block — TOC would come from its AST plugin hooks either way.
+- [ ] **`ko publish` lifecycle + polish** (from the 2026-07-14 pathway review):
+  - **`ko publish rm <name|dir>`** — the missing delete verb (`wrangler delete` + registry cleanup
+    + custom-domain DNS note). Evidence: `ko-test` from June still live in the registry.
+  - **`list` shows age** — registry already stamps `updated_at`, list doesn't print it; a month-stale
+    kotools-site went unnoticed until 2026-07-14. Add the column; optional `--check` pings each URL.
+  - **Auto-OG at scaffold** — the scaffold CLAUDE.md calls `og:description` "the ONE index.html edit
+    worth making"; fill it from title/first paragraph automatically instead.
+  - (Considered, skipped: a `ko publish docs` repo-docs pathway — kotools-site being curated separately
+    from internal docs/ is deliberate.)
 - [ ] **`ko publish` hardening** — deferred from the 2026-07-03 Fable review (real, non-urgent):
   - **`deploy` rewrites `--md` sites to SPA mode** (`publish.py` `ensure_config` defaults `spa=True`;
     md scaffolds are `spa=False`) — renaming an md site silently breaks its 404 handling (every bad
