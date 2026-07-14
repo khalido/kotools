@@ -19,6 +19,7 @@ domains; else `*.workers.dev`. Auth is wrangler's own (`CLOUDFLARE_API_TOKEN`).
 
 from __future__ import annotations
 
+import html
 import json
 import os
 import re
@@ -270,6 +271,31 @@ _LLMS_EXCERPT_CHARS = 1500
 _LLMS_EXCERPT_MAX_PAGES = 2
 
 
+def _strip_html_segment(seg: str) -> str:
+    """Tags out (their text kept), autolink URLs kept, entities unescaped — one span
+    of plain prose (no code)."""
+    seg = re.sub(r"<(https?://[^>]+)>", r"\1", seg)
+    return html.unescape(re.sub(r"<[^>]+>", "", seg))
+
+
+def _strip_html(md_text: str) -> str:
+    """Markdown minus its inline HTML, for llms.txt — tags dropped, their text kept,
+    entities unescaped (`&lt;url&gt;` → `<url>`). Code is sacred: fenced blocks AND
+    inline `code` spans pass through verbatim (`ko fetch <url>` must keep its
+    placeholder). Blank runs left by stripped tag-only lines collapse."""
+    out, in_fence = [], False
+    for line in md_text.splitlines():
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+        elif not in_fence:
+            parts = re.split(r"(`[^`]*`)", line)  # inline code spans survive untouched
+            line = "".join(
+                p if p.startswith("`") else _strip_html_segment(p) for p in parts
+            )
+        out.append(line)
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(out))
+
+
 def _parse_front_matter(text: str) -> tuple[dict, str]:
     """Tiny `key: value` front matter between `---` fences → (meta, body). Deliberately
     not YAML (no dep, no nesting) — flat string values only; quotes trimmed."""
@@ -295,6 +321,7 @@ def _page_info(path: Path) -> dict:
     except OSError:
         return {}
     meta, body = _parse_front_matter(text)
+    body = _strip_html(body)  # llms.txt is for agents — tag soup is noise there
     lines = [ln.strip() for ln in body.splitlines()]
     title = meta.get("title") or next(
         (ln[2:].strip() for ln in lines if ln.startswith("# ")), path.stem
@@ -377,10 +404,22 @@ def generate_llms_txt(folder: Path) -> str | None:
     return "\n".join(lines)
 
 
+# Cloudflare serves .txt/.md as text/plain WITHOUT a charset → browsers fall back to
+# windows-1252 and em-dashes mojibake. Workers static assets honor a `_headers` file.
+_TEXT_HEADERS = """\
+/llms.txt
+  Content-Type: text/plain; charset=utf-8
+/*.md
+  Content-Type: text/markdown; charset=utf-8
+"""
+
+
 def write_llms_txt(folder: Path) -> Path | None:
-    """(Re)generate the site's llms.txt. A hand-authored file (marker line removed) is
-    never touched; non-md sites are skipped. Returns the path when (re)written."""
-    out = content_dir(folder) / "llms.txt"
+    """(Re)generate the site's llms.txt (plus a `_headers` charset file when the site
+    has none). A hand-authored llms.txt (marker line removed) is never touched;
+    non-md sites are skipped. Returns the path when (re)written."""
+    d = content_dir(folder)
+    out = d / "llms.txt"
     try:
         if out.exists() and LLMS_MARKER not in out.read_text(
             encoding="utf-8", errors="replace"
@@ -390,6 +429,8 @@ def write_llms_txt(folder: Path) -> Path | None:
         if text is None:
             return None
         out.write_text(text, encoding="utf-8")
+        if not (d / "_headers").exists():  # never clobber a hand-written one
+            (d / "_headers").write_text(_TEXT_HEADERS, encoding="utf-8")
         return out
     except OSError:
         return None

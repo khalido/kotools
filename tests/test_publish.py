@@ -416,3 +416,47 @@ def test_md_shell_js_is_valid(monkeypatch, tmp_path):
         text=True,
     )
     assert proc.returncode == 0, f"md shell JS is broken:\n{proc.stderr}"
+
+
+def test_strip_html_keeps_text_and_fences():
+    md = (
+        '<div class="grid">\n  <div class="card"><strong>ko fetch</strong> — any URL. '
+        "<code>ko &lt;url&gt;</code> for short.</div>\n</div>\n\n"
+        "See <https://example.com> too.\n\n```html\n<div>kept verbatim</div>\n```\n"
+    )
+    out = publish._strip_html(md)
+    assert (
+        "ko fetch — any URL. ko <url> for short." in out
+    )  # tags gone, entities unescaped
+    assert 'class="grid"' not in out and "<strong>" not in out
+    assert "See https://example.com too." in out  # autolink keeps its URL
+    assert "<div>kept verbatim</div>" in out  # fenced code untouched
+
+
+def test_llms_txt_excerpt_has_no_html(monkeypatch, tmp_path):
+    monkeypatch.setattr(publish, "publish_domain", lambda: None)
+    folder = tmp_path / "docs"
+    publish.scaffold(folder, title="Docs", mode="md")
+    (folder / "README.md").write_text(
+        '# Docs\n\nIntro line.\n\n<div class="card"><strong>ko x</strong> — tool.</div>\n'
+    )
+    text = publish.generate_llms_txt(folder)
+    assert "ko x — tool." in text
+    assert "<div" not in text and "<strong>" not in text
+
+
+def test_write_llms_txt_drops_headers_file_once(monkeypatch, tmp_path):
+    monkeypatch.setattr(publish, "publish_domain", lambda: None)
+    folder = tmp_path / "docs"
+    publish.scaffold(folder, title="Docs", mode="md")  # scaffold → write_llms_txt ran
+    hdrs = folder / "_headers"
+    assert "charset=utf-8" in hdrs.read_text()
+    hdrs.write_text("/custom\n  X-Mine: yes\n")  # hand-written wins forever
+    publish.write_llms_txt(folder)
+    assert hdrs.read_text() == "/custom\n  X-Mine: yes\n"
+
+
+def test_strip_html_preserves_inline_code_spans():
+    out = publish._strip_html("An agent runs `ko fetch <url>` on <b>every</b> call.\n")
+    assert "`ko fetch <url>`" in out  # placeholder inside inline code survives
+    assert "every call" in out and "<b>" not in out
