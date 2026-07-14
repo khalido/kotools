@@ -2,7 +2,8 @@
 
 Lightweight by design: a cheap model + tmdb lookup + general web/fetch (for
 reviews and "where to watch" pages). Same ~15-line assembly as research.py,
-just a different model and a smaller toolset subset.
+just a different model and a smaller toolset subset — plus its own memory, so
+it remembers what it already suggested and how Ko reacted.
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ from pydantic_ai import Agent
 
 from ko import config, llm
 from ko.agents import _shared
+from ko.agents._memory import instructions_block, memory_toolset
 from ko.agents._toolsets import tmdb, web
 
 # Cheap model — this is a light task. KO_AGENT_MODEL -> `[agents] model` -> baked
@@ -32,10 +34,19 @@ agent = Agent(
         "Strongly prefer titles actually streaming in AU on a service Ko likely has. "
         f"{_taste_line}"
         "Recommend two or three concrete options, each with rating, a one-line why "
-        "it fits, and where to stream. Be concise and opinionated, not a list dump."
+        "it fits, and where to stream. Be concise and opinionated, not a list dump. "
+        "Check your memory before recommending — don't re-pitch something you already "
+        "suggested (unless Ko liked it and wants more like it); after a session, note "
+        "what you recommended and any reaction/likes/dislikes so future picks improve."
     ),
-    toolsets=[tmdb, web],
+    toolsets=[tmdb, web, memory_toolset("tv")],
 )
+
+
+@agent.instructions
+def _memory() -> str:
+    """Shared + own memory.md, head-capped — see agents/_memory.py."""
+    return instructions_block("tv")
 
 
 def run(prompt: str, model: str | None = None, resume: str | None = None) -> str:
