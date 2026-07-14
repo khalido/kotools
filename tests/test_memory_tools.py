@@ -126,7 +126,9 @@ def test_write_note_anchor_case_insensitive(dirs) -> None:
     ts = _memory.memory_toolset("repo")
     _tool(ts, "append_memory")("- precious")
     with pytest.raises(ModelRetry, match="can't be overwritten"):
-        _tool(ts, "write_note")("MEMORY.MD", "clobbered")  # APFS: same file as memory.md
+        _tool(ts, "write_note")(
+            "MEMORY.MD", "clobbered"
+        )  # APFS: same file as memory.md
     assert "precious" in _tool(ts, "read_note")()
 
 
@@ -175,6 +177,46 @@ def test_ai_agent_has_all_toolsets(dirs) -> None:
     for ts in ai.agent.toolsets:
         names.update(getattr(ts, "tools", {}).keys())
     # one representative tool per toolset, plus memory
-    for expected in ("exa_search", "papers_search", "hn_top", "tv_lookup", "grep", "append_memory"):
+    for expected in (
+        "exa_search",
+        "papers_search",
+        "hn_top",
+        "tv_lookup",
+        "grep",
+        "append_memory",
+    ):
         assert expected in names, f"missing {expected}"
     assert ai._LIMITS.request_limit == 30
+
+
+# --- shared agent preamble (_shared.preamble) ---
+
+
+def test_preamble_has_date_framing_and_brevity(monkeypatch):
+    from datetime import datetime
+    from ko.agents import _shared
+
+    monkeypatch.setattr(_shared.config, "get", lambda *a, **k: "Australia/Sydney")
+    p = _shared.preamble()
+    assert str(datetime.now().year) in p  # date is computed, not hardcoded
+    assert "ko agent" in p  # what kind of agent they are
+    assert "concise" in p  # brevity guidance
+    assert "cite" in p
+
+
+def test_preamble_falls_back_on_bad_timezone(monkeypatch):
+    from ko.agents import _shared
+
+    monkeypatch.setattr(_shared.config, "get", lambda *a, **k: "Not/AZone")
+    p = _shared.preamble()  # must not raise — bad tz degrades to naive local date
+    assert p.startswith("Today is ")
+
+
+def test_all_agents_inject_the_preamble():
+    """Every agent registers _shared.preamble as a dynamic instruction — so the shared
+    frame reaches all of them (regression guard for a new agent forgetting it)."""
+    from ko.agents import ai, repo, research, tv
+
+    for mod in (ai, research, repo, tv):
+        names = [getattr(i, "__name__", "") for i in mod.agent._instructions]
+        assert "_context" in names, mod.__name__

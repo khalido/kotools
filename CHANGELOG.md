@@ -18,6 +18,9 @@ Cut a release with the repo's `/release` skill.
 - `ko agent tv` now keeps its own markdown memory (like ai/research/repo) — it
   remembers what it already recommended and your reactions, so repeat runs stop
   re-pitching the same titles and lean toward what you liked.
+- Every agent now gets a shared preamble in its instructions: today's date (in the
+  `[cal] timezone`), what a ko agent is, and terminal-brevity guidance — computed
+  per run, so agents stop guessing the date when stamping memory entries.
 - `ko publish rm <name|dir>` — delete a published site from Cloudflare (its custom
   domain + DNS record detach with it) and forget it locally; TTY confirm, `--yes`
   when scripted.

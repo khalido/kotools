@@ -43,6 +43,12 @@ agent = Agent(
 
 
 @agent.instructions
+def _context() -> str:
+    """Shared frame: date, what a ko agent is, brevity — see _shared.preamble."""
+    return _shared.preamble()
+
+
+@agent.instructions
 def _memory() -> str:
     """Shared + own memory.md, head-capped — see agents/_memory.py."""
     return instructions_block("ai")
@@ -50,7 +56,9 @@ def _memory() -> str:
 
 def run(prompt: str, model: str | None = None, resume: str | None = None) -> str:
     """One-shot; streams to a TTY, plain text when piped."""
-    return _shared.run(agent, prompt, name="ai", model=model, resume=resume, limits=_LIMITS)
+    return _shared.run(
+        agent, prompt, name="ai", model=model, resume=resume, limits=_LIMITS
+    )
 
 
 def repl(model: str | None = None, resume: str | None = None) -> None:

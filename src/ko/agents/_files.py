@@ -62,11 +62,14 @@ def list_dir(path: str = ".") -> str:
     Hidden entries skipped; capped."""
     d = _resolve(path)
     if not d.is_dir():
-        raise ModelRetry(f"'{path}' is not a directory. Try read_file, or list its parent.")
+        raise ModelRetry(
+            f"'{path}' is not a directory. Try read_file, or list its parent."
+        )
     entries = sorted(
         (p for p in d.iterdir() if not p.name.startswith(".")),
         key=lambda p: (p.is_file(), p.name.lower()),
     )
+
     def _entry(e: Path) -> str:
         if e.is_dir():
             return f"{e.name}/"
@@ -90,7 +93,11 @@ def read_file(path: str, offset: int = 0, limit: int = MAX_READ_LINES) -> str:
     f = _resolve(path)
     if not f.is_file():
         parent = f.parent
-        hint = list_dir(str(parent.relative_to(code_root().resolve()) or ".")) if parent.is_dir() else "(parent missing too)"
+        hint = (
+            list_dir(str(parent.relative_to(code_root().resolve()) or "."))
+            if parent.is_dir()
+            else "(parent missing too)"
+        )
         raise ModelRetry(f"'{path}' does not exist. In its directory:\n{hint}")
     size = f.stat().st_size
     if size > MAX_READ_BYTES:
@@ -109,7 +116,9 @@ def read_file(path: str, offset: int = 0, limit: int = MAX_READ_LINES) -> str:
     out = [f"{offset + i + 1}: {ln}" for i, ln in enumerate(window)]
     remaining = len(lines) - offset - len(window)  # window == the emitted slice
     if remaining > 0:
-        out.append(f"[+{remaining} more lines — call read_file(path, offset={offset + limit})]")
+        out.append(
+            f"[+{remaining} more lines — call read_file(path, offset={offset + limit})]"
+        )
     return "\n".join(out) or "(empty file)"
 
 
@@ -139,9 +148,13 @@ def grep(
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     except FileNotFoundError:
-        raise ModelRetry("ripgrep (rg) is not installed on this machine — use find_files + read_file instead.")
+        raise ModelRetry(
+            "ripgrep (rg) is not installed on this machine — use find_files + read_file instead."
+        )
     except subprocess.TimeoutExpired:
-        raise ModelRetry("search timed out (30s) — scope to a subdirectory or add a glob.")
+        raise ModelRetry(
+            "search timed out (30s) — scope to a subdirectory or add a glob."
+        )
     if proc.returncode not in (0, 1):  # 1 = no matches; anything else is a real error
         raise ModelRetry(f"search failed: {proc.stderr.strip()[:200]}")
     root = str(code_root().resolve()) + "/"
@@ -164,10 +177,15 @@ def glob(pattern: str, path: str = ".") -> str:
     d = _resolve(path)
     try:
         proc = subprocess.run(
-            ["rg", "--files", "-g", pattern, str(d)], capture_output=True, text=True, timeout=30
+            ["rg", "--files", "-g", pattern, str(d)],
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
     except FileNotFoundError:
-        raise ModelRetry("ripgrep (rg) is not installed — use list_dir to navigate instead.")
+        raise ModelRetry(
+            "ripgrep (rg) is not installed — use list_dir to navigate instead."
+        )
     except subprocess.TimeoutExpired:
         raise ModelRetry("find timed out (30s) — scope to a subdirectory.")
     if proc.returncode not in (0, 1):
@@ -196,5 +214,7 @@ def refs_overview_head() -> str:
     head = lines[:OVERVIEW_HEAD_LINES]
     if len(lines) > OVERVIEW_HEAD_LINES:
         rel = f.resolve().relative_to(code_root().resolve())
-        head.append(f"[+{len(lines) - OVERVIEW_HEAD_LINES} more lines — read_file('{rel}')]")
+        head.append(
+            f"[+{len(lines) - OVERVIEW_HEAD_LINES} more lines — read_file('{rel}')]"
+        )
     return "\n".join(head)

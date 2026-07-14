@@ -32,7 +32,9 @@ HEAD_LINES = 200  # max memory lines injected into instructions
 
 
 def memory_dir(agent: str) -> Path:
-    if Path(agent).name != agent or agent.startswith("."):  # factory is public API — keep it honest
+    if Path(agent).name != agent or agent.startswith(
+        "."
+    ):  # factory is public API — keep it honest
         raise ValueError(f"agent name must be a plain name, got {agent!r}")
     d = state_dir() / "memory" / agent
     d.mkdir(parents=True, exist_ok=True)
@@ -48,13 +50,19 @@ def _resolve_note(agent: str, name: str) -> Path:
     .md names only (subdir names used to escape into an uncaught FileNotFoundError,
     and wouldn't show in the injection listing anyway)."""
     if Path(name).name != name:
-        raise ModelRetry(f"'{name}' — use a plain name like 'memory.md' or 'notes.md' (no folders).")
+        raise ModelRetry(
+            f"'{name}' — use a plain name like 'memory.md' or 'notes.md' (no folders)."
+        )
     root = memory_dir(agent).resolve()
     full = (root / name).resolve()
     if not full.is_relative_to(root):
-        raise ModelRetry(f"'{name}' is outside your memory folder — use plain names like 'memory.md' or 'notes.md'.")
+        raise ModelRetry(
+            f"'{name}' is outside your memory folder — use plain names like 'memory.md' or 'notes.md'."
+        )
     if full.suffix.lower() != ".md":
-        raise ModelRetry(f"'{name}' — your memory folder holds markdown only; use a .md name.")
+        raise ModelRetry(
+            f"'{name}' — your memory folder holds markdown only; use a .md name."
+        )
     return full
 
 
@@ -63,7 +71,11 @@ def _notes(agent: str) -> list[str]:
     return sorted(p.name for p in root.glob("*.md"))
 
 
-def _head(text: str, budget: int = HEAD_LINES, hint: str | None = f"read_note('{MEMORY_FILE}') for all") -> str:
+def _head(
+    text: str,
+    budget: int = HEAD_LINES,
+    hint: str | None = f"read_note('{MEMORY_FILE}') for all",
+) -> str:
     """Pin-aware head: pinned lines always included; the tail keeps its NEWEST lines
     (entries append at the bottom) with a truncation marker pointing at the rest.
     `hint=None` for files no tool can read back (the shared memory)."""
@@ -91,7 +103,9 @@ def instructions_block(agent: str) -> str:
         shared = shared_file().read_text(errors="replace").strip()
         if shared:
             # hint=None: no tool reads the shared file — a read_note hint would misdirect
-            parts.append(f"## Shared memory (about Ko — {shared_file()})\n\n{_head(shared, hint=None)}")
+            parts.append(
+                f"## Shared memory (about Ko — {shared_file()})\n\n{_head(shared, hint=None)}"
+            )
     except OSError:
         pass
     own = memory_dir(agent) / MEMORY_FILE
@@ -137,7 +151,9 @@ def memory_toolset(agent: str) -> FunctionToolset:
         survives truncation). For changing existing lines use edit_note."""
         f = _resolve_note(agent, MEMORY_FILE)
         with f.open("a") as fh:
-            fh.write(text.rstrip() + "\n")  # every append ends the file with \n — no separator needed
+            fh.write(
+                text.rstrip() + "\n"
+            )  # every append ends the file with \n — no separator needed
         return f"appended {len(text.splitlines())} line(s) to {MEMORY_FILE}"
 
     @ts.tool_plain
@@ -145,8 +161,12 @@ def memory_toolset(agent: str) -> FunctionToolset:
         """Create or overwrite one of your notes (NOT memory.md — that anchor only
         changes via append_memory/edit_note, so it can't be clobbered wholesale)."""
         f = _resolve_note(agent, name)
-        if f.name.lower() == MEMORY_FILE:  # .lower(): APFS is case-insensitive — 'MEMORY.MD' IS the anchor
-            raise ModelRetry("memory.md can't be overwritten — append_memory or edit_note it.")
+        if (
+            f.name.lower() == MEMORY_FILE
+        ):  # .lower(): APFS is case-insensitive — 'MEMORY.MD' IS the anchor
+            raise ModelRetry(
+                "memory.md can't be overwritten — append_memory or edit_note it."
+            )
         f.write_text(content.rstrip() + "\n")
         return f"wrote {len(content.splitlines())} line(s) to {name}"
 
@@ -161,9 +181,13 @@ def memory_toolset(agent: str) -> FunctionToolset:
         text = f.read_text()
         n = text.count(old_string)
         if n == 0:
-            raise ModelRetry(f"string not found in {name} — read_note it and retry with the exact text.")
+            raise ModelRetry(
+                f"string not found in {name} — read_note it and retry with the exact text."
+            )
         if n > 1:
-            raise ModelRetry(f"string occurs {n} times in {name} — add surrounding context to make it unique.")
+            raise ModelRetry(
+                f"string occurs {n} times in {name} — add surrounding context to make it unique."
+            )
         f.write_text(text.replace(old_string, new_string, 1))
         return "edit applied"
 

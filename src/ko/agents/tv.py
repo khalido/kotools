@@ -44,6 +44,12 @@ agent = Agent(
 
 
 @agent.instructions
+def _context() -> str:
+    """Shared frame: date, what a ko agent is, brevity — see _shared.preamble."""
+    return _shared.preamble()
+
+
+@agent.instructions
 def _memory() -> str:
     """Shared + own memory.md, head-capped — see agents/_memory.py."""
     return instructions_block("tv")

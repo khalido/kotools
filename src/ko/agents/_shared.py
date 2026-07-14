@@ -12,24 +12,47 @@ takes effect — the Agent reads its default model at import, before the CLI run
 from __future__ import annotations
 
 import readline  # noqa: F401 — enables up-arrow history + line editing in repl
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from pydantic_ai import Agent
 from rich.console import Console
 from rich.live import Live
 from rich.markdown import Markdown
 
-from ko import sessions
+from ko import config, sessions
 from ko.llm import run_cost
 
 _console = Console()
 _err = Console(stderr=True)  # cost notes are notes, not data — stderr keeps pipes clean
 
 
+def preamble() -> str:
+    """A short shared frame injected into every agent's instructions (above its own
+    role): today's date in Ko's calendar timezone, what a ko agent is, and terminal
+    brevity. Computed per run so the date is always current — agents otherwise guess
+    it (e.g. when stamping a memory entry). Reads `[cal] timezone` directly rather
+    than via gcal, to avoid pulling the Google stack into every agent import."""
+    tz_name = config.get("cal", "timezone") or "Australia/Sydney"
+    try:
+        today = datetime.now(ZoneInfo(tz_name)).strftime("%A, %-d %B %Y")
+    except Exception:
+        today = datetime.now().strftime("%A, %d %B %Y")
+    return (
+        f"Today is {today}. You are a ko agent — one of the AI agents in Ko's personal "
+        "command-line toolkit, run from a terminal by Ko (or by another agent over bash). "
+        "Be concise and concrete: lead with the answer, cite sources (URLs, DOIs, or "
+        "file:line), and cut filler — terminal output rewards brevity."
+    )
+
+
 def _cost_note(messages: list, prior: int = 0) -> None:
     """Print what the new messages (beyond `prior`) cost — OR actuals when available.
     markup=False: the note's own [brackets] would otherwise parse as rich tags and
     silently swallow the whole line."""
-    _err.print(run_cost(messages[prior:]).note, style="dim", markup=False, highlight=False)
+    _err.print(
+        run_cost(messages[prior:]).note, style="dim", markup=False, highlight=False
+    )
 
 
 def _stream(
@@ -40,7 +63,9 @@ def _stream(
     v2: run_stream_sync returns the result directly (not a context manager), and
     stream_text(delta=False) yields the full text so far each tick.
     """
-    result = agent.run_stream_sync(prompt, message_history=history, model=model, usage_limits=limits)
+    result = agent.run_stream_sync(
+        prompt, message_history=history, model=model, usage_limits=limits
+    )
     text = ""
     with Live(console=_console, refresh_per_second=15) as live:
         for text in result.stream_text():
@@ -66,7 +91,9 @@ def run(
     if _console.is_terminal:
         text, messages = _stream(agent, prompt, history, model=model, limits=limits)
     else:
-        result = agent.run_sync(prompt, message_history=history, model=model, usage_limits=limits)
+        result = agent.run_sync(
+            prompt, message_history=history, model=model, usage_limits=limits
+        )
         text, messages = result.output, result.all_messages()
         print(text)
     _cost_note(messages, prior=len(history))
@@ -98,7 +125,7 @@ def repl(
     while True:
         try:
             user_input = input(f"{banner}> ").strip()
-        except (EOFError, KeyboardInterrupt):
+        except EOFError, KeyboardInterrupt:
             print()
             break
         if not user_input:

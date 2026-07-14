@@ -44,6 +44,12 @@ agent = Agent(
 
 
 @agent.instructions
+def _context() -> str:
+    """Shared frame: date, what a ko agent is, brevity — see _shared.preamble."""
+    return _shared.preamble()
+
+
+@agent.instructions
 def _refs_map() -> str:
     """Fresh each run — refs/CLAUDE.md accumulates takeaways between runs."""
     return f"## refs/ map (from refs/CLAUDE.md)\n\n{refs_overview_head()}"

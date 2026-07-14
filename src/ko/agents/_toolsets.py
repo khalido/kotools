@@ -35,7 +35,7 @@ def _try(label: str, fn, *args, **kwargs):
     loudly, not send the agent routing around a code defect forever."""
     try:
         return fn(*args, **kwargs)
-    except (TypeError, AttributeError, NameError, ImportError):
+    except TypeError, AttributeError, NameError, ImportError:
         raise
     except Exception as e:
         return f"{label} unavailable ({type(e).__name__}: {e}). Note this and try another source."
@@ -260,7 +260,12 @@ def grep(
     `files_only=True` returns just the matching file paths (survey mode). Narrow with
     `glob` (e.g. '*.py') or a deeper path when truncated."""
     return _files_mod.grep(
-        pattern, path=path, glob=glob, limit=limit, context=context, files_only=files_only
+        pattern,
+        path=path,
+        glob=glob,
+        limit=limit,
+        context=context,
+        files_only=files_only,
     )
 
 
