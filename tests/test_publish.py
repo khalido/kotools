@@ -39,7 +39,10 @@ def test_build_config_with_and_without_domain():
     assert cfg["assets"]["not_found_handling"] == "single-page-application"
     assert cfg["routes"][0]["pattern"] == "robot-arm.khalido.dev"
     assert "routes" not in publish.build_config("robot-arm", None)
-    assert publish.build_config("x", None, spa=False)["assets"]["not_found_handling"] == "404-page"
+    assert (
+        publish.build_config("x", None, spa=False)["assets"]["not_found_handling"]
+        == "404-page"
+    )
 
 
 def test_ensure_config_creates_respects_and_overrides(monkeypatch, tmp_path):
@@ -64,16 +67,30 @@ def test_parse_url_empty_when_absent(tmp_path):
 def test_scaffold_static(monkeypatch, tmp_path):
     monkeypatch.setattr(publish, "publish_domain", lambda: None)
     folder = tmp_path / "site"
-    written = {p.name for p in publish.scaffold(folder, title="Robot Arm", mode="static")}
-    assert {"index.html", "style.css", "app.js", "CLAUDE.md", ".gitignore", ".assetsignore", "wrangler.jsonc"} <= written
+    written = {
+        p.name for p in publish.scaffold(folder, title="Robot Arm", mode="static")
+    }
+    assert {
+        "index.html",
+        "style.css",
+        "app.js",
+        "CLAUDE.md",
+        ".gitignore",
+        ".assetsignore",
+        "wrangler.jsonc",
+    } <= written
     # assets.directory is "." → meta/dev files must be excluded from the upload
     assert ".wrangler" in (folder / ".assetsignore").read_text()
     assert "wrangler.jsonc" in (folder / ".assetsignore").read_text()
     index = (folder / "index.html").read_text()
     assert "cdn.tailwindcss.com" in index
-    assert "Robot Arm" in index and "{title}" not in index  # title substituted, no stray braces
+    assert (
+        "Robot Arm" in index and "{title}" not in index
+    )  # title substituted, no stray braces
     assert 'src="app.js"' in index  # heavy JS split into its own module
-    assert ".card" in (folder / "style.css").read_text()  # starter component classes shipped
+    assert (
+        ".card" in (folder / "style.css").read_text()
+    )  # starter component classes shipped
     (folder / "index.html").write_text("MINE")
     publish.scaffold(folder, mode="static")
     assert (folder / "index.html").read_text() == "MINE"  # never clobbers
@@ -83,7 +100,14 @@ def test_scaffold_md(monkeypatch, tmp_path):
     monkeypatch.setattr(publish, "publish_domain", lambda: None)
     folder = tmp_path / "docs"
     written = {p.name for p in publish.scaffold(folder, title="Robot Arm", mode="md")}
-    assert {"README.md", "index.html", "style.css", "CLAUDE.md", ".assetsignore", "wrangler.jsonc"} <= written
+    assert {
+        "README.md",
+        "index.html",
+        "style.css",
+        "CLAUDE.md",
+        ".assetsignore",
+        "wrangler.jsonc",
+    } <= written
     shell = (folder / "index.html").read_text()
     assert "markdown-it" in shell and "safePage" in shell
     # highlight.js must be the browser build — /lib/common.min.js is CommonJS (require()),
@@ -104,14 +128,24 @@ def test_scaffold_bare(monkeypatch, tmp_path):
 def test_scaffold_hono(monkeypatch, tmp_path):
     monkeypatch.setattr(publish, "publish_domain", lambda: None)
     folder = tmp_path / "app"
-    written = {str(p.relative_to(folder)) for p in publish.scaffold(folder, mode="hono", pin=True)}
-    assert {"public/README.md", "src/index.ts", "package.json", "wrangler.jsonc"} <= written
+    written = {
+        str(p.relative_to(folder))
+        for p in publish.scaffold(folder, mode="hono", pin=True)
+    }
+    assert {
+        "public/README.md",
+        "src/index.ts",
+        "package.json",
+        "wrangler.jsonc",
+    } <= written
     cfg = (folder / "wrangler.jsonc").read_text()
     assert '"main": "src/index.ts"' in cfg and "KO_PIN" in cfg
     assert "hono" in (folder / "package.json").read_text()
     assert publish.config_pin(folder) is not None  # --pin generated one
     worker = (folder / "src/index.ts").read_text()
-    assert "/api/data" in worker and "caches.default" in worker  # cached data endpoint example
+    assert (
+        "/api/data" in worker and "caches.default" in worker
+    )  # cached data endpoint example
 
 
 def test_scaffold_hono_open_without_pin(monkeypatch, tmp_path):
@@ -123,9 +157,13 @@ def test_scaffold_hono_open_without_pin(monkeypatch, tmp_path):
 
 def test_run_worker_first_only_when_gated():
     gated = publish.build_hono_config("a", None, pin="123456")
-    assert gated["assets"]["run_worker_first"] is True  # load-bearing: protects static assets
+    assert (
+        gated["assets"]["run_worker_first"] is True
+    )  # load-bearing: protects static assets
     open_ = publish.build_hono_config("a", None, pin=None)
-    assert open_["assets"]["run_worker_first"] is False  # assets serve from edge, no worker hit
+    assert (
+        open_["assets"]["run_worker_first"] is False
+    )  # assets serve from edge, no worker hit
 
 
 def test_ensure_hono_config_rename_preserves_worker_and_pin(monkeypatch, tmp_path):
@@ -153,7 +191,9 @@ def test_set_pin_rotates_and_sets(monkeypatch, tmp_path):
     assert new.isdigit() and len(new) == 6 and publish.config_pin(folder) == new
     assert publish.set_pin(folder, "424242") == "424242"
     assert publish.config_pin(folder) == "424242"
-    assert '"main": "src/index.ts"' in (folder / "wrangler.jsonc").read_text()  # untouched
+    assert (
+        '"main": "src/index.ts"' in (folder / "wrangler.jsonc").read_text()
+    )  # untouched
 
 
 def test_set_pin_adds_gate_to_open_site(monkeypatch, tmp_path):
@@ -229,7 +269,9 @@ def test_account_workers_sorted_and_domains(monkeypatch):
     def fake_get(url, **kw):
         if url.endswith("/workers/scripts"):
             return _Resp(payload={"result": [{"id": "beta"}, {"id": "alpha"}]})
-        return _Resp(payload={"result": [{"service": "alpha", "hostname": "alpha.example.com"}]})
+        return _Resp(
+            payload={"result": [{"service": "alpha", "hostname": "alpha.example.com"}]}
+        )
 
     monkeypatch.setattr(publish.httpx, "get", fake_get)
     assert publish.account_workers() == ["alpha", "beta"]
@@ -255,7 +297,9 @@ def test_delete_worker_force_and_404(monkeypatch):
     assert seen["url"].endswith("/workers/scripts/mysite")
     assert seen["params"] == {"force": "true"}  # detaches custom domains too
 
-    monkeypatch.setattr(publish.httpx, "delete", lambda url, **kw: _Resp(status_code=404))
+    monkeypatch.setattr(
+        publish.httpx, "delete", lambda url, **kw: _Resp(status_code=404)
+    )
     try:
         publish.delete_worker("ghost")
         raise AssertionError("expected RuntimeError for a missing worker")
@@ -272,3 +316,103 @@ def test_forget_removes_registry_entry(monkeypatch, tmp_path):
     assert publish.forget("site") == [str(folder)]
     assert publish.published() == []
     assert publish.forget("site") == []  # idempotent
+
+
+# --- llms.txt generation ---
+
+
+def test_parse_front_matter():
+    meta, body = publish._parse_front_matter(
+        '---\ntitle: My Page\ndesc: "quoted"\ntags: a, b\n---\n\n# Hi\n'
+    )
+    assert meta == {"title": "My Page", "desc": "quoted", "tags": "a, b"}
+    assert body.startswith("# Hi")
+    meta, body = publish._parse_front_matter("# no front matter\n")
+    assert meta == {} and body.startswith("# no")
+
+
+def test_page_info_fallbacks_and_truncation(tmp_path):
+    page = tmp_path / "notes.md"
+    page.write_text("# The Title\n\n> a quote to skip\n\n" + "word " * 60 + "\n")
+    info = publish._page_info(page)
+    assert info["title"] == "The Title"
+    assert info["desc"].endswith("…")  # first prose paragraph, truncated at ~200 chars
+    assert len(info["desc"]) <= 205
+    page.write_text("---\ntitle: Override\nsummary: short and sweet\n---\n# Ignored\n")
+    info = publish._page_info(page)
+    assert (info["title"], info["desc"]) == ("Override", "short and sweet")
+
+
+def test_generate_llms_txt_tiny_site_inlines_content(monkeypatch, tmp_path):
+    monkeypatch.setattr(publish, "publish_domain", lambda: None)
+    folder = tmp_path / "docs"
+    publish.scaffold(folder, title="My Docs", mode="md")
+    text = (folder / "llms.txt").read_text()  # scaffold seeds it
+    assert text.startswith("# My Docs")
+    assert "## Pages" in text and "(/README.md)" in text
+    assert publish.LLMS_MARKER in text
+    assert "## My Docs (/README.md)" in text  # ≤2 pages → content inlined
+
+
+def test_generate_llms_txt_many_pages_index_only(monkeypatch, tmp_path):
+    monkeypatch.setattr(publish, "publish_domain", lambda: None)
+    folder = tmp_path / "docs"
+    publish.scaffold(folder, title="Big", mode="md")
+    (folder / "a.md").write_text("---\ndescription: page a\ntags: x, y\n---\n# A\n")
+    (folder / "b.md").write_text("# B\n\nAbout b.\n")
+    text = publish.generate_llms_txt(folder)
+    assert "- [A](/a.md): page a (x, y)" in text  # front matter desc + tags
+    assert "- [B](/b.md): About b." in text  # H1 + first-paragraph fallback
+    assert "CLAUDE.md" not in text  # agent instructions aren't content
+    assert "## A (/a.md)" not in text  # >2 pages → no inline excerpts
+
+
+def test_write_llms_txt_respects_hand_authored(monkeypatch, tmp_path):
+    monkeypatch.setattr(publish, "publish_domain", lambda: None)
+    folder = tmp_path / "docs"
+    publish.scaffold(folder, title="Docs", mode="md")
+    (folder / "llms.txt").write_text("# mine, hands off\n")  # no marker
+    assert publish.write_llms_txt(folder) is None
+    assert (folder / "llms.txt").read_text() == "# mine, hands off\n"
+
+
+def test_write_llms_txt_skips_non_md_sites(monkeypatch, tmp_path):
+    monkeypatch.setattr(publish, "publish_domain", lambda: None)
+    folder = tmp_path / "static"
+    publish.scaffold(folder, mode="static")
+    assert publish.write_llms_txt(folder) is None
+    assert not (folder / "llms.txt").exists()
+
+
+def test_hono_llms_txt_lives_in_public(monkeypatch, tmp_path):
+    monkeypatch.setattr(publish, "publish_domain", lambda: None)
+    folder = tmp_path / "app"
+    publish.scaffold(folder, title="App", mode="hono")
+    assert (folder / "public" / "llms.txt").exists()
+    assert publish.content_dir(folder) == folder / "public"
+
+
+def test_md_shell_js_is_valid(monkeypatch, tmp_path):
+    """The md shell's inline module script must be real JS — Python string templates
+    eat unescaped \\n (regression: front-matter strip broke the shell; earlier c785b58)."""
+    import re as _re
+    import shutil as _shutil
+    import subprocess as _subprocess
+
+    monkeypatch.setattr(publish, "publish_domain", lambda: None)
+    folder = tmp_path / "docs"
+    publish.scaffold(folder, title="Docs", mode="md")
+    shell = (folder / "index.html").read_text()
+    assert 'startsWith("---\\n")' in shell  # the escape survived Python templating
+    node = _shutil.which("node")
+    if not node:
+        return  # escape assertion above still guards the known failure mode
+    m = _re.search(r'<script type="module">(.*?)</script>', shell, _re.S)
+    assert m, "md shell has no module script"
+    proc = _subprocess.run(
+        [node, "--check", "--input-type=module", "-"],
+        input=m.group(1),
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, f"md shell JS is broken:\n{proc.stderr}"

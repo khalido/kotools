@@ -13,6 +13,20 @@ Cut a release with the repo's `/release` skill.
 
 ## [Unreleased]
 
+### Added
+
+- `ko publish rm <name|dir>` — delete a published site from Cloudflare (its custom
+  domain + DNS record detach with it) and forget it locally; TTY confirm, `--yes`
+  when scripted.
+- `ko publish list --cf` — reconcile against the Cloudflare account: appends Workers
+  published elsewhere (custom domains resolved). The TSV also gains a last-published
+  column.
+- `--md`/`--hono` sites generate an agent-facing `llms.txt` on every publish (llmstxt.org
+  shape) from the pages' front matter (`title:`/`description:`/`tags:`) or H1 + first
+  paragraph; sites of ≤2 pages inline their truncated content so one fetch reads the
+  whole site. A hand-authored `llms.txt` (marker line removed) is never touched; the
+  md shell now strips front matter before rendering.
+
 ## [2026.7.14] - 2026-07-14
 
 The money-and-agents release: model tiers with per-call cost notes, agents that
