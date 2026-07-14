@@ -4,9 +4,11 @@
 
 It's **opinionated, not generic**: each command is a thin wrapper over the *one* library or API I settled on for that job, with my preferred defaults baked in and only a couple of flags exposed. Built so a human skimming `--help` and an **AI agent calling it from bash** get the same clean, pipeable output — plain text / TSV by default, `--json` when you want structure, errors to stderr. A few of the APIs are paid; at personal scale that's a few dollars a month, and life's too short to reimplement them.
 
-Reach for `ko` when you want the answer, not the website. `ko doctor` shows what's set up; `ko <cmd> --help` is the contract.
+Full docs: **[kotools.khalido.dev](https://kotools.khalido.dev/)**.
 
 ## The tools
+
+### Read & search
 
 | Command | What it does | What I use it for |
 |---|---|---|
@@ -19,16 +21,31 @@ Reach for `ko` when you want the answer, not the website. `ko doctor` shows what
 | `ko fetch` | any URL → clean markdown (PDF, arxiv, Wayback fallback) | `ko <url>` — read a page or PDF as text |
 | `ko doc` | PDF/Office/image → text, fully local (no models) | `ko report.pdf` — no upload, no key |
 | `ko yt` | YouTube → transcript (free, no key); `-s` summarizes | "what does this 40-min talk actually say" |
-| `ko llm` | one-shot LLM, stdin-aware, never has tools | `… \| ko llm "summarize"` inside a pipe |
+| `ko tv` | movie/TV rating + where to stream ([TMDB](https://developer.themoviedb.org), AU) | "worth watching, and where can I?" |
+| `ko tt` | TickTick lists + tasks (read-only, via MCP) | `ko tt today` — my open tasks |
+
+### AI agents
+
+| Command | What it does | What I use it for |
+|---|---|---|
 | `ko ai` | **the default agent** — every tool above + memory | "find X, read it, tell me what matters" |
 | `ko agent` | specialist agents (`research`/`repo`/`tv`), resumable | deep literature digs; "how does repo X do Y" |
+| `ko llm` | one-shot LLM, stdin-aware, never has tools | `… \| ko llm "summarize"` inside a pipe |
 | `ko brief` | morning brief: calendar + mail + HN + papers → one summary | the day's triage in one read |
-| `ko tv` | movie/TV rating + where to stream ([TMDB](https://developer.themoviedb.org), AU) | "worth watching, and where can I?" |
+
+### Google
+
+| Command | What it does | What I use it for |
+|---|---|---|
 | `ko gsheets` | read **& write** Google Sheets (OAuth) | dump/read data + formulas, overwrite-guarded |
 | `ko gdocs` | Markdown ↔ Google Docs + comments | push a proposal `.md` → Doc → read feedback back |
 | `ko cal` | Google Calendar agenda + quick-add | next 7 days; "when was my last dentist?" |
 | `ko gmail` | read Gmail (read-only) | `ko gmail from alice` — inbox triage in the terminal |
-| `ko tt` | TickTick lists + tasks (read-only, via MCP) | `ko tt today` — my open tasks |
+
+### Make & manage
+
+| Command | What it does | What I use it for |
+|---|---|---|
 | `ko publish` | scaffold + deploy a site to Cloudflare | ship a landing page / write-up / mini-tool |
 | `ko prompt` | my "how I build X" kickoff briefs | `ko prompt research-papers` → load into an agent |
 | `ko refs` | manage `~/code/refs` (reference repo clones) | `ko refs` pulls all; `add <url>` clones + remembers |
@@ -68,7 +85,7 @@ Keys live in environment variables (shell profile or `.env`) or in `~/.config/ko
 |---|---|---|---|
 | `EXA_API_KEY` | `ko exa`, agents | 💰 | Search $7/1k requests (contents for 10 results included); standalone contents $1/1k pages. [exa.ai](https://exa.ai) |
 | `OPENROUTER_API_KEY` | `ko llm`, `ko ai`, agents, `ko brief` — the default for everything | 💰 | One prepaid pool, any model. Baked model tiers ride on it: basic = deepseek-v4-flash (llm/brief/summarize), medium = glm-5.2 (`ko ai`), smart = grok-latest (research). Override per-tier in `[llm]`; `-m` per run. `ko billing`/doctor show $ left; every call prints its actual cost to stderr. |
-| `GEMINI_API_KEY` | `-m google:…` escape hatch | 💰 | Direct Gemini — handy when the OpenRouter pool runs dry (`-m google:gemini-3.5-flash`) or for Gemini-only features later. |
+| `GEMINI_API_KEY` | `-m google:…` escape hatch | 💰 | Direct Gemini (`-m google:gemini-3.5-flash`), or for Gemini-only features later. |
 | `X_BEARER_TOKEN` | `ko x` | 💰 | X API v2 Bearer Token. Pay-per-use since 2026 (prepaid credits, ~$0.005/post read). [developer.x.com](https://developer.x.com) |
 | `TMDB_READ_ACCESS_TOKEN` | `ko tv` | free | v4 Read Access Token from [TMDB settings](https://www.themoviedb.org/settings/api). |
 | `TICKTICK_API_KEY` | `ko tt` | (TickTick sub) | TickTick app → Account → MCP → generate. Read-only here. |
