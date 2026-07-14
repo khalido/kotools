@@ -1,6 +1,6 @@
 [project]
 name = "kotools"
-version = "2026.7.9"
+version = "2026.7.14"
 description = "Ko's personal opinionated CLI — thin wrappers around SDKs I use often, built so both I and AI agents can lean on it."
 readme = "README.md"
 requires-python = ">=3.14"
@@ -42,6 +42,7 @@ dependencies = [
 Homepage = "https://github.com/khalido/kotools"
 Documentation = "https://kotools.khalido.dev"
 Repository = "https://github.com/khalido/kotools"
+Changelog = "https://github.com/khalido/kotools/blob/main/CHANGELOG.md"
 Issues = "https://github.com/khalido/kotools/issues"
 
 [project.scripts]

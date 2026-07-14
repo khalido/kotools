@@ -13,26 +13,37 @@ Cut a release with the repo's `/release` skill.
 
 ## [Unreleased]
 
+## [2026.7.14] - 2026-07-14
+
+The money-and-agents release: model tiers with per-call cost notes, agents that
+remember between runs, and releases that publish themselves to PyPI.
+
 ### Added
 
-- Opt-in LLM telemetry: `[telemetry] enabled = true` + `POSTHOG_API_KEY` sends
-  provider-agnostic traces (model/tokens/cost) to PostHog via pydantic-ai OTel
-  instrumentation; off by default, metadata-only unless `include_content = true`.
-- `[llm] model` and `[agents] model` in config.toml — the default model now has a
-  config home (env var still wins).
-- `ko doctor` footer: effective settings with their source (env/config/default)
-  and the config/state/cache dir paths.
-- A malformed `config.toml` now warns loudly (every command + doctor) instead of
-  silently ignoring all keys and settings; README documents the three dirs.
+- **PyPI publishing**: a tag push now builds and publishes `kotools` via GitHub
+  OIDC trusted publishing (`.github/workflows/publish.yml`, no tokens) — this
+  release is the first through the pipeline; `uv tool install kotools` from
+  here on.
+- `ko ai "<prompt>"` — the default agent: every toolset (web, papers, HN,
+  movies, read-only ~/code files) plus its own memory; medium-tier model,
+  hard-capped at 30 model requests per run. One-shot or REPL.
+- `ko agent repo` — repo-explorer agent: "how does repo X do Y" over `~/code`
+  (read-only by construction; ripgrep search; knows the refs/CLAUDE.md map;
+  cites file:line; basic tier — under a cent a run).
+- Agent memory: research + repo agents keep a per-agent markdown workspace
+  (`memory.md` anchor injected each run + free-form notes; append/edit tools
+  with a uniqueness guard), plus a shared hand-edited `~/.config/ko/memory.md`
+  injected into every memory-carrying agent (research, repo, ai). A fresh run
+  recalls what a prior run saved. Hardened after a trace-eval + review pass:
+  huge/minified files can't blow the context, broken symlinks and rg timeouts
+  degrade cleanly, and `grep` grew the `limit` param the model reached for.
 - Model tiers: `[llm] basic/medium/smart/ultra` in config.toml (`llm.model_for`) —
-  basic (deepseek-v4-pro) drives llm/tv/brief/summarize defaults, smart
+  basic (deepseek-v4-flash) drives llm/tv/brief/summarize defaults, smart
   (`~x-ai/grok-latest`) the research agent, ultra (gpt-5.6-sol) is reserved for
   high-stakes calls. **Changed**: the everyday default moves from gemini-flash
   direct to DeepSeek via OpenRouter — one prepaid pool, visible in `ko billing`.
-- `ko doctor` live-checks the OpenRouter key via `/credits` — proves it works and
-  shows credits left, without spending tokens.
-- Every LLM call now reports its cost on stderr — `[model · 66→21 tok · $0.0012]`
-  — using OpenRouter's *actual* billed cost when available (genai-prices estimate,
+- LLM calls report their cost on stderr — `[model · 66→21 tok · $0.0012]` —
+  using OpenRouter's *actual* billed cost when available (genai-prices estimate,
   marked `~`, otherwise). Covers `ko llm`, agents, `ko brief`, `yt -s`; `sessions
   summarize` totals its spend.
 - `ko refs` — manage the `~/code/refs` reference-repo folder: bare = parallel
@@ -40,19 +51,19 @@ Cut a release with the repo's `/release` skill.
   the baked list + `~/.config/ko/refs.txt` on any machine, `add <url>` clones and
   remembers, `list` = TSV. `ko doctor` shows the folder's disk footprint and
   flags clones over 500MB.
-- `ko agent repo` — repo-explorer agent: "how does repo X do Y" over `~/code`
-  (read-only by construction; ripgrep search; knows the refs/CLAUDE.md map;
-  cites file:line; basic tier — under a cent a run).
-- `ko ai "<prompt>"` — the default agent: every toolset (web, papers, HN,
-  movies, read-only ~/code files) plus its own memory; medium-tier model,
-  hard-capped at 30 model requests per run. One-shot or REPL.
-- Agent memory: research + repo agents keep a per-agent markdown workspace
-  (`memory.md` anchor injected each run + free-form notes; append/edit tools
-  with a uniqueness guard), plus a shared hand-edited `~/.config/ko/memory.md`
-  injected everywhere. A fresh run recalls what a prior run saved. Hardened after a
-  trace-eval + review pass: huge/minified files can't blow the context,
-  broken symlinks and rg timeouts degrade cleanly, and `grep` grew the
-  `limit` param the model reached for.
+- Opt-in LLM telemetry: `[telemetry] enabled = true` + `POSTHOG_API_KEY` sends
+  provider-agnostic traces (model/tokens/cost) to PostHog via pydantic-ai OTel
+  instrumentation; off by default, metadata-only unless `include_content = true`.
+- `[llm] model` and `[agents] model` in config.toml — the default model now has
+  a config home (env var still wins); `ko doctor` gains an effective-settings
+  footer (each value's source: env/config/default, plus the three dirs) and
+  live-checks the OpenRouter key via `/credits` — proves it works and shows
+  credits left, without spending tokens.
+
+### Fixed
+
+- A malformed `config.toml` now warns loudly (every command + doctor) instead of
+  silently ignoring all keys and settings; README documents the three dirs.
 
 ## [2026.7.9] - 2026-07-09
 
@@ -89,6 +100,7 @@ things, `--json` where structure matters.
 - **Agent contract** (AGENTS.md): stdout=data / stderr=notes, exit 0/1/2,
   `--json` errors as `{error, code}`, bare-arg shortcuts.
 
-[Unreleased]: https://github.com/khalido/kotools/compare/v2026.7.9...HEAD
+[Unreleased]: https://github.com/khalido/kotools/compare/v2026.7.14...HEAD
+[2026.7.14]: https://github.com/khalido/kotools/compare/v2026.7.9...v2026.7.14
 [2026.7.9]: https://github.com/khalido/kotools/releases/tag/v2026.7.9
 
