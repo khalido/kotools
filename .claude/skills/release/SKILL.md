@@ -121,9 +121,9 @@ gh release create v2026.7.9 --title "v2026.7.9 — <short theme>" --notes-file -
 <the approved CHANGELOG section for this version, verbatim>
 NOTES
 ```
-**gh account**: this repo is `khalido/kotools` — `gh auth switch -u khalido` first if the
-active account is khalidodev (the Everx one); its failure mode is a misleading
-"workflow scope may be required" error. Switch back to khalidodev after.
+**gh account**: `khalido` must be the active gh account (`gh auth status`; `gh auth
+switch -u khalido` if not) — a wrong account fails with a misleading "workflow scope
+may be required" error.
 **PyPI**: not wired yet. When the trusted-publisher GitHub Action lands (WORKLOG Open:
 tag-push OIDC, no long-lived tokens), the `--follow-tags` push above becomes the
 publish trigger and this skill needs no changes. Until then, publishing is manual and

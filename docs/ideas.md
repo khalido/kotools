@@ -103,6 +103,12 @@ none urgent:
 
 
 
+- [ ] **satteri for `ko publish --md`** (considered 2026-07-14, [satteri.bruits.org](https://satteri.bruits.org/)) —
+  Rust-core markdown pipeline with JS plugins (npm/WASM). NOT now: the `--md` scaffold is
+  deliberately no-build (markdown-it via CDN + a 15-line client TOC builder), and satteri's
+  speed only bites in build pipelines over many files. Trigger = adding pre-rendering
+  (static HTML / MDX) to publish; then satteri vs remark is the real comparison. Its docs
+  don't advertise a TOC block — TOC would come from its AST plugin hooks either way.
 - [ ] **`ko publish` hardening** — deferred from the 2026-07-03 Fable review (real, non-urgent):
   - **`deploy` rewrites `--md` sites to SPA mode** (`publish.py` `ensure_config` defaults `spa=True`;
     md scaffolds are `spa=False`) — renaming an md site silently breaks its 404 handling (every bad
@@ -297,7 +303,16 @@ integrations — don't conflate them:**
     Ref: openrouter.ai/docs/guides/features/broadcast/otel-collector.
   Refs: posthog.com/docs/llm-analytics/installation/opentelemetry, /llm-analytics/start-here.
   **Not building yet — research done 2026-06-27.**
-- [ ] PyPI trusted publisher + tag-push GitHub Action (plan in WORKLOG 2026-04-22).
+- [x] PyPI trusted publisher + tag-push GitHub Action — SHIPPED 2026-07-14 (`.github/workflows/publish.yml`: tag push → `uv build` → `uv publish` via OIDC, environment `pypi`; no tokens).
+- [ ] **`ko costs` — local LLM-spend totals** (considered 2026-07-14). What exists: per-run cost
+  notes to stderr (`llm.run_cost`, actual-or-estimate), `llm.last_cost` global, full traces in
+  session files, `ko billing` = OpenRouter-side today/week/month (misses direct-key `google:`/
+  `openai:` calls, no per-command split). Build: (1) attach `last_cost` to the wide event in
+  `command_event` (usd, tokens, model, cost_source — scalar binds, ~5 lines); (2) `ko costs`
+  aggregates the logs JSONL: today/week/month by cmd + model, `~` marks estimates (retention
+  caps it at a rolling month — `ko billing` stays the long-horizon truth); (3) doctor footer
+  gets one summary line from the same aggregation.
+- [ ] **Tier fallback on 402** — when the OpenRouter pool runs dry, *every* tier fails together (llm default, `ko ai` medium, research smart) since all four route through one prepaid key; observed 2026-07-14 — exercising `ko ai` needed a manual `-m google:gemini-3-flash-preview`. Idea: optional `[llm] fallback` (a direct-key model, e.g. `google:gemini-3-flash-preview`) tried once when an `openrouter:` tier model 402s, with a loud stderr note — keeps the one-pool default, degrades to "still works" when credits run out.
 - [ ] MCP server exposing the same modules (`mcp_server.py` stub has the wiring sketch). CLI for humans + bash; MCP for native agent calls. **Use FastMCP** ([gofastmcp.com](https://gofastmcp.com)) — it does **stdio** (local: Claude Code/Desktop on the Mac) *and* **HTTP** (remote: a server on the home box that the laptop connects to) from one definition. Progressive disclosure for the tool surface — one argv-style `ko` tool, not one per subcommand (see Research scan 2026-06-26). Home-server hosting ties in below.
   - **Consolidation note:** `ko mcp test` currently uses the raw `mcp` SDK (already a dep) with a hand-rolled raw-POST error fallback — keep it simple. FastMCP ships a high-level **`Client`** (`from fastmcp import Client`: list_tools/call_tool/transports). Once `fastmcp` is a dep anyway (for this server, or for pydantic-ai's `[mcp]` agent toolset), `ko mcp test` can ride on `fastmcp.Client` and shed code. Don't add `fastmcp` just for the probe.
   - **Decision (2026-06-26): do NOT swap the client to fastmcp now.** You can't "remove" `mcp` — fastmcp is built on it (stays transitively). ko's whole mcp footprint is two tiny clients (`ko tt` + the probe); fastmcp is heavier (uvx weight) and **high release cadence** (chase + pin tax) — both reasons to adopt *late*, not early. Trigger = building `ko mcp serve` or the agent's `[mcp]` toolset; then `uv add fastmcp` and migrate ticktick + probe onto `fastmcp.Client` in one pass. Doc index: `gofastmcp.com/llms.txt`.
