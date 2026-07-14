@@ -109,6 +109,25 @@ none urgent:
   speed only bites in build pipelines over many files. Trigger = adding pre-rendering
   (static HTML / MDX) to publish; then satteri vs remark is the real comparison. Its docs
   don't advertise a TOC block — TOC would come from its AST plugin hooks either way.
+- [ ] **llms.txt for `ko publish` + the kotools site** (designed 2026-07-14; Opus study of
+  khalido.org + llmstxt.org). khalido.org's pattern: md is source, each post serves a raw twin at
+  `slug.md` (clean variant of the spec's `page.html.md`), `/llms.txt` = H1 + blockquote + H2 link
+  sections pointing at the twins (no llms-full.txt — the .md pages ARE the full content).
+  For ko publish: `--md`/`--hono` sites already serve raw `.md`; the only gap is the index →
+  **scaffold-time `llms.txt` stub** (H1 + blockquote + `## Pages` seeded with README.md) + one
+  `_MD_CLAUDE` line telling the agent to keep it in sync when adding pages. NOT deploy-time
+  generation — deploy stays a pure `wrangler deploy` passthrough ("ko publish == wrangler deploy"
+  identity), and no build step. Static pathway: skip (trafilatura-from-HTML would be a lossy
+  shadow of an interactive page); author index.md deliberately if wanted.
+  **kotools-site**: grow from one README into a real --md docs site — `/llms.txt` + per-topic
+  pages ported from repo docs (install.md, keys.md, google.md, agents.md, publish.md, commands.md),
+  each fetchable raw; repo README stays the PyPI/GitHub front page. Dogfoods the scaffold stub.
+- [ ] **`ko llms` — llms.txt for a repo's deps** (idea 2026-07-14, via balazshevesi/get-llms —
+  npm-only, 4 stars, probes `{homepage}/llms.txt`). ko version: read pyproject/package.json/
+  requirements.txt, resolve each main dep's homepage (PyPI JSON API `project_urls` / npm registry),
+  probe `/llms.txt` + `/docs/llms.txt`, print name→URL TSV (`--fetch` saves via `ko fetch`).
+  Keyless, composes with the agent layer (a repo agent could load a dep's llms.txt on demand).
+  Build when the want recurs — get-llms itself is too new/npm-bound to lean on.
 - [ ] **`ko publish` lifecycle + polish** (from the 2026-07-14 pathway review):
   - **`ko publish rm <name|dir>`** — the missing delete verb (`wrangler delete` + registry cleanup
     + custom-domain DNS note). Evidence: `ko-test` from June still live in the registry.
