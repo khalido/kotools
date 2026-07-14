@@ -16,7 +16,16 @@ from . import mcp_client as mcp_client_mod
 from . import prompt as prompt_mod
 from . import publish as publish_mod
 from . import ticktick as ticktick_mod
-from .agents import ai_run, ai_repl, repo_run, repo_repl, research_run, research_repl, tv_run, tv_repl
+from .agents import (
+    ai_run,
+    ai_repl,
+    repo_run,
+    repo_repl,
+    research_run,
+    research_repl,
+    tv_run,
+    tv_repl,
+)
 from ._cli_shared import _die, _emit_json, _no_results, _tsv_cell, app
 
 # --- sub-apps ---
@@ -109,7 +118,10 @@ def ai_cmd(
         None, help="what you want done/answered; omit to enter interactive mode"
     ),
     model: str = typer.Option(
-        None, "--model", "-m", help="model override (default: the medium tier)",
+        None,
+        "--model",
+        "-m",
+        help="model override (default: the medium tier)",
         autocompletion=llm_mod.available_models,
     ),
     resume: str = typer.Option(
@@ -140,16 +152,24 @@ def agent_research(
         None, help="research prompt; omit to enter interactive mode"
     ),
     model: str = typer.Option(
-        None, "--model", "-m", help="model override, e.g. openrouter:anthropic/claude-sonnet-4"
+        None,
+        "--model",
+        "-m",
+        help="model override, e.g. openrouter:anthropic/claude-sonnet-4",
     ),
     resume: str = typer.Option(
-        None, "--resume", "-r", help="resume a saved session id (enters interactive mode)"
+        None,
+        "--resume",
+        "-r",
+        help="resume a saved session id (enters interactive mode)",
     ),
 ) -> None:
     """Research agent across web (exa), papers (arxiv, hf), and HN. No prompt = interactive REPL."""
     try:
         if prompt:
-            research_run(prompt, model=model, resume=resume)  # prints itself; resume continues a session
+            research_run(
+                prompt, model=model, resume=resume
+            )  # prints itself; resume continues a session
         else:
             research_repl(model=model, resume=resume)
     except FileNotFoundError:
@@ -163,12 +183,18 @@ def agent_research(
 @agent_app.command("repo")
 def agent_repo(
     prompt: str = typer.Argument(
-        None, help="what to find/explain, naming the repo(s) if you can — e.g. "
-        "'how does refs/llm register plugins?'; omit for interactive mode"
+        None,
+        help="what to find/explain, naming the repo(s) if you can — e.g. "
+        "'how does refs/llm register plugins?'; omit for interactive mode",
     ),
-    model: str = typer.Option(None, "--model", "-m", help="model override (default: basic tier)"),
+    model: str = typer.Option(
+        None, "--model", "-m", help="model override (default: basic tier)"
+    ),
     resume: str = typer.Option(
-        None, "--resume", "-r", help="resume a saved session id (enters interactive mode)"
+        None,
+        "--resume",
+        "-r",
+        help="resume a saved session id (enters interactive mode)",
     ),
 ) -> None:
     """Repo-explorer: answers 'how does repo X do Y' over ~/code (read-only; own repos +
@@ -193,7 +219,10 @@ def agent_tv(
     ),
     model: str = typer.Option(None, "--model", "-m", help="model override"),
     resume: str = typer.Option(
-        None, "--resume", "-r", help="resume a saved session id (enters interactive mode)"
+        None,
+        "--resume",
+        "-r",
+        help="resume a saved session id (enters interactive mode)",
     ),
 ) -> None:
     """TV/movie agent — what to watch in Australia, tuned to Ko. No prompt = interactive REPL."""
@@ -221,7 +250,9 @@ agent_app.add_typer(sessions_app, name="sessions")
 def agent_sessions(
     ctx: typer.Context,
     as_json: bool = typer.Option(False, "--json", help="emit JSON instead of TSV"),
-    tag: str = typer.Option(None, "--tag", help="filter to sessions tagged with this word"),
+    tag: str = typer.Option(
+        None, "--tag", help="filter to sessions tagged with this word"
+    ),
     search: str = typer.Option(
         None, "--search", help="case-insensitive substring filter over title + summary"
     ),
@@ -248,9 +279,13 @@ def agent_sessions(
         return
     for s in rows:
         tags_str = ",".join(s.get("tags") or [])
-        summary = _tsv_cell(s.get("summary") or "")  # LLM-written free text — escape for TSV
+        summary = _tsv_cell(
+            s.get("summary") or ""
+        )  # LLM-written free text — escape for TSV
         title = _tsv_cell(s.get("title") or "")
-        typer.echo(f"{s['id']}\t{s['agent']}\t{s['model']}\t{title}\t{summary}\t{tags_str}")
+        typer.echo(
+            f"{s['id']}\t{s['agent']}\t{s['model']}\t{title}\t{summary}\t{tags_str}"
+        )
 
 
 @sessions_app.command("summarize")
@@ -288,7 +323,9 @@ def agent_sessions_summarize(
         summary: str
         tags: list[str]
 
-    mdl = model or default_model()  # default_model already resolves env → config → basic tier
+    mdl = (
+        model or default_model()
+    )  # default_model already resolves env → config → basic tier
 
     _summarizer = Agent(
         instructions=(
@@ -312,7 +349,7 @@ def agent_sessions_summarize(
     for f in all_files:
         try:
             data = json.loads(f.read_text())
-        except (OSError, ValueError):
+        except OSError, ValueError:
             continue
         sid = data.get("id", f.stem)
         row = sessions.get_session_row(sid)
@@ -325,7 +362,9 @@ def agent_sessions_summarize(
             summarized_at_f: float = 0.0
             if summarized_at_str:
                 try:
-                    summarized_at_f = datetime.fromisoformat(summarized_at_str).timestamp()
+                    summarized_at_f = datetime.fromisoformat(
+                        summarized_at_str
+                    ).timestamp()
                 except ValueError:
                     summarized_at_f = 0.0
             if file_mtime_f <= summarized_at_f:
@@ -337,7 +376,9 @@ def agent_sessions_summarize(
         pending = pending[:n]
 
     if not pending:
-        typer.echo(f"0 sessions summarized ({already_current} already current)", err=True)
+        typer.echo(
+            f"0 sessions summarized ({already_current} already current)", err=True
+        )
         return
 
     succeeded = 0
@@ -438,13 +479,26 @@ def tt_items(
 @publish_app.command("new")
 def publish_new(
     path: str = typer.Argument(..., help="folder to scaffold (created if missing)"),
-    title: str = typer.Option(None, "--title", "-t", help="page title (default: folder name)"),
-    md: bool = typer.Option(False, "--md", help="markdown doc site (write .md, README is the hub)"),
-    bare: bool = typer.Option(False, "--bare", help="just a CLAUDE.md of hints; build from scratch"),
-    hono: bool = typer.Option(False, "--hono", help="Hono worker site — backend-ready (API routes, D1/R2)"),
-    pin: bool = typer.Option(False, "--pin", help="PIN-gate it (implies --hono; generates a 6-digit PIN)"),
+    title: str = typer.Option(
+        None, "--title", "-t", help="page title (default: folder name)"
+    ),
+    md: bool = typer.Option(
+        False, "--md", help="markdown doc site (write .md, README is the hub)"
+    ),
+    bare: bool = typer.Option(
+        False, "--bare", help="just a CLAUDE.md of hints; build from scratch"
+    ),
+    hono: bool = typer.Option(
+        False, "--hono", help="Hono worker site — backend-ready (API routes, D1/R2)"
+    ),
+    pin: bool = typer.Option(
+        False, "--pin", help="PIN-gate it (implies --hono; generates a 6-digit PIN)"
+    ),
     name: str = typer.Option(
-        None, "--name", "-n", help="worker/subdomain name (default: folder, or parent if folder is generic)"
+        None,
+        "--name",
+        "-n",
+        help="worker/subdomain name (default: folder, or parent if folder is generic)",
     ),
 ) -> None:
     """Scaffold a site to publish. Default: static (Tailwind + Alpine). `--md` / `--bare` / `--hono`."""
@@ -472,7 +526,9 @@ def publish_new(
 @publish_app.command("preview")
 def publish_preview(
     path: str = typer.Argument(".", help="folder to preview (default: current dir)"),
-    port: int = typer.Option(None, "--port", "-p", help="port (default: wrangler's 8787)"),
+    port: int = typer.Option(
+        None, "--port", "-p", help="port (default: wrangler's 8787)"
+    ),
 ) -> None:
     """Preview a folder locally with `wrangler dev` (http://localhost:8787). Serves over http so ES
     modules + fetch work (a `file://` open doesn't); for --hono it runs the real worker. Ctrl-C to stop."""
@@ -488,19 +544,26 @@ def publish_preview(
 def publish_up(
     path: str = typer.Argument(".", help="folder to publish (default: current dir)"),
     name: str = typer.Option(
-        None, "--name", "-n", help="subdomain/name (default: derived from folder, sticky)"
+        None,
+        "--name",
+        "-n",
+        help="subdomain/name (default: derived from folder, sticky)",
     ),
     force: bool = typer.Option(
         False, "--force", "-f", help="take over an existing subdomain/Worker name"
     ),
     pin: str = typer.Option(
-        None, "--pin", help="set/rotate the gate PIN on a --hono site ('new' = random 6-digit)"
+        None,
+        "--pin",
+        help="set/rotate the gate PIN on a --hono site ('new' = random 6-digit)",
     ),
 ) -> None:
     """Deploy a folder to Cloudflare. Prints the URL. Re-running overwrites the same URL."""
     try:
         if pin is not None:
-            publish_mod.set_pin(Path(path), pin)  # rotate before deploy so the new PIN ships
+            publish_mod.set_pin(
+                Path(path), pin
+            )  # rotate before deploy so the new PIN ships
         url = publish_mod.deploy(Path(path), name=name, force=force)
     except RuntimeError as e:
         typer.echo(str(e), err=True)
@@ -511,8 +574,14 @@ def publish_up(
         code = publish_mod.check_url(url)  # sanity check: is it actually live?
         if gate_pin:
             typer.echo(f"🔒 PIN: {gate_pin}", err=True)
-            note = "✓ live (PIN gate active)" if code in (200, 401) else (
-                f"⚠ deployed but HTTP {code}" if code else "⚠ deployed but not reachable yet"
+            note = (
+                "✓ live (PIN gate active)"
+                if code in (200, 401)
+                else (
+                    f"⚠ deployed but HTTP {code}"
+                    if code
+                    else "⚠ deployed but not reachable yet"
+                )
             )
         elif code == 200:
             note = "✓ live (HTTP 200)"
@@ -522,22 +591,100 @@ def publish_up(
             note = "⚠ deployed but not reachable yet (cert may be provisioning)"
         typer.echo(note, err=True)
     else:
-        typer.echo("deployed — couldn't parse the URL; run `wrangler deployments list`", err=True)
+        typer.echo(
+            "deployed — couldn't parse the URL; run `wrangler deployments list`",
+            err=True,
+        )
 
 
 @publish_app.command("list")
 def publish_list(
+    cf: bool = typer.Option(
+        False,
+        "--cf",
+        help="reconcile against Cloudflare: append account Workers this machine's registry doesn't know",
+    ),
     as_json: bool = typer.Option(False, "--json", help="emit JSON instead of TSV"),
 ) -> None:
-    """List everything published (TSV: name, url, folder)."""
+    """List everything published (TSV: name, url, folder, last published).
+
+    The registry is machine-local; `--cf` asks the Cloudflare account for the full Worker
+    list and appends the ones published elsewhere (their folder/date show as `-`)."""
     rows = publish_mod.published()
-    if not rows:
+    extra: list[dict] = []
+    if cf:
+        names = publish_mod.account_workers()
+        if names is None:
+            typer.echo(
+                "⚠ can't reach Cloudflare (creds? see `ko doctor`) — local registry only",
+                err=True,
+            )
+        else:
+            known = {p.name for p in rows}
+            domains = publish_mod.worker_domains()
+            extra = [
+                {
+                    "name": n,
+                    "url": f"https://{domains[n]}" if n in domains else "",
+                    "folder": "",
+                    "updated_at": "",
+                }
+                for n in names
+                if n not in known
+            ]
+    if not rows and not extra:
         _no_results("nothing published yet", as_json)
     if as_json:
-        _emit_json(rows)
+        typer.echo(json.dumps([asdict(p) for p in rows] + extra, default=str))
         return
     for p in rows:
-        typer.echo(f"{p.name}\t{p.url}\t{p.folder}")
+        typer.echo(f"{p.name}\t{p.url}\t{p.folder}\t{p.updated_at[:10]}")
+    for e in extra:
+        typer.echo(f"{e['name']}\t{e['url'] or '-'}\t-\t-")
+
+
+@publish_app.command("rm")
+def publish_rm(
+    target: str = typer.Argument(..., help="Worker name, or a published folder path"),
+    yes: bool = typer.Option(
+        False, "--yes", "-y", help="skip the confirm (required when not a TTY)"
+    ),
+) -> None:
+    """Delete a published site from Cloudflare and forget it locally.
+
+    Removes the Worker; its custom domain (and that DNS record) detach with it. The folder
+    and its files are untouched — `ko publish <dir>` brings the site back any time."""
+    p = Path(target)
+    # a folder only counts when it's an actual publish project (wrangler config or in the
+    # registry) — otherwise `rm site` with a stray ./site dir would resolve, via the
+    # generic-folder-name rule, to a DIFFERENT worker than the one named
+    is_project = p.is_dir() and (
+        (p / publish_mod.WRANGLER_CONFIG).exists()
+        or str(p.resolve()) in publish_mod.registry()
+    )
+    name = publish_mod.resolve_name(p) if is_project else target
+    if name != target:
+        typer.echo(f"{target} → Worker {name!r}", err=True)
+    url = next((r.url for r in publish_mod.published() if r.name == name), None)
+    what = f"{name} ({url})" if url else name
+    if not yes:
+        if sys.stdin.isatty():
+            typer.confirm(f"delete Worker {what} from Cloudflare?", abort=True)
+        else:
+            typer.echo("refusing to delete without a TTY — pass --yes", err=True)
+            raise typer.Exit(2)
+    try:
+        publish_mod.delete_worker(name)
+    except RuntimeError as e:
+        if "no Worker named" in str(e) and publish_mod.forget(name):
+            typer.echo(
+                f"{name}: not on Cloudflare — removed from the local registry", err=True
+            )
+            return
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1) from None
+    publish_mod.forget(name)
+    typer.echo(f"deleted {what}", err=True)
 
 
 # --- prompt helpers ---
@@ -565,7 +712,9 @@ def prompt_cmd(
         None, help="brief to print; omit to list all", autocompletion=_prompt_names
     ),
     as_json: bool = typer.Option(False, "--json", help="emit JSON instead of text"),
-    copy: bool = typer.Option(False, "--copy", help="copy the brief to the clipboard (pbcopy)"),
+    copy: bool = typer.Option(
+        False, "--copy", help="copy the brief to the clipboard (pbcopy)"
+    ),
 ) -> None:
     """Kickoff briefs — my opinionated 'how I build X' notes to load into an agent.
 
@@ -581,7 +730,11 @@ def prompt_cmd(
             typer.echo(
                 json.dumps(
                     [
-                        {"name": p.name, "description": p.description, "source": p.source}
+                        {
+                            "name": p.name,
+                            "description": p.description,
+                            "source": p.source,
+                        }
                         for p in prompts
                     ]
                 )
@@ -594,10 +747,16 @@ def prompt_cmd(
         p = prompt_mod.get_prompt(name)
     except KeyError:
         avail = ", ".join(prompt_mod.names()) or "(none)"
-        _die(f"no brief named {name!r}. Available: {avail}", as_json=as_json, code="not_found")
+        _die(
+            f"no brief named {name!r}. Available: {avail}",
+            as_json=as_json,
+            code="not_found",
+        )
     if copy:
         _copy_clipboard(p.body)
-        typer.echo(f"Copied '{p.name}' to the clipboard ({len(p.body):,} chars).", err=True)
+        typer.echo(
+            f"Copied '{p.name}' to the clipboard ({len(p.body):,} chars).", err=True
+        )
         return
     if as_json:
         typer.echo(json.dumps(asdict(p)))
@@ -621,13 +780,18 @@ def _mcp_args(arg: list[str] | None, as_json: bool) -> dict:
 @mcp_app.command("inspect")
 def mcp_inspect(
     server: str = typer.Argument(
-        ..., help="server name (from ~/.config/ko/mcp.json) or a URL, e.g. http://localhost:5180/mcp"
+        ...,
+        help="server name (from ~/.config/ko/mcp.json) or a URL, e.g. http://localhost:5180/mcp",
     ),
     header: list[str] = typer.Option(
-        None, "--header", "-H",
+        None,
+        "--header",
+        "-H",
         help="extra header 'Key: Value' (overrides config; e.g. 'Authorization: Bearer ...'); repeatable",
     ),
-    tool: str = typer.Option(None, "--tool", help="print one tool's full JSON input schema and exit"),
+    tool: str = typer.Option(
+        None, "--tool", help="print one tool's full JSON input schema and exit"
+    ),
     as_json: bool = typer.Option(False, "--json", help="emit JSON"),
 ) -> None:
     """Investigate an MCP server: its tools, resources, and prompts (+ capabilities and any server
@@ -648,7 +812,11 @@ def mcp_inspect(
         match = next((t for t in info.tools if t.name == tool), None)
         if match is None:
             avail = ", ".join(t.name for t in info.tools) or "(none)"
-            _die(f"no tool named {tool!r}. Tools: {avail}", as_json=as_json, code="not_found")
+            _die(
+                f"no tool named {tool!r}. Tools: {avail}",
+                as_json=as_json,
+                code="not_found",
+            )
         typer.echo(json.dumps(match.schema, indent=2, default=str))
         return
     if as_json:
@@ -666,16 +834,29 @@ def mcp_inspect(
                 typer.echo("  " + render(it))
 
     _section(
-        "TOOLS", info.tools,
-        lambda t: f"{t.name}({', '.join(t.required)})" + (f"  —  {t.description}" if t.description else ""),
+        "TOOLS",
+        info.tools,
+        lambda t: (
+            f"{t.name}({', '.join(t.required)})"
+            + (f"  —  {t.description}" if t.description else "")
+        ),
     )
     _section(
-        "RESOURCES", info.resources,
-        lambda r: f"{r.uri}" + (" [template]" if r.template else "") + (f"  —  {r.description}" if r.description else ""),
+        "RESOURCES",
+        info.resources,
+        lambda r: (
+            f"{r.uri}"
+            + (" [template]" if r.template else "")
+            + (f"  —  {r.description}" if r.description else "")
+        ),
     )
     _section(
-        "PROMPTS", info.prompts,
-        lambda p: f"{p.name}({', '.join(p.arguments)})" + (f"  —  {p.description}" if p.description else ""),
+        "PROMPTS",
+        info.prompts,
+        lambda p: (
+            f"{p.name}({', '.join(p.arguments)})"
+            + (f"  —  {p.description}" if p.description else "")
+        ),
     )
     if not (info.tools or info.resources or info.prompts):
         typer.echo("(server exposes no tools, resources, or prompts)", err=True)
@@ -687,7 +868,10 @@ def mcp_call(
     tool: str = typer.Argument(..., help="tool name to call (see `ko mcp inspect`)"),
     arg: list[str] = typer.Option(None, "--arg", help="k=value argument; repeatable"),
     header: list[str] = typer.Option(
-        None, "--header", "-H", help="extra header 'Key: Value' (overrides config); repeatable"
+        None,
+        "--header",
+        "-H",
+        help="extra header 'Key: Value' (overrides config); repeatable",
     ),
     as_json: bool = typer.Option(False, "--json", help="emit JSON"),
 ) -> None:
@@ -709,10 +893,16 @@ def mcp_call(
 def mcp_overview(
     server: str = typer.Argument(..., help="server name (from mcp.json) or URL"),
     header: list[str] = typer.Option(
-        None, "--header", "-H", help="extra header 'Key: Value' (overrides config); repeatable"
+        None,
+        "--header",
+        "-H",
+        help="extra header 'Key: Value' (overrides config); repeatable",
     ),
     model: str = typer.Option(
-        None, "--model", "-m", help="agent model (default: KO_AGENT_MODEL or openrouter:z-ai/glm-5.2)"
+        None,
+        "--model",
+        "-m",
+        help="agent model (default: KO_AGENT_MODEL or openrouter:z-ai/glm-5.2)",
     ),
 ) -> None:
     """An LLM agent connects to an MCP server, explores it, and summarizes what it's for and what's
@@ -756,7 +946,9 @@ def billing(
 @mcp_app.command("auth-info")
 def mcp_auth_info(
     server: str = typer.Argument(..., help="server name (from mcp.json) or URL"),
-    header: list[str] = typer.Option(None, "--header", "-H", help="extra header 'Key: Value'; repeatable"),
+    header: list[str] = typer.Option(
+        None, "--header", "-H", help="extra header 'Key: Value'; repeatable"
+    ),
     as_json: bool = typer.Option(False, "--json", help="emit JSON"),
 ) -> None:
     """Validate a remote server's OAuth discovery surface BEFORE connecting — the public `.well-known`
@@ -774,23 +966,33 @@ def mcp_auth_info(
     if as_json:
         typer.echo(json.dumps(info, default=str))
         raise typer.Exit(1 if info.get("problems") else 0)
-    typer.echo(f"MCP endpoint: HTTP {info.get('mcp_status', '?')}  (auth required: {info.get('requires_auth')})")
+    typer.echo(
+        f"MCP endpoint: HTTP {info.get('mcp_status', '?')}  (auth required: {info.get('requires_auth')})"
+    )
     if info.get("www_authenticate"):
         typer.echo(f"  WWW-Authenticate: {info['www_authenticate']}")
     pr = info.get("protected_resource")
     if pr:
         typer.echo(f"\nProtected resource  [{info.get('protected_resource_url')}]")
         typer.echo(f"  resource:     {pr.get('resource')}")
-        typer.echo(f"  scopes:       {', '.join(pr.get('scopes_supported', [])) or '(none)'}")
+        typer.echo(
+            f"  scopes:       {', '.join(pr.get('scopes_supported', [])) or '(none)'}"
+        )
         typer.echo(f"  auth servers: {', '.join(pr.get('authorization_servers', []))}")
     for asm in info.get("auth_servers", []):
         typer.echo(f"\nAuth server  [{asm.get('_discovered_at')}]")
         typer.echo(f"  issuer:       {asm.get('issuer')}")
         typer.echo(f"  authorize:    {asm.get('authorization_endpoint')}")
         typer.echo(f"  token:        {asm.get('token_endpoint')}")
-        typer.echo(f"  registration: {asm.get('registration_endpoint') or '— (no DCR)'}")
-        typer.echo(f"  scopes:       {', '.join(asm.get('scopes_supported', [])) or '(none)'}")
-        typer.echo(f"  PKCE S256:    {'S256' in (asm.get('code_challenge_methods_supported') or [])}")
+        typer.echo(
+            f"  registration: {asm.get('registration_endpoint') or '— (no DCR)'}"
+        )
+        typer.echo(
+            f"  scopes:       {', '.join(asm.get('scopes_supported', [])) or '(none)'}"
+        )
+        typer.echo(
+            f"  PKCE S256:    {'S256' in (asm.get('code_challenge_methods_supported') or [])}"
+        )
     if info.get("problems"):
         typer.echo("\nPROBLEMS:", err=True)
         for prob in info["problems"]:
@@ -803,7 +1005,15 @@ def _redact_server(cfg: dict) -> dict:
     """Copy a server config with secret-bearing header/env values masked. (A URL with inline
     userinfo/`?api_key=` isn't touched — don't put secrets in mcp.json URLs; use headers.)
     `ko mcp inspect -H` is how you pass a real token deliberately; `servers --json` never leaks one."""
-    SECRET_KEYS = ("authorization", "token", "api-key", "apikey", "key", "secret", "password")
+    SECRET_KEYS = (
+        "authorization",
+        "token",
+        "api-key",
+        "apikey",
+        "key",
+        "secret",
+        "password",
+    )
     out = dict(cfg)
     for field in ("headers", "env"):
         d = cfg.get(field)
@@ -826,7 +1036,9 @@ def mcp_servers(
     except mcp_client_mod.MCPTestError as e:
         _die(str(e), as_json=as_json, code="config")
     if not servers:
-        _no_results("no servers in ~/.config/ko/mcp.json (add an `mcpServers` object)", as_json)
+        _no_results(
+            "no servers in ~/.config/ko/mcp.json (add an `mcpServers` object)", as_json
+        )
     if as_json:
         # load_servers() expands ${ENV} placeholders, so headers/env carry live secrets —
         # redact them before printing to stdout (which gets piped/logged).
@@ -875,7 +1087,8 @@ def brief_cmd(
     # paying for an empty synthesis. A section is a note if its text is a single-line
     # error note matching the _try() pattern.
     meaningful = [
-        (t, txt) for t, txt in sections
+        (t, txt)
+        for t, txt in sections
         if not (txt.startswith(f"({t}:") and "\n" not in txt)
     ]
     if not meaningful:

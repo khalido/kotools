@@ -204,3 +204,71 @@ def test_set_pin_requires_worker(monkeypatch, tmp_path):
         raise AssertionError("expected RuntimeError on a non-worker folder")
     except RuntimeError:
         pass
+
+
+# --- Cloudflare reconcile + rm (offline: httpx mocked) ---
+
+
+class _Resp:
+    def __init__(self, status_code=200, payload=None, text=""):
+        self.status_code = status_code
+        self._payload = payload if payload is not None else {}
+        self.text = text
+
+    def json(self):
+        return self._payload
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}")
+
+
+def test_account_workers_sorted_and_domains(monkeypatch):
+    monkeypatch.setattr(publish, "cf_creds", lambda: ("tok", "acct"))
+
+    def fake_get(url, **kw):
+        if url.endswith("/workers/scripts"):
+            return _Resp(payload={"result": [{"id": "beta"}, {"id": "alpha"}]})
+        return _Resp(payload={"result": [{"service": "alpha", "hostname": "alpha.example.com"}]})
+
+    monkeypatch.setattr(publish.httpx, "get", fake_get)
+    assert publish.account_workers() == ["alpha", "beta"]
+    assert publish.worker_domains() == {"alpha": "alpha.example.com"}
+
+
+def test_account_workers_none_without_creds(monkeypatch):
+    monkeypatch.setattr(publish, "cf_creds", lambda: (None, None))
+    assert publish.account_workers() is None  # can't tell — caller says so
+    assert publish.worker_domains() == {}  # never blocks
+
+
+def test_delete_worker_force_and_404(monkeypatch):
+    monkeypatch.setattr(publish, "cf_creds", lambda: ("tok", "acct"))
+    seen = {}
+
+    def fake_delete(url, **kw):
+        seen["url"], seen["params"] = url, kw.get("params")
+        return _Resp(status_code=200)
+
+    monkeypatch.setattr(publish.httpx, "delete", fake_delete)
+    publish.delete_worker("mysite")  # no raise
+    assert seen["url"].endswith("/workers/scripts/mysite")
+    assert seen["params"] == {"force": "true"}  # detaches custom domains too
+
+    monkeypatch.setattr(publish.httpx, "delete", lambda url, **kw: _Resp(status_code=404))
+    try:
+        publish.delete_worker("ghost")
+        raise AssertionError("expected RuntimeError for a missing worker")
+    except RuntimeError as e:
+        assert "no Worker named" in str(e)
+
+
+def test_forget_removes_registry_entry(monkeypatch, tmp_path):
+    monkeypatch.setenv("KO_STATE_DIR", str(tmp_path))
+    folder = tmp_path / "site"
+    folder.mkdir()
+    publish._record(folder, "site", "https://site.example.com")
+    assert [p.name for p in publish.published()] == ["site"]
+    assert publish.forget("site") == [str(folder)]
+    assert publish.published() == []
+    assert publish.forget("site") == []  # idempotent

@@ -47,7 +47,11 @@ def test_tsv_cell_sanitizes_tabs_and_newlines():
 def test_route_trailing_help_becomes_flag():
     assert cli._route(["help"]) == ["--help"]
     assert cli._route(["exa", "search", "help"]) == ["exa", "search", "--help"]
-    assert cli._route(["exa", "search", "--help"]) == ["exa", "search", "--help"]  # already a flag
+    assert cli._route(["exa", "search", "--help"]) == [
+        "exa",
+        "search",
+        "--help",
+    ]  # already a flag
 
 
 def test_route_url_to_fetch():
@@ -63,7 +67,11 @@ def test_route_file_to_doc(tmp_path):
 
 def test_route_x_and_tt_shortcuts():
     assert cli._route(["x", "ai"]) == ["x", "list", "ai"]
-    assert cli._route(["x", "search", "rust"]) == ["x", "search", "rust"]  # real subcommand
+    assert cli._route(["x", "search", "rust"]) == [
+        "x",
+        "search",
+        "rust",
+    ]  # real subcommand
     assert cli._route(["tt", "Shopping"]) == ["tt", "items", "Shopping"]
     assert cli._route(["tt", "lists"]) == ["tt", "lists"]
 
@@ -71,7 +79,10 @@ def test_route_x_and_tt_shortcuts():
 def test_route_publish_up_default():
     assert cli._route(["publish"]) == ["publish", "up"]
     assert cli._route(["publish", "./site"]) == ["publish", "up", "./site"]
-    assert cli._route(["publish", "list"]) == ["publish", "list"]  # subcommand left alone
+    assert cli._route(["publish", "list"]) == [
+        "publish",
+        "list",
+    ]  # subcommand left alone
     assert cli._route(["publish", "--help"]) == ["publish", "--help"]
 
 
@@ -85,7 +96,9 @@ def test_cmd_label_never_captures_arg_values():
     # the privacy contract: only a group + a *validated* subcommand, never an arg value
     assert cli._cmd_label(["exa", "search", "rust"]) == "exa search"
     assert cli._cmd_label(["exa", "notacmd", "rust"]) == "exa"  # bogus sub not echoed
-    assert cli._cmd_label(["fetch", "https://secret.example/x"]) == "fetch"  # url not captured
+    assert (
+        cli._cmd_label(["fetch", "https://secret.example/x"]) == "fetch"
+    )  # url not captured
     assert cli._cmd_label(["x", "ai"]) == "x"  # list name not captured
     assert cli._cmd_label(["doctor"]) == "doctor"
     assert cli._cmd_label([]) == "(root)"
@@ -105,7 +118,9 @@ def test_redact_server_masks_secrets():
     assert red["env"]["API_KEY"] == "***"
     assert red["env"]["REGION"] == "us"
     assert red["url"] == cfg["url"]  # url passes through
-    assert cfg["headers"]["Authorization"] == "Bearer sk-live-abc123"  # original not mutated
+    assert (
+        cfg["headers"]["Authorization"] == "Bearer sk-live-abc123"
+    )  # original not mutated
 
 
 def test_die_usage_code_exits_2(capsys):
@@ -167,3 +182,25 @@ def test_no_results_emits_empty_array_under_json(capsys):
     out = capsys.readouterr()
     assert json.loads(out.out) == []  # valid empty JSON keeps the pipe alive
     assert out.err.strip() == "No results for 'x'."  # note still on stderr
+
+
+def test_publish_list_json_mixes_dataclasses_and_cf_rows(monkeypatch, tmp_path, capsys):
+    """`ko publish list --json` must emit valid JSON when the registry has rows —
+    regression: dataclass rows were double-asdict'ed through _emit_json."""
+    monkeypatch.setenv("KO_STATE_DIR", str(tmp_path))
+    from ko import publish
+
+    folder = tmp_path / "site"
+    folder.mkdir()
+    publish._record(folder, "site", "https://site.example.com")
+    monkeypatch.setattr(publish, "account_workers", lambda: ["site", "elsewhere"])
+    monkeypatch.setattr(
+        publish, "worker_domains", lambda: {"elsewhere": "elsewhere.example.com"}
+    )
+    cli_ai.publish_list(cf=True, as_json=True)
+    out = capsys.readouterr()
+    rows = json.loads(out.out)
+    assert [r["name"] for r in rows] == ["site", "elsewhere"]
+    assert (
+        rows[1]["url"] == "https://elsewhere.example.com"
+    )  # cf-only row, domain resolved

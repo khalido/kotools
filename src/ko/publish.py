@@ -62,7 +62,18 @@ def slugify(name: str) -> str:
 
 
 # generic publish-folder names → take the worker/domain from the PARENT project folder instead
-_GENERIC_FOLDER_NAMES = {"publish", "site", "html", "www", "public", "dist", "out", "build", "pub", "web"}
+_GENERIC_FOLDER_NAMES = {
+    "publish",
+    "site",
+    "html",
+    "www",
+    "public",
+    "dist",
+    "out",
+    "build",
+    "pub",
+    "web",
+}
 
 
 def _default_name(folder: Path) -> str:
@@ -117,7 +128,11 @@ def _npm_install(folder: Path) -> None:
     npm = shutil.which("npm") or "npm"
     try:
         proc = subprocess.run(
-            [npm, "install"], cwd=str(folder), capture_output=True, text=True, timeout=300
+            [npm, "install"],
+            cwd=str(folder),
+            capture_output=True,
+            text=True,
+            timeout=300,
         )
     except subprocess.TimeoutExpired:
         raise RuntimeError("npm install timed out after 5 min") from None
@@ -172,6 +187,74 @@ def worker_exists(name: str) -> bool | None:
     if r.status_code == 404:
         return False
     return None
+
+
+def account_workers() -> list[str] | None:
+    """All Worker names on the account (the truth `ko publish list --cf` reconciles against).
+    None if we can't tell (no creds / API error)."""
+    token, account = cf_creds()
+    if not (token and account):
+        return None
+    try:
+        r = httpx.get(
+            f"https://api.cloudflare.com/client/v4/accounts/{account}/workers/scripts",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=30,
+        )
+        r.raise_for_status()
+        return sorted(s["id"] for s in r.json().get("result") or [])
+    except Exception:
+        return None
+
+
+def worker_domains() -> dict[str, str]:
+    """Custom domains attached to Workers: {worker name: hostname}. Empty on any failure
+    (a missing domain just means the worker shows without a URL — never blocks)."""
+    token, account = cf_creds()
+    if not (token and account):
+        return {}
+    try:
+        r = httpx.get(
+            f"https://api.cloudflare.com/client/v4/accounts/{account}/workers/domains",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=30,
+        )
+        r.raise_for_status()
+        return {d["service"]: d["hostname"] for d in r.json().get("result") or []}
+    except Exception:
+        return {}
+
+
+def delete_worker(name: str) -> None:
+    """Delete Worker `name` from the account (`force` also detaches custom domains, which
+    removes their DNS records). Raises RuntimeError with the reason on any failure."""
+    token, account = cf_creds()
+    if not (token and account):
+        raise RuntimeError("Cloudflare creds not set — see `ko doctor`")
+    try:
+        r = httpx.delete(
+            f"https://api.cloudflare.com/client/v4/accounts/{account}/workers/scripts/{name}",
+            headers={"Authorization": f"Bearer {token}"},
+            params={"force": "true"},
+            timeout=30,
+        )
+    except Exception as e:
+        raise RuntimeError(f"delete failed: {e}") from None
+    if r.status_code == 404:
+        raise RuntimeError(f"no Worker named {name!r} on the account")
+    if not (200 <= r.status_code < 300):
+        raise RuntimeError(f"delete failed (HTTP {r.status_code}): {r.text[:200]}")
+
+
+def forget(name: str) -> list[str]:
+    """Drop `name` from the local registry. Returns the folder paths that were removed."""
+    reg = registry()
+    gone = [k for k, v in reg.items() if v.get("name") == name]
+    for k in gone:
+        del reg[k]
+    if gone:
+        _registry_file().write_text(json.dumps(reg, indent=2))
+    return gone
 
 
 # --- per-folder wrangler config (the source of truth) ---
@@ -274,7 +357,7 @@ def ensure_config(folder: Path, name: str | None = None, spa: bool = True) -> st
         if existing:
             return existing
         print(
-            f"warning: couldn't read \"name\" from {path}; leaving it as-is "
+            f'warning: couldn\'t read "name" from {path}; leaving it as-is '
             "(pass --name to regenerate).",
             file=sys.stderr,
         )
@@ -299,7 +382,9 @@ def ensure_hono_config(folder: Path, name: str | None = None, pin: bool = False)
         return config_name(folder) or _default_name(folder)
     final = slugify(name) if name else _default_name(folder)
     pin_val = config_pin(folder) or (_gen_pin() if pin else None)
-    text = json.dumps(build_hono_config(final, publish_domain(), pin_val), indent=2) + "\n"
+    text = (
+        json.dumps(build_hono_config(final, publish_domain(), pin_val), indent=2) + "\n"
+    )
     path.write_text(text)
     return final
 
@@ -319,12 +404,21 @@ def set_pin(folder: Path, pin: str) -> str:
         )
     value = _gen_pin() if pin == "new" else pin
     text = path.read_text()
-    if '"KO_PIN"' in text:  # patch the value, leave everything else (bindings, routes) untouched
-        text = re.sub(r'("KO_PIN"\s*:\s*")[^"]*(")', lambda m: m.group(1) + value + m.group(2), text)
+    if (
+        '"KO_PIN"' in text
+    ):  # patch the value, leave everything else (bindings, routes) untouched
+        text = re.sub(
+            r'("KO_PIN"\s*:\s*")[^"]*(")',
+            lambda m: m.group(1) + value + m.group(2),
+            text,
+        )
         path.write_text(text)
     else:  # no gate yet → rebuild from the template to add vars + flip run_worker_first on
         name = config_name(folder) or _default_name(folder)
-        text = json.dumps(build_hono_config(name, publish_domain(), value), indent=2) + "\n"
+        text = (
+            json.dumps(build_hono_config(name, publish_domain(), value), indent=2)
+            + "\n"
+        )
         path.write_text(text)
     return value
 
@@ -339,7 +433,7 @@ def _registry_file() -> Path:
 def registry() -> dict:
     try:
         return json.loads(_registry_file().read_text())
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return {}
 
 
@@ -358,7 +452,9 @@ def _now() -> str:
 def published() -> list[Published]:
     """Everything we've published, newest first."""
     rows = [
-        Published(name=v["name"], url=v["url"], folder=k, updated_at=v.get("updated_at", ""))
+        Published(
+            name=v["name"], url=v["url"], folder=k, updated_at=v.get("updated_at", "")
+        )
         for k, v in registry().items()
     ]
     return sorted(rows, key=lambda p: p.updated_at, reverse=True)
@@ -384,7 +480,7 @@ def _parse_url(stdout: str, out_file: Path) -> str:
             for key in ("url", "deploy_url", "deployment_url"):
                 if isinstance(obj.get(key), str) and obj[key].startswith("http"):
                     return obj[key]
-    except (OSError, ValueError):
+    except OSError, ValueError:
         pass
     m = re.search(r"https://\S+\.workers\.dev\S*", stdout)
     return m.group(0) if m else ""
@@ -401,13 +497,19 @@ def deploy(folder: Path, name: str | None = None, force: bool = False) -> str:
     folder = folder.resolve()
     if not folder.is_dir():
         raise RuntimeError(f"not a folder: {folder}")
-    is_worker = _config_value(folder, "main") is not None  # pin/Hono sites serve via a Worker
+    is_worker = (
+        _config_value(folder, "main") is not None
+    )  # pin/Hono sites serve via a Worker
     if not is_worker and not any(folder.glob("*.html")):
-        raise RuntimeError(f"{folder} has no .html — run `ko publish new {folder}` first?")
+        raise RuntimeError(
+            f"{folder} has no .html — run `ko publish new {folder}` first?"
+        )
 
     intended = resolve_name(folder, name)
     prev = registry().get(str(folder))
-    ours = bool(prev) and prev.get("name") == intended  # this folder published it before
+    ours = (
+        bool(prev) and prev.get("name") == intended
+    )  # this folder published it before
     if not ours and not force and worker_exists(intended) is True:
         raise RuntimeError(
             f"'{intended}' is already a Worker on your account, and this folder hasn't "
@@ -417,7 +519,9 @@ def deploy(folder: Path, name: str | None = None, force: bool = False) -> str:
 
     # route to the right config writer — a static rewrite over a Hono folder would drop
     # `main`/`./public`/`KO_PIN` and expose the repo root (esp. on a `--name` rename).
-    name = ensure_hono_config(folder, name) if is_worker else ensure_config(folder, name)
+    name = (
+        ensure_hono_config(folder, name) if is_worker else ensure_config(folder, name)
+    )
     _npm_install(folder)  # worker sites (Hono) need deps bundled before deploy
     with tempfile.TemporaryDirectory() as td:
         out_file = Path(td) / "out.ndjson"
@@ -459,7 +563,9 @@ def preview(folder: Path, port: int | None = None) -> int:
     if not folder.is_dir():
         raise RuntimeError(f"not a folder: {folder}")
     if not (folder / WRANGLER_CONFIG).exists():
-        raise RuntimeError(f"{folder} has no {WRANGLER_CONFIG} — run `ko publish new {folder}` first?")
+        raise RuntimeError(
+            f"{folder} has no {WRANGLER_CONFIG} — run `ko publish new {folder}` first?"
+        )
     _npm_install(folder)  # worker sites (Hono) need deps before wrangler can bundle
     cmd = [*_wrangler(), "dev"]
     if port:
