@@ -191,6 +191,15 @@ def test_preserved_fields_carries_omitted_and_overrides_subject():
     assert gmail._preserved_fields(msg, "New")["subject"] == "New"  # override wins
 
 
+def test_merge_cc_dedupes_against_to_and_cc():
+    assert gmail._merge_cc("a@x.com", "b@x.com", "c@x.com") == "b@x.com, c@x.com"
+    # already in To or Cc (case-insensitive) -> skipped
+    assert gmail._merge_cc("a@x.com", "b@x.com", "A@X.com, b@x.com") == "b@x.com"
+    # named form kept; empty extra is a no-op
+    assert gmail._merge_cc("", "", "Nir <n@x.com>") == "Nir <n@x.com>"
+    assert gmail._merge_cc("a@x.com", "b@x.com", "") == "b@x.com"
+
+
 def test_update_draft_refuses_to_drop_attachments(monkeypatch):
     """drafts.update replaces the whole MIME message — a draft holding attachments (e.g. added
     in Gmail's UI) must not be silently stripped by a body polish. force=True proceeds."""

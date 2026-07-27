@@ -426,6 +426,20 @@ def create_draft(to: str, subject: str, body: str, *, cc: str = "", html_body: s
     return d["id"]
 
 
+def _merge_cc(to: str, cc: str, extra: str) -> str:
+    """Append extra cc addresses to `cc`, skipping any already in To or Cc (by email,
+    case-insensitive). Returns the merged cc string."""
+    if not extra:
+        return cc
+    seen = {a.lower() for _, a in getaddresses([to, cc]) if a}
+    merged = [cc] if cc else []
+    for name, addr in getaddresses([extra]):
+        if addr and addr.lower() not in seen:
+            merged.append(formataddr((name, addr)) if name else addr)
+            seen.add(addr.lower())
+    return ", ".join(merged)
+
+
 def create_reply_draft(
     msg_id: str,
     body: str,
@@ -433,8 +447,10 @@ def create_reply_draft(
     html_body: str | None = None,
     reply_all: bool = False,
     subject_override: str | None = None,
+    extra_cc: str = "",
 ) -> str:
-    """Create a reply draft threaded onto message `msg_id`; returns its draft id."""
+    """Create a reply draft threaded onto message `msg_id`; returns its draft id.
+    `extra_cc` adds cc addresses on top of whatever reply/reply-all derived (deduped)."""
     svc = _compose_service()
     try:
         orig = svc.users().messages().get(userId="me", id=msg_id, format="full").execute(num_retries=3)
@@ -449,7 +465,7 @@ def create_reply_draft(
     )
     raw = _build_raw(
         to=r.to,
-        cc=r.cc,
+        cc=_merge_cc(r.to, r.cc, extra_cc),
         subject=r.subject,
         body=body,
         html_body=html_body,
@@ -472,28 +488,29 @@ class DraftInfo:
     id: str
     to: str
     subject: str
+    cc: str = ""
 
 
 def list_drafts(n: int = 10) -> list[DraftInfo]:
-    """Recent drafts (id, to, subject). Keyed on draft id — stable across updates."""
+    """Recent drafts (id, to, subject, cc). Keyed on draft id — stable across updates."""
     svc = _compose_service()
     try:
         resp = svc.users().drafts().list(userId="me", maxResults=n).execute(num_retries=3)
         out = []
         for ref in resp.get("drafts", []):
+            # drafts.get takes only `format` — no metadataHeaders filter (that's messages.get)
             d = (
                 svc.users()
                 .drafts()
-                .get(
-                    userId="me",
-                    id=ref["id"],
-                    format="metadata",
-                    metadataHeaders=["To", "Subject"],
-                )
+                .get(userId="me", id=ref["id"], format="metadata")
                 .execute(num_retries=3)
             )
             h = _headers(d.get("message", {}))
-            out.append(DraftInfo(d["id"], h.get("to", ""), h.get("subject", "(no subject)")))
+            out.append(
+                DraftInfo(
+                    d["id"], h.get("to", ""), h.get("subject", "(no subject)"), h.get("cc", "")
+                )
+            )
         return out
     except HttpError as e:
         _handle(e, "list drafts")
@@ -551,9 +568,12 @@ def update_draft(
     *,
     html_body: str | None = None,
     subject_override: str | None = None,
+    to_override: str | None = None,
+    cc_override: str | None = None,
     force: bool = False,
 ) -> str:
-    """Replace a draft's body (and optionally subject). Re-fetches the draft first and preserves
+    """Replace a draft's body (and optionally subject/to/cc — the repair case: fix a recipient
+    list without retyping the rest). Re-fetches the draft first and preserves
     to/cc/subject/threadId for anything not overridden. Draft id is stable; returns it.
 
     The API replaces the WHOLE MIME message: attachments (and any Bcc) added to the draft —
@@ -572,6 +592,10 @@ def update_draft(
             "(the API replaces the whole message) — pass --force to update anyway"
         )
     f = _preserved_fields(existing.get("message", {}), subject_override)
+    if to_override is not None:
+        f["to"] = to_override
+    if cc_override is not None:
+        f["cc"] = cc_override
     raw = _build_raw(
         to=f["to"],
         cc=f["cc"],

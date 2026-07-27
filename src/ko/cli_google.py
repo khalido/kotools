@@ -1355,6 +1355,9 @@ def gmail_draft_reply(
     body_file: Path = typer.Option(None, "--body-file", help="read the plain-text reply from a file"),
     md: Path = typer.Option(None, "--md", help="read a Markdown reply → multipart/alternative"),
     all_: bool = typer.Option(False, "--all", help="reply-all (cc the original To+Cc, minus you)"),
+    cc: str = typer.Option(
+        None, "--cc", help="extra cc recipient(s), comma-separated — added on top of --all's list"
+    ),
     subject: str = typer.Option(
         None, "--subject", "-s", help="override the 'Re: …' subject (a different subject drops threading)"
     ),
@@ -1364,7 +1367,12 @@ def gmail_draft_reply(
     text, html_body = _resolve_body(body, body_file, md)
     with _google_errors():
         draft_id = gmail_mod.create_reply_draft(
-            msg_id, text, html_body=html_body, reply_all=all_, subject_override=subject
+            msg_id,
+            text,
+            html_body=html_body,
+            reply_all=all_,
+            subject_override=subject,
+            extra_cc=cc or "",
         )
     typer.echo(draft_id)
     typer.echo(f"reply draft created — `ko gmail draft send {draft_id}` to send", err=True)
@@ -1375,7 +1383,7 @@ def gmail_draft_list(
     n: int = typer.Option(10, "-n", "--max", help="how many (default 10)"),
     as_json: bool = typer.Option(False, "--json", help="emit JSON"),
 ) -> None:
-    """List drafts (TSV: draft id, to, subject)."""
+    """List drafts (TSV: draft id, to, subject, cc)."""
     with _google_errors(as_json):
         drafts = gmail_mod.list_drafts(n=n)
     if not drafts:
@@ -1384,7 +1392,7 @@ def gmail_draft_list(
         typer.echo(json.dumps([asdict(d) for d in drafts]))
         return
     for d in drafts:
-        typer.echo(f"{d.id}\t{_tsv_cell(d.to)}\t{_tsv_cell(d.subject)}")
+        typer.echo(f"{d.id}\t{_tsv_cell(d.to)}\t{_tsv_cell(d.subject)}\t{_tsv_cell(d.cc)}")
 
 
 @gmail_draft_app.command("show")
@@ -1410,6 +1418,10 @@ def gmail_draft_update(
     body_file: Path = typer.Option(None, "--body-file", help="read the new plain-text body from a file"),
     md: Path = typer.Option(None, "--md", help="read new Markdown body → multipart/alternative"),
     subject: str = typer.Option(None, "--subject", "-s", help="new subject (else keep the existing)"),
+    to: str = typer.Option(None, "--to", help="new To recipient(s) (else keep the existing)"),
+    cc: str = typer.Option(
+        None, "--cc", help="new Cc list, comma-separated — replaces the existing ('' clears it)"
+    ),
     force: bool = typer.Option(
         False, "--force", help="update even if the draft has attachments (they WILL be dropped)"
     ),
@@ -1420,7 +1432,13 @@ def gmail_draft_update(
     text, html_body = _resolve_body(body, body_file, md)
     with _google_errors():
         gmail_mod.update_draft(
-            draft_id, text, html_body=html_body, subject_override=subject, force=force
+            draft_id,
+            text,
+            html_body=html_body,
+            subject_override=subject,
+            to_override=to,
+            cc_override=cc,
+            force=force,
         )
     typer.echo(f"updated draft {draft_id}", err=True)
 
