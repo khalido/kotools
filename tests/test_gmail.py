@@ -192,6 +192,32 @@ def test_preserved_fields_carries_omitted_and_overrides_subject():
     assert gmail._preserved_fields(msg, "New")["subject"] == "New"  # override wins
 
 
+def test_build_raw_with_attachments(tmp_path):
+    """Attachments make the message multipart/mixed; filename and content-type survive."""
+    import base64
+    from email import message_from_bytes
+
+    pdf = tmp_path / "invoice.pdf"
+    pdf.write_bytes(b"%PDF-1.4 fake invoice")
+    raw = gmail._build_raw(
+        to="a@x.com", subject="inv", body="see attached", html_body="<p>see attached</p>",
+        attachments=[pdf],
+    )
+    msg = message_from_bytes(base64.urlsafe_b64decode(raw))
+    assert msg.get_content_type() == "multipart/mixed"
+    parts = list(msg.walk())
+    atts = [p for p in parts if p.get_filename()]
+    assert [p.get_filename() for p in atts] == ["invoice.pdf"]
+    assert atts[0].get_content_type() == "application/pdf"
+    assert atts[0].get_payload(decode=True) == b"%PDF-1.4 fake invoice"
+    # body alternative intact: plain part first, then html
+    subtypes = [p.get_content_type() for p in parts if p.get_content_type().startswith("text/")]
+    assert subtypes == ["text/plain", "text/html"]
+
+    with pytest.raises(gmail.GmailError, match="can't read attachment"):
+        gmail._build_raw(to="a@x.com", subject="s", body="b", attachments=[tmp_path / "nope.pdf"])
+
+
 def test_merge_cc_dedupes_against_to_and_cc():
     assert gmail._merge_cc("a@x.com", "b@x.com", "c@x.com") == "b@x.com, c@x.com"
     # already in To or Cc (case-insensitive) -> skipped

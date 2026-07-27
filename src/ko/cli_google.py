@@ -1339,11 +1339,17 @@ def gmail_draft_new(
         None, "--md", help="read a Markdown file → multipart/alternative (plain + html)"
     ),
     cc: str = typer.Option(None, "--cc", help="cc recipient(s), comma-separated"),
+    attach: list[Path] = typer.Option(
+        None, "--attach", "-a", exists=True, dir_okay=False,
+        help="attach a file (repeatable); Gmail caps a message ~25 MB",
+    ),
 ) -> None:
     """Create a new draft. Prints the draft id (stable across updates). Nothing is sent."""
     text, html_body = _resolve_body(body, body_file, md)
     with _google_errors():
-        draft_id = gmail_mod.create_draft(to, subject, text, cc=cc or "", html_body=html_body)
+        draft_id = gmail_mod.create_draft(
+            to, subject, text, cc=cc or "", html_body=html_body, attachments=attach or None
+        )
     typer.echo(draft_id)
     typer.echo(f"draft created — review/send in Gmail, or `ko gmail draft send {draft_id}`", err=True)
 
@@ -1357,6 +1363,10 @@ def gmail_draft_reply(
     all_: bool = typer.Option(False, "--all", help="reply-all (cc the original To+Cc, minus you)"),
     cc: str = typer.Option(
         None, "--cc", help="extra cc recipient(s), comma-separated — added on top of --all's list"
+    ),
+    attach: list[Path] = typer.Option(
+        None, "--attach", "-a", exists=True, dir_okay=False,
+        help="attach a file (repeatable); Gmail caps a message ~25 MB",
     ),
     subject: str = typer.Option(
         None, "--subject", "-s", help="override the 'Re: …' subject (a different subject drops threading)"
@@ -1373,6 +1383,7 @@ def gmail_draft_reply(
             reply_all=all_,
             subject_override=subject,
             extra_cc=cc or "",
+            attachments=attach or None,
         )
     typer.echo(draft_id)
     typer.echo(f"reply draft created — `ko gmail draft send {draft_id}` to send", err=True)

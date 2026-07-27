@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import base64
 import html
+import mimetypes
 import re
 from dataclasses import dataclass
 from email.message import EmailMessage
@@ -338,12 +339,14 @@ def _build_raw(
     bcc: str = "",
     in_reply_to: str = "",
     references: str = "",
+    attachments: list[Path] | None = None,
 ) -> str:
     """A base64url raw MIME message for drafts.create/update.
 
     Plain `body` -> a simple text/plain message. With `html_body` -> multipart/alternative,
     the plain part FIRST then html, both quoted-printable / utf-8. Threading headers
-    (In-Reply-To / References) are set when `in_reply_to` is given."""
+    (In-Reply-To / References) are set when `in_reply_to` is given. `attachments` are
+    read from disk and added (multipart/mixed) — Gmail caps a message around 25 MB."""
     for hname, val in (
         ("To", to),
         ("Cc", cc),
@@ -366,6 +369,14 @@ def _build_raw(
     msg.set_content(body, subtype="plain", cte="quoted-printable")
     if html_body is not None:
         msg.add_alternative(html_body, subtype="html", cte="quoted-printable")
+    for path in attachments or []:
+        try:
+            data = path.read_bytes()
+        except OSError as e:
+            raise GmailError(f"can't read attachment {path}: {e}") from e
+        ctype, _ = mimetypes.guess_type(path.name)
+        maintype, _, subtype = (ctype or "application/octet-stream").partition("/")
+        msg.add_attachment(data, maintype=maintype, subtype=subtype, filename=path.name)
     return base64.urlsafe_b64encode(msg.as_bytes()).decode()
 
 
@@ -416,9 +427,19 @@ def derive_reply(
     return ReplyDraft(to, cc, subject, thread_id, msg_id, references)
 
 
-def create_draft(to: str, subject: str, body: str, *, cc: str = "", html_body: str | None = None) -> str:
+def create_draft(
+    to: str,
+    subject: str,
+    body: str,
+    *,
+    cc: str = "",
+    html_body: str | None = None,
+    attachments: list[Path] | None = None,
+) -> str:
     """Create a new draft; returns its (stable) draft id."""
-    raw = _build_raw(to=to, subject=subject, body=body, cc=cc, html_body=html_body)
+    raw = _build_raw(
+        to=to, subject=subject, body=body, cc=cc, html_body=html_body, attachments=attachments
+    )
     svc = _compose_service()
     try:
         d = svc.users().drafts().create(userId="me", body={"message": {"raw": raw}}).execute(num_retries=3)
@@ -450,6 +471,7 @@ def create_reply_draft(
     reply_all: bool = False,
     subject_override: str | None = None,
     extra_cc: str = "",
+    attachments: list[Path] | None = None,
 ) -> str:
     """Create a reply draft threaded onto message `msg_id`; returns its draft id.
     `extra_cc` adds cc addresses on top of whatever reply/reply-all derived (deduped)."""
@@ -473,6 +495,7 @@ def create_reply_draft(
         html_body=html_body,
         in_reply_to=r.in_reply_to,
         references=r.references,
+        attachments=attachments,
     )
     message: dict = {"raw": raw}
     if r.thread_id:
