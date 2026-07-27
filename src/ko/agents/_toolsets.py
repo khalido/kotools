@@ -81,8 +81,10 @@ def exa_search(
 
 @web.tool_plain
 def exa_get(urls: list[str]) -> dict[str, str]:
-    """Fetch full markdown content for known URLs (via Exa). Use when a result needs deeper reading."""
-    return _try("exa_get", exa_mod.get_contents, urls)
+    """Fetch full markdown content for known URLs (via Exa). Use when a result needs deeper
+    reading. A URL that failed comes back with empty text."""
+    result = _try("exa_get", exa_mod.get_contents, urls)
+    return result.texts if isinstance(result, exa_mod.Contents) else result
 
 
 @web.tool_plain
