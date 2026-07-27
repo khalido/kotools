@@ -26,7 +26,7 @@ specialist agents on Sprites, supervised by a smart control agent.
   <1s, Firecracker microVM isolation, public URL per box. One Sprite per agent.
 - **No permissions inside the box** (`--dangerously-skip-permissions`). Safe because the
   Sprite boundary + egress allowlist is the real containment, not the agent's prompt gate.
-- **No Telegram.** Control plane = direct HTTP / `exec` via the Sprite API. State lives on
+- **No Telegram for the control plane** (the Telegram *front-end* in ideas.md is a separate, human-facing layer). Control plane = direct HTTP / `exec` via the Sprite API. State lives on
   the box (git history + worklog + `status.json`); the controller reads it on each poke.
 - **No Python SDK for Sprites** — wrap the REST API in `ko` (thin httpx client).
 

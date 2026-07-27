@@ -8,6 +8,11 @@ Built for agents + the owner to spin up a doc/site/app and get a live URL fast.
 locally (wrangler dev, real http) → `ko publish <dir>` → live URL. Re-publishing the same folder
 overwrites the **same URL**. Preview over `file://` won't work (ES modules + `fetch()` are blocked).
 
+Housekeeping: `ko publish list` = everything published (TSV: name, url, folder, last published);
+`ko publish rm <name>` = delete the Worker from Cloudflare and forget it locally. Publishing an
+md/hono site also auto-generates an agent-facing `llms.txt` index (plus a `_headers` charset file)
+from the pages.
+
 ## Pathways (pick one at scaffold time)
 
 | Command | What you get | Use for |
@@ -60,7 +65,14 @@ diagram DSL). Raw HTML/SVG renders inline (`html: true`), and these are loaded:
 
 ## Not yet (ask Ko to extend the tool, don't work around it)
 
-- Private pages via Cloudflare Access (email OTP) — vs the simple shared-PIN `--pin` above.
+- Private pages: Cloudflare Access (email OTP) — vs the simple shared-PIN `--pin` above. Third
+  option scoped 2026-07-16: **better-auth Google SSO on `--hono` sites** — TS-native, mounts on
+  Hono in two pieces (`app.on(["POST","GET"], "/api/auth/*", c => auth.handler(c.req.raw))` +
+  a session middleware that sets `c.get("user")`), Google via `socialProviders.google`
+  (client id/secret; callback `<site>/api/auth/callback/google`), sqlite adapter should ride D1.
+  Real login vs Access's per-page OTP friction; costs a Google OAuth client + a D1 binding per
+  site, and email-level allow-lists need a hook (`hd` domain param only covers Workspace).
+  Docs: <https://better-auth.com/llms.txt>.
 - A kotools cloud backend (Worker + D1 + R2) for shared state.
 - AI on a published site (a simple `ask(prompt)` helper; Workers AI or OpenRouter) — see [`publish-ai.md`](publish-ai.md).
 

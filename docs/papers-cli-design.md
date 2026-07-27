@@ -49,10 +49,10 @@ chain covers more than expected first).
 
 ## Also: DOI routing in fetch.py (~15 lines)
 
-`ko fetch https://doi.org/10.1002/jemt.20118` currently lands trafilatura on a Wiley
-landing page and returns nothing. Add DOI detection
-(`(?:doi\.org/|doi:|^)(10\.\d{4,}/\S+)`) before existing routing → resolve
-`open_access.oa_url` via OpenAlex → try that first → fall through to the current path.
+SHIPPED (`fetch.py`). `ko fetch https://doi.org/...` used to land trafilatura on a publisher
+landing page and return nothing. Now DOI detection
+(`(?:doi\.org/|doi:|^)(10\.\d{4,}/\S+)`) runs before the existing routing → resolves
+`open_access.oa_url` via OpenAlex → tries that first → falls through to the old path.
 
 ## Key endpoints/fields (verified)
 
@@ -60,7 +60,7 @@ OpenAlex (`api.openalex.org`, add `&mailto=`):
 - `GET /works/doi:{doi}` — `doi, title, publication_year, cited_by_count,
   open_access.{is_oa,oa_status,oa_url}, primary_location.source.display_name,
   ids.openalex, referenced_works, abstract_inverted_index`
-- `GET /works?search={q}&filter=type:article&sort=relevance_score:desc&per_page={n}&select=…`
+- `GET /works?search={q}&filter=type:article|preprint&sort=relevance_score:desc&per_page={n}&select=…` (preprints included — arXiv/bioRxiv would vanish under bare `type:article`)
 - `GET /works?filter=cites:{openalex_id}&sort=cited_by_count:desc` (verified: 743 citers resolved)
 - Batch: `GET /works?filter=openalex:W1|W2|…` (≤50 per call)
 - Rate: headers show 1000/window ≈ 10k/day free.

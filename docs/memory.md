@@ -17,14 +17,15 @@ the cheap one first, defer everything else in this doc.
   knowledge — state dir; sessions remain the source of truth) + one shared
   `~/.config/ko/memory.md` (user preferences / standing context — dotfile-synced; this IS
   ideas.md's `context.md`, upgraded to agent-writable). Shared injects into every agent first,
-  then the agent's own. tv agent: skip (stateless lookups).
+  then the agent's own. tv agent: also gets memory (added 2026-07, after shipping — taste notes recur).
 - **Injection** = the exact `@agent.instructions` mechanism repo.py already uses for
   refs/CLAUDE.md: head-cap 200 lines + truncation pointer (thinker), plus deepagents' **pin
   marker** (`<!-- ko:pin-end -->`): foundational notes above the pin always survive; the tail
   below is recency-truncated. Prefix-cache-friendly (same string per step).
-- **Write tools** (new `agents/_memory.py`, ~50 lines + 3 tools): `read_memory` (full file),
-  `write_memory` (append-only — safer than overwrite), `edit_memory` (thinker's
-  uniqueness-guarded find-and-replace: old_string must occur exactly once, ModelRetry otherwise).
+- **Write tools** (`agents/_memory.py`, 4 tools as shipped): `read_note`, `append_memory`
+  (append-only — safer than overwrite), `write_note` (anchor memory.md protected from overwrite),
+  `edit_note` (thinker's uniqueness-guarded find-and-replace: old_string must occur exactly once,
+  ModelRetry otherwise).
   Scoped to the agent's own memory dir — NOT the general files toolset (which stays read-only by
   construction).
 - **Curation lives in instructions, not code** (thinker's discipline, observed working over 8

@@ -4,10 +4,9 @@ Why we use it, what we verified in its source, what bit us. Official docs are ca
 
 ## Version status
 
-- **On v2.0.0b7** (pinned exact, 2026-06-12). v2 is harness-first: `capabilities=[...]` is the core primitive — matches ko's skills design, which is why we jumped before building anything. Stable v2 "two weeks away" since 2026-05-20, so any day; **un-pin when it lands**.
-- `[tool.uv] prerelease = "allow"` required (the `pydantic-ai-slim` sub-package is also beta).
-- Source mirrors: `~/code/refs/pydantic-ai` (main = v1 line) and `~/code/refs/pydantic-ai-v2` (v2-main worktree). While on beta, **verify against v2-main source before relying on API details** — preview docs and main drift.
-- v1→v2 gotchas: `openai:` model strings now hit the Responses API (`openai-chat:` = old Chat Completions); bare install ships fewer provider extras (anthropic + openrouter still included — verified).
+- **On stable v2** — `pydantic-ai-slim[google,openrouter,mcp]>=2.4,<3` in pyproject (2.11 as of 2026-07-16). v2 is harness-first: `capabilities=[...]` is the core primitive — matches ko's skills design, which is why we jumped before building anything. (History: we rode the v2 beta pinned exact from 2026-06-12 until stable landed.)
+- Source mirrors: `~/code/refs/pydantic-ai` (main = v1 line) and `~/code/refs/pydantic-ai-v2` (v2-main worktree).
+- v1→v2 gotchas: `openai:` model strings now hit the Responses API (`openai-chat:` = old Chat Completions); bare install ships fewer provider extras — we declare the `google`, `openrouter`, `mcp` extras explicitly.
 
 ## Why pydantic-ai (decided 2026-04; alternatives considered)
 
