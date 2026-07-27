@@ -1341,7 +1341,7 @@ def gmail_draft_new(
     cc: str = typer.Option(None, "--cc", help="cc recipient(s), comma-separated"),
     attach: list[Path] = typer.Option(
         None, "--attach", "-a", exists=True, dir_okay=False,
-        help="attach a file (repeatable); Gmail caps a message ~25 MB",
+        help="attach a file (repeatable); keep the total under ~10 MB",
     ),
 ) -> None:
     """Create a new draft. Prints the draft id (stable across updates). Nothing is sent."""
@@ -1366,7 +1366,7 @@ def gmail_draft_reply(
     ),
     attach: list[Path] = typer.Option(
         None, "--attach", "-a", exists=True, dir_okay=False,
-        help="attach a file (repeatable); Gmail caps a message ~25 MB",
+        help="attach a file (repeatable); keep the total under ~10 MB",
     ),
     subject: str = typer.Option(
         None, "--subject", "-s", help="override the 'Re: …' subject (a different subject drops threading)"
