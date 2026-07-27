@@ -190,7 +190,9 @@ def test_http_error_msg_extracts_clean_reason():
     """_http_error_msg should return '[<status>] <reason>' without the URL blob."""
     import json
     from unittest.mock import MagicMock
+
     from googleapiclient.errors import HttpError
+
     from ko.cli_google import _http_error_msg
 
     content = json.dumps({"error": {"message": "Invalid id value", "code": 400}}).encode()

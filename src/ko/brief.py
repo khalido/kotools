@@ -28,6 +28,7 @@ def _try(label: str, fn, *args, **kwargs) -> tuple[str, str]:
 def _today_events() -> str:
     """Today's calendar events as a plain text list."""
     from datetime import datetime, timedelta
+
     from ko import gcal
 
     tz = gcal.tz()
@@ -43,7 +44,7 @@ def _today_events() -> str:
         if "T" in s:
             # timed event — show HH:MM
             try:
-                dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+                dt = datetime.fromisoformat(s)
                 local = dt.astimezone(tz)
                 time_str = local.strftime("%H:%M")
             except (ValueError, OSError):

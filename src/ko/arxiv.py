@@ -11,11 +11,10 @@ import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from datetime import datetime, timedelta, timezone
 
 import arxiv
-
 
 DEFAULT_MAX_RESULTS = 20
 DEFAULT_RECENT_SINCE_MONTHS = 18  # date window applied only in --recent (newest-first) mode
@@ -56,7 +55,7 @@ def search(
     if recent and since_months is None:
         since_months = DEFAULT_RECENT_SINCE_MONTHS
     cutoff = (
-        datetime.now(timezone.utc) - timedelta(days=30 * since_months)
+        datetime.now(UTC) - timedelta(days=30 * since_months)
         if since_months
         else None
     )
@@ -114,6 +113,7 @@ def fetch(arxiv_id: str) -> str:
         [_arxiv2md_bin(), arxiv_id, "--remove-refs", "--frontmatter", "-o", "-"],
         capture_output=True,
         text=True,
+        check=False,
     )
     if result.returncode != 0:  # surface arxiv2md's own message, not a bare CalledProcessError
         msg = (result.stderr or result.stdout or "").strip()

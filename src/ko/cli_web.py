@@ -421,8 +421,8 @@ def papers_get(
         for url in w.full_text_urls:
             try:
                 r = fetch_mod.fetch(url, save=out is None)
-            except Exception:
-                continue  # dead/blocked → next candidate, else fall through to the card
+            except Exception:  # noqa: S112 — dead/blocked → try the next candidate
+                continue
             note = f"oa copy: {url}" + (f"; {r.note}" if r.note else "")
             typer.echo(f"[{note}]", err=True)
             if out is None:

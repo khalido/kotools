@@ -215,7 +215,7 @@ def test_preview_runs_wrangler_dev(monkeypatch, tmp_path):
     calls = {}
     monkeypatch.setattr(publish, "_wrangler", lambda: ["wrangler"])
 
-    def fake_run(cmd, cwd, env):
+    def fake_run(cmd, cwd, env, check=False):
         calls["cmd"], calls["cwd"] = cmd, cwd
         return type("R", (), {"returncode": 0})()
 
@@ -407,13 +407,14 @@ def test_md_shell_js_is_valid(monkeypatch, tmp_path):
     node = _shutil.which("node")
     if not node:
         return  # escape assertion above still guards the known failure mode
-    m = _re.search(r'<script type="module">(.*?)</script>', shell, _re.S)
+    m = _re.search(r'<script type="module">(.*?)</script>', shell, _re.DOTALL)
     assert m, "md shell has no module script"
     proc = _subprocess.run(
         [node, "--check", "--input-type=module", "-"],
         input=m.group(1),
         capture_output=True,
         text=True,
+        check=False,
     )
     assert proc.returncode == 0, f"md shell JS is broken:\n{proc.stderr}"
 

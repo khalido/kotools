@@ -16,10 +16,9 @@ from __future__ import annotations
 import html
 import re
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import httpx
-
 
 ALGOLIA = "https://hn.algolia.com/api/v1"
 DEFAULT_TOP_N = 10
@@ -70,13 +69,13 @@ def _story(hit: dict) -> Story:
         url=hit.get("url") or None,
         points=hit.get("points") or 0,
         num_comments=hit.get("num_comments") or 0,
-        created_at=datetime.fromtimestamp(hit["created_at_i"], tz=timezone.utc),
+        created_at=datetime.fromtimestamp(hit["created_at_i"], tz=UTC),
     )
 
 
 def top(n: int = DEFAULT_TOP_N, days: int = 1) -> list[Story]:
     """Top stories by points over the last `days` days. `top(10)` ≈ hckrnews top-10."""
-    cutoff = int((datetime.now(timezone.utc) - timedelta(days=days)).timestamp())
+    cutoff = int((datetime.now(UTC) - timedelta(days=days)).timestamp())
     data = _get(
         "search",  # no query + popularity ranking ≈ points; we re-sort to guarantee it
         {
@@ -110,7 +109,7 @@ def search(
     """Search HN stories. Relevance order by default, last 12 months. `since_months=0` = all time."""
     filters = []
     if since_months:
-        cutoff = datetime.now(timezone.utc) - timedelta(days=30 * since_months)
+        cutoff = datetime.now(UTC) - timedelta(days=30 * since_months)
         filters.append(f"created_at_i>{int(cutoff.timestamp())}")
     if min_comments:
         filters.append(f"num_comments>={min_comments}")
@@ -174,7 +173,7 @@ def item(
         url=data.get("url") or None,
         points=data.get("points") or 0,
         num_comments=0,  # set below to the full-tree total (not the capped count)
-        created_at=datetime.fromtimestamp(data["created_at_i"], tz=timezone.utc),
+        created_at=datetime.fromtimestamp(data["created_at_i"], tz=UTC),
     )
     children = data.get("children") or []
     comments: list[Comment] = []

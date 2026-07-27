@@ -8,7 +8,6 @@ it remembers what it already suggested and how Ko reacted.
 
 from __future__ import annotations
 
-
 from pydantic_ai import Agent
 
 from ko import config, llm

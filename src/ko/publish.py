@@ -29,7 +29,7 @@ import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
@@ -134,6 +134,7 @@ def _npm_install(folder: Path) -> None:
             capture_output=True,
             text=True,
             timeout=300,
+            check=False,
         )
     except subprocess.TimeoutExpired:
         raise RuntimeError("npm install timed out after 5 min") from None
@@ -625,7 +626,7 @@ def _record(folder: Path, name: str, url: str) -> None:
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 def published() -> list[Published]:
@@ -713,6 +714,7 @@ def deploy(folder: Path, name: str | None = None, force: bool = False) -> str:
                 text=True,
                 env={**_cf_env(), "WRANGLER_OUTPUT_FILE_PATH": str(out_file)},
                 timeout=180,
+                check=False,
             )
         except subprocess.TimeoutExpired:
             raise RuntimeError("wrangler deploy timed out after 3 min") from None
@@ -750,7 +752,7 @@ def preview(folder: Path, port: int | None = None) -> int:
     cmd = [*_wrangler(), "dev"]
     if port:
         cmd += ["--port", str(port)]
-    return subprocess.run(cmd, cwd=str(folder), env=_cf_env()).returncode
+    return subprocess.run(cmd, cwd=str(folder), env=_cf_env(), check=False).returncode
 
 
 # --- scaffold ---

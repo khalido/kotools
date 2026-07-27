@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import arxiv
@@ -18,7 +18,7 @@ def _fake(entry_id: str, days_old: int):
         entry_id=f"http://arxiv.org/abs/{entry_id}",
         title="Title",
         authors=[SimpleNamespace(name="A. Author")],
-        published=datetime.now(timezone.utc) - timedelta(days=days_old),
+        published=datetime.now(UTC) - timedelta(days=days_old),
         summary="Abstract",
         pdf_url=f"http://arxiv.org/pdf/{entry_id}",
     )
@@ -65,7 +65,7 @@ def test_short_id_extracts_from_entry_url():
         id="http://arxiv.org/abs/2604.02460v1",
         title="x",
         authors=[],
-        published=datetime.now(timezone.utc),
+        published=datetime.now(UTC),
         summary="",
         pdf_url="",
     )

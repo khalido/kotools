@@ -37,7 +37,7 @@ def preamble() -> str:
     try:
         today = datetime.now(ZoneInfo(tz_name)).strftime("%A, %-d %B %Y")
     except Exception:
-        today = datetime.now().strftime("%A, %d %B %Y")
+        today = datetime.now().strftime("%A, %d %B %Y")  # noqa: DTZ005 — local-time fallback
     return (
         f"Today is {today}. You are a ko agent — one of the AI agents in Ko's personal "
         "command-line toolkit, run from a terminal by Ko (or by another agent over bash). "

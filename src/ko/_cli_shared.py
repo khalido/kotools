@@ -76,6 +76,6 @@ def _fmt_day(iso: str | None) -> str:
     from datetime import datetime
 
     try:
-        return datetime.fromisoformat(iso.replace("Z", "+00:00")).strftime("%d %b %Y")
+        return datetime.fromisoformat(iso).strftime("%d %b %Y")
     except ValueError:
         return iso[:10]  # fall back to the date portion

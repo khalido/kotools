@@ -56,10 +56,17 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.ruff.lint]
-# Pin the pre-0.16 default rule set explicitly, so a ruff upgrade can't move the
-# goalposts (0.16's broader defaults flag deliberate patterns here: the resilient-tool
-# blind excepts, typer's B008 idiom). Broadening is a decision, not an upgrade side effect.
-select = ["E4", "E7", "E9", "F"]
+# On ruff's (0.16+) defaults, minus the rules that fight deliberate patterns here:
+#  B008  — typer.Option/Argument in defaults IS the Typer idiom
+#  BLE001 — blind `except Exception` is the resilient-agent-tool design (one flaky
+#           source degrades to a note, never aborts a run)
+#  S110  — try/except/pass in best-effort paths (logging, telemetry) that must
+#          never break a command
+ignore = ["B008", "BLE001", "S110"]
+
+[tool.ruff.lint.per-file-ignores]
+# Test fakes use bare class attributes (RUF012) and local-time asserts (DTZ005) freely.
+"tests/**" = ["RUF012", "DTZ005"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ko"]

@@ -11,7 +11,7 @@ wins at those. This is "what's on" and "put this on my calendar".
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from googleapiclient.errors import HttpError
@@ -117,9 +117,9 @@ def _start_key(ev: CalEvent) -> datetime:
     try:
         if len(s) == 10:  # all-day "YYYY-MM-DD"
             return datetime.fromisoformat(s).replace(tzinfo=tz())
-        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+        return datetime.fromisoformat(s)
     except ValueError:
-        return datetime.max.replace(tzinfo=timezone.utc)
+        return datetime.max.replace(tzinfo=UTC)
 
 
 def _event(raw: dict, cal_id: str, cal_name: str) -> CalEvent:

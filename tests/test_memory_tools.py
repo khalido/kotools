@@ -194,6 +194,7 @@ def test_ai_agent_has_all_toolsets(dirs) -> None:
 
 def test_preamble_has_date_framing_and_brevity(monkeypatch):
     from datetime import datetime
+
     from ko.agents import _shared
 
     monkeypatch.setattr(_shared.config, "get", lambda *a, **k: "Australia/Sydney")

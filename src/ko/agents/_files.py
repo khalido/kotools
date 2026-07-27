@@ -146,7 +146,7 @@ def grep(
         cmd += ["-g", glob]
     cmd += [pattern, str(d)]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=False)
     except FileNotFoundError:
         raise ModelRetry(
             "ripgrep (rg) is not installed on this machine — use find_files + read_file instead."
@@ -181,6 +181,7 @@ def glob(pattern: str, path: str = ".") -> str:
             capture_output=True,
             text=True,
             timeout=30,
+            check=False,
         )
     except FileNotFoundError:
         raise ModelRetry(

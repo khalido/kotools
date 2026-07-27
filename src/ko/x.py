@@ -35,7 +35,7 @@ import json
 import os
 import re
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 
 import requests
@@ -43,7 +43,6 @@ from xdk import Client
 
 from . import config
 from .dirs import state_file
-
 
 DEFAULT_MAX_RESULTS = 10
 DEFAULT_DAYS = 7  # recent-search index only goes back ~7 days
@@ -109,14 +108,14 @@ def _post(p, users: dict[str, str]) -> Post:
         metrics = metrics.model_dump()
     created = _field(p, "created_at")
     if isinstance(created, str):
-        created = datetime.fromisoformat(created.replace("Z", "+00:00"))
+        created = datetime.fromisoformat(created)
     return Post(
         id=str(_field(p, "id")),
         text=_field(p, "text", ""),
         author=users.get(
             str(_field(p, "author_id", "")), "i"
         ),  # 'i' → x.com/i/status/<id> still resolves
-        created_at=created or datetime.now(timezone.utc),
+        created_at=created or datetime.now(UTC),
         likes=int(metrics.get("like_count") or 0),
         reposts=int(metrics.get("retweet_count") or 0),
     )
@@ -131,15 +130,15 @@ def search(
     """Search posts. `days<=7` uses the recent index; `days>7` switches to **full-archive**
     search (goes back years — costs credits per read). `top=True` sorts by relevancy (recent
     only). Scope with operators in `query`: `list:<id>` (a list), `from:<handle>` (one account)."""
-    start = datetime.now(timezone.utc) - timedelta(days=days)
-    common = dict(
-        query=query,
-        max_results=max(10, min(n, 100)),  # API floor is 10, cap 100
-        start_time=start.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        tweet_fields=["created_at", "public_metrics", "author_id"],
-        expansions=["author_id"],
-        user_fields=["username"],
-    )
+    start = datetime.now(UTC) - timedelta(days=days)
+    common = {
+        "query": query,
+        "max_results": max(10, min(n, 100)),  # API floor is 10, cap 100
+        "start_time": start.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "tweet_fields": ["created_at", "public_metrics", "author_id"],
+        "expansions": ["author_id"],
+        "user_fields": ["username"],
+    }
     if days > 7:  # recent index only covers ~7 days; go full-archive for anything older
         pages = _client().posts.search_all(**common)
     else:

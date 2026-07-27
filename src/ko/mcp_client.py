@@ -16,9 +16,9 @@ import json
 import os
 import re
 from contextlib import asynccontextmanager
-from urllib.parse import urlsplit
 from dataclasses import dataclass, field
 from datetime import timedelta
+from urllib.parse import urlsplit
 
 import httpx
 from mcp import ClientSession, StdioServerParameters
@@ -111,7 +111,7 @@ def _probe(url: str, headers: dict[str, str]) -> str:
         return f"could not reach {url}: {e}"
     ct = r.headers.get("content-type", "")
     body_start = r.text.lstrip()[:9].lower()
-    if "html" in ct.lower() or body_start.startswith("<!doctype") or body_start.startswith("<html"):
+    if "html" in ct.lower() or body_start.startswith(("<!doctype", "<html")):
         snippet = "(HTML page, not an MCP endpoint?)"
     else:
         snippet = " ".join(r.text.split())[:300]
@@ -226,13 +226,14 @@ async def _session(spec: dict):
         params = StdioServerParameters(
             command=spec["command"], args=spec.get("args") or [], env=spec.get("env") or None
         )
-        async with stdio_client(params) as (read, write):
-            async with ClientSession(read, write) as session:
-                yield session
+        async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
+            yield session
     else:
-        async with streamablehttp_client(spec["url"], headers=spec.get("headers") or None) as (read, write, _):
-            async with ClientSession(read, write) as session:
-                yield session
+        async with (
+            streamablehttp_client(spec["url"], headers=spec.get("headers") or None) as (read, write, _),
+            ClientSession(read, write) as session,
+        ):
+            yield session
 
 
 async def _inspect(spec: dict) -> ServerInfo:

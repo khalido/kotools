@@ -94,10 +94,10 @@ def snippets(vid: str, languages: tuple[str, ...] = ("en",)) -> list[Snippet]:
     Raises YtError if no transcript is available at all.
     """
     from youtube_transcript_api import (
-        YouTubeTranscriptApi,
         CouldNotRetrieveTranscript,
         NoTranscriptFound,
         TranscriptsDisabled,
+        YouTubeTranscriptApi,
     )
 
     api = YouTubeTranscriptApi()

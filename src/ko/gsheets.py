@@ -15,12 +15,12 @@ have no guard; prefer the shape-aware ones.
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 
-from googleapiclient.errors import HttpError
-
 import httpx
+from googleapiclient.errors import HttpError
 
 from ko.google_auth import (
     GoogleError,
@@ -676,7 +676,7 @@ def _cell(v):
     pass through, everything else (dates, Decimals, …) -> str."""
     if v is None:
         return ""
-    if isinstance(v, float) and v != v:  # NaN — json.dumps would emit invalid JSON
+    if isinstance(v, float) and math.isnan(v):  # json.dumps would emit invalid JSON
         return ""
     if isinstance(v, (str, int, float, bool)):
         return v

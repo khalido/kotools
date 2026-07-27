@@ -53,8 +53,10 @@ def _key() -> str:
 
 async def _call(tool: str, args: dict) -> dict:
     headers = {"Authorization": f"Bearer {_key()}"}
-    async with streamablehttp_client(ENDPOINT, headers=headers) as (read, write, _):
-        async with ClientSession(read, write) as session:
+    async with (
+        streamablehttp_client(ENDPOINT, headers=headers) as (read, write, _),
+        ClientSession(read, write) as session,
+    ):
             await session.initialize()
             result = await session.call_tool(tool, args, read_timeout_seconds=_TIMEOUT)
             if result.isError:

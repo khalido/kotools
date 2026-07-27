@@ -4,7 +4,6 @@ import pytest
 
 from ko import fetch, papers
 
-
 # --- id resolution ---
 
 

@@ -23,7 +23,7 @@ import json
 import os
 import sqlite3
 from contextlib import closing
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
@@ -39,12 +39,12 @@ def sessions_dir() -> Path:
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 def new_id() -> str:
     """Time-sortable session id, e.g. 20260622T101500-ab12cd."""
-    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S") + "-" + uuid4().hex[:6]
+    return datetime.now(UTC).strftime("%Y%m%dT%H%M%S") + "-" + uuid4().hex[:6]
 
 
 def _title(messages: list[dict]) -> str:
@@ -180,7 +180,7 @@ def get_db() -> sqlite3.Connection:
 
 def _now_us() -> str:
     """Current UTC time with microsecond precision — used for summarized_at comparisons."""
-    return datetime.now(timezone.utc).isoformat(timespec="microseconds")
+    return datetime.now(UTC).isoformat(timespec="microseconds")
 
 
 def upsert_session_summary(

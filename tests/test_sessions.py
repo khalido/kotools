@@ -11,7 +11,6 @@ from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserProm
 
 from ko import sessions
 
-
 # ---------------------------------------------------------------------------
 # Shared fixtures / helpers
 # ---------------------------------------------------------------------------
@@ -288,6 +287,7 @@ def _make_fake_summarizer(title: str, summary: str, tags: list[str]):
 def test_summarize_db_row_created(monkeypatch, tmp_path):
     """summarize command creates a DB row for an unsummarized session."""
     from typer.testing import CliRunner
+
     from ko.cli import app  # registers all sub-apps on import
 
     monkeypatch.setenv("KO_STATE_DIR", str(tmp_path))
@@ -325,6 +325,7 @@ def test_summarize_db_row_created(monkeypatch, tmp_path):
 def test_summarize_idempotent(monkeypatch, tmp_path):
     """Running summarize twice on an up-to-date session makes no additional model call."""
     from typer.testing import CliRunner
+
     from ko.cli import app  # registers all sub-apps on import
 
     monkeypatch.setenv("KO_STATE_DIR", str(tmp_path))
@@ -376,6 +377,7 @@ def test_summarize_idempotent(monkeypatch, tmp_path):
 def test_summarize_stale_after_touch(monkeypatch, tmp_path):
     """After touching a session file, the next summarize run re-summarizes it."""
     from typer.testing import CliRunner
+
     from ko.cli import app  # registers all sub-apps on import
 
     monkeypatch.setenv("KO_STATE_DIR", str(tmp_path))

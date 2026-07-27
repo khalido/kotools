@@ -18,7 +18,7 @@ from ko import config, dirs
 
 # loguru's `logger` is a process-global singleton; re-export it so ko modules can log to the same
 # sink (`from ko.logs import logger`).
-__all__ = ["logger", "command_event", "log_event", "recent", "enabled", "setup"]
+__all__ = ["command_event", "enabled", "log_event", "logger", "recent", "setup"]
 
 _configured_dir: str | None = None
 _sink_id: int | None = None

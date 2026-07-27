@@ -90,7 +90,7 @@ def test_short_from_helper():
 def test_clean_snippet_strips_invisible_chars():
     """Invisible ESP padding chars are removed from snippets."""
     cgj = "͏"   # COMBINING GRAPHEME JOINER — the main offender
-    zwsp = "​"  # ZERO WIDTH SPACE
+    zwsp = "\u200b"  # ZERO WIDTH SPACE
     zwnj = "‌"  # ZERO WIDTH NON-JOINER
     zwj = "‍"   # ZERO WIDTH JOINER
     bom = "﻿"   # BOM / zero-width no-break space

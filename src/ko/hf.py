@@ -18,7 +18,6 @@ from datetime import datetime
 
 import httpx
 
-
 HF = "https://huggingface.co"
 DEFAULT_TOP_N = 10
 DEFAULT_SEARCH_N = 10
@@ -66,7 +65,7 @@ def _paper(d: dict) -> Paper:
         id=str(d.get("id") or ""),
         title=(d.get("title") or "").replace("\n", " "),
         upvotes=d.get("upvotes") or 0,
-        published_at=datetime.fromisoformat(d["publishedAt"].replace("Z", "+00:00")),
+        published_at=datetime.fromisoformat(d["publishedAt"]),
         summary=d.get("summary") or "",
         ai_summary=d.get("ai_summary") or "",
         github_repo=d.get("githubRepo") or "",

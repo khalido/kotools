@@ -134,7 +134,7 @@ def repo_name(url: str) -> str:
 
 def _git(base: Path, repo: str, *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        ["git", "-C", str(base / repo), *args], capture_output=True, text=True
+        ["git", "-C", str(base / repo), *args], capture_output=True, text=True, check=False
     )
 
 
@@ -202,7 +202,7 @@ def clone(base: Path, url: str) -> Result:
     """Full clone (not shallow — the history is part of what gets browsed)."""
     name = repo_name(url)
     proc = subprocess.run(
-        ["git", "clone", url, str(base / name)], capture_output=True, text=True
+        ["git", "clone", url, str(base / name)], capture_output=True, text=True, check=False
     )
     if proc.returncode != 0:
         lines = (proc.stdout + proc.stderr).strip().splitlines()[-3:]
@@ -249,7 +249,7 @@ def sizes(base: Path) -> list[tuple[str, int]]:
     if not repos:
         return []
     proc = subprocess.run(
-        ["du", "-sk", *(str(base / r) for r in repos)], capture_output=True, text=True
+        ["du", "-sk", *(str(base / r) for r in repos)], capture_output=True, text=True, check=False
     )
     out = []
     for line in proc.stdout.splitlines():

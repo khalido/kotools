@@ -6,17 +6,26 @@ from pathlib import Path
 
 import typer
 
-from ._cli_shared import app, _die, _no_results, _fmt_day, _tsv_cell  # noqa: F401 — re-exported for tests
-from . import cli_google, cli_web, cli_ai  # noqa: F401  — triggers sub-app self-registration
+from . import (  # noqa: F401  — triggers sub-app self-registration
+    cli_ai,
+    cli_google,
+    cli_web,
+)
+from . import publish as publish_mod
+from ._cli_shared import (  # noqa: F401 — re-exported for tests
+    _die,
+    _fmt_day,
+    _no_results,
+    _tsv_cell,
+    app,
+)
+from .cli_ai import publish_app, tt_app
+
+# Re-export group-local helpers that tests import via ko.cli
+from .cli_google import _norm_block, _parse_cells, _short_from  # noqa: F401
 
 # These sub-app objects are needed by main()'s bare-arg dispatcher.
 from .cli_web import x_app
-from .cli_ai import tt_app, publish_app
-
-# Re-export group-local helpers that tests import via ko.cli
-from .cli_google import _short_from, _parse_cells, _norm_block  # noqa: F401
-
-from . import publish as publish_mod
 
 
 def _version_callback(value: bool) -> None:
@@ -50,7 +59,9 @@ def doctor() -> None:
     from rich.console import Console
     from rich.table import Table
 
-    from . import config, google_auth, llm as _llm, mcp_client as mcp_client_mod
+    from . import config, google_auth
+    from . import llm as _llm
+    from . import mcp_client as mcp_client_mod
     from . import telemetry as telemetry_mod
 
     def env(var: str) -> tuple[str, str]:
@@ -207,7 +218,8 @@ def doctor() -> None:
     )
 
     # effective non-secret settings + where each resolves from (env / config.toml / default)
-    from . import dirs, gcal, publish as _publish
+    from . import dirs, gcal
+    from . import publish as _publish
     from .google_auth import active_account
     from .x import _default_handle
 

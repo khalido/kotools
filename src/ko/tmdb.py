@@ -13,7 +13,6 @@ from dataclasses import dataclass, field
 
 import httpx
 
-
 BASE = "https://api.themoviedb.org/3"
 DEFAULT_COUNTRY = "AU"
 # offer types in display priority — a title on flatrate doesn't need its rent listing

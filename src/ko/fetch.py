@@ -29,7 +29,6 @@ from . import arxiv as arxiv_mod
 from . import doc as doc_mod
 from . import yt as yt_mod
 
-
 DOWNLOADS = Path.home() / "Downloads"
 UA = {"User-Agent": "kotools/0.1 (+https://github.com/khalido/kotools)"}
 
@@ -43,7 +42,7 @@ _ARXIV_MIN_CHARS = 2000
 # DOI links (doi.org URLs, doi: prefix, or a bare DOI) — publisher landing pages 403
 # or extract to nothing, so resolve the open-access copy via OpenAlex first.
 # [^\s?#] stops before query strings/fragments (?utm=… isn't part of the DOI).
-_DOI_RE = re.compile(r"(?:doi\.org/|doi:|^)(10\.\d{4,}/[^\s?#]+)", re.I)
+_DOI_RE = re.compile(r"(?:doi\.org/|doi:|^)(10\.\d{4,}/[^\s?#]+)", re.IGNORECASE)
 # YouTube URLs — routed to the transcript path. We check the domain early and deterministically.
 # Deliberately fails loud (no trafilatura fallback) when no transcript exists — the description
 # page is less useful than an honest error.

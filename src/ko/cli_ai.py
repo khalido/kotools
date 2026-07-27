@@ -16,17 +16,17 @@ from . import mcp_client as mcp_client_mod
 from . import prompt as prompt_mod
 from . import publish as publish_mod
 from . import ticktick as ticktick_mod
-from .agents import (
-    ai_run,
-    ai_repl,
-    repo_run,
-    repo_repl,
-    research_run,
-    research_repl,
-    tv_run,
-    tv_repl,
-)
 from ._cli_shared import _die, _emit_json, _no_results, _tsv_cell, app
+from .agents import (
+    ai_repl,
+    ai_run,
+    repo_repl,
+    repo_run,
+    research_repl,
+    research_run,
+    tv_repl,
+    tv_run,
+)
 
 # --- sub-apps ---
 

@@ -11,7 +11,7 @@ import json
 import pytest
 import typer
 
-from ko import cli, cli_ai, _cli_shared
+from ko import _cli_shared, cli, cli_ai
 
 
 def test_die_plain_text_to_stderr(capsys):

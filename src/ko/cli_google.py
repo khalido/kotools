@@ -6,13 +6,11 @@ import json
 import os
 import re
 import sys
+from contextlib import contextmanager
 from dataclasses import asdict
 from pathlib import Path
 
 import typer
-
-from contextlib import contextmanager
-
 from googleapiclient.errors import HttpError
 
 from . import gcal as gcal_mod
@@ -298,7 +296,7 @@ def gsheets_put(
     try:
         obj = json.loads(raw_json)
         if not isinstance(obj, dict):
-            raise ValueError('`put` expects a JSON object: {"anchor": value, ...}')
+            raise ValueError('`put` expects a JSON object: {"anchor": value, ...}')  # noqa: TRY004 — user input, caught with the JSON errors
         data = [(anchor, _norm_block(val)) for anchor, val in obj.items()]
         n = gsheets_mod.write_ranges(
             gsheets_mod.sheet_id(spreadsheet_id), data, raw=raw, overwrite=overwrite
@@ -1000,7 +998,7 @@ def _fmt_events(events, window_start: str | None = None) -> None:
             dt = datetime.fromisoformat(ev.start).astimezone(zone)
             day, when = dt.date().isoformat(), dt.strftime("%H:%M")
         if day != last_day:
-            header = datetime.strptime(day, "%Y-%m-%d").strftime("%a %d %b")
+            header = datetime.strptime(day, "%Y-%m-%d").strftime("%a %d %b")  # noqa: DTZ007 — date-only label
             typer.echo(f"\n{header}")
             last_day = day
         loc = f"  @ {ev.location.replace(chr(10), ', ').replace(chr(13), '')}" if ev.location else ""

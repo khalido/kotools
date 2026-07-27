@@ -11,10 +11,9 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from exa_py import Exa
-
 
 DEFAULT_MAX_RESULTS = 10
 DEFAULT_MAX_CHARS = 3000
@@ -66,7 +65,7 @@ def search(
     if exclude_domains:
         kwargs["exclude_domains"] = exclude_domains
     if start_published_date is None and since_months is not None:
-        start = datetime.now(timezone.utc) - timedelta(days=30 * since_months)
+        start = datetime.now(UTC) - timedelta(days=30 * since_months)
         start_published_date = start.strftime("%Y-%m-%d")
     if start_published_date:
         kwargs["start_published_date"] = start_published_date

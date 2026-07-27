@@ -27,17 +27,16 @@ from dataclasses import dataclass, field
 
 import httpx
 
-
 OPENALEX = "https://api.openalex.org"
 S2 = "https://api.semanticscholar.org"
 MAILTO = "ko@khalido.dev"  # OpenAlex polite pool — better rate limits, no key
 DEFAULT_N = 10
 DEFAULT_SIMILAR_N = 5
 
-_W_RE = re.compile(r"(?:^|openalex\.org/)(W\d+)$", re.I)
+_W_RE = re.compile(r"(?:^|openalex\.org/)(W\d+)$", re.IGNORECASE)
 # [^\s?#]+ stops before a query string/fragment so a trailing ?utm=… doesn't 404 the lookup.
-_DOI_RE = re.compile(r"(?:doi\.org/|doi:|^)(10\.\d{4,}/[^\s?#]+)", re.I)
-_ARXIV_RE = re.compile(r"(?:arxiv\.org/(?:abs|pdf|html)/|^)(\d{4}\.\d{4,5})(?:v\d+)?", re.I)
+_DOI_RE = re.compile(r"(?:doi\.org/|doi:|^)(10\.\d{4,}/[^\s?#]+)", re.IGNORECASE)
+_ARXIV_RE = re.compile(r"(?:arxiv\.org/(?:abs|pdf|html)/|^)(\d{4}\.\d{4,5})(?:v\d+)?", re.IGNORECASE)
 
 # list endpoints: skip the heavy fields (abstract index, references)
 _LIST_SELECT = (

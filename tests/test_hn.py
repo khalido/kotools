@@ -1,6 +1,6 @@
 """Offline tests for ko.hn — pure logic only, no Algolia calls."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -97,7 +97,7 @@ def test_story_from_hit():
     assert s.url is None
     assert s.num_comments == 0
     assert s.hn_url.endswith("id=123")
-    assert s.created_at == datetime.fromtimestamp(1750000000, tz=timezone.utc)
+    assert s.created_at == datetime.fromtimestamp(1750000000, tz=UTC)
 
 
 def test_get_404_raises_clean_not_found(monkeypatch):

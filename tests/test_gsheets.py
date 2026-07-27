@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from ko import google_auth
-from ko import gsheets
+from ko import google_auth, gsheets
 
 
 def test_error_types_exist():

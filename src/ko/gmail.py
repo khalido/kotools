@@ -21,12 +21,17 @@ import html
 import re
 from dataclasses import dataclass
 from email.message import EmailMessage
-from email.utils import formataddr, getaddresses, parsedate_to_datetime, parseaddr
+from email.utils import formataddr, getaddresses, parseaddr, parsedate_to_datetime
 
 from googleapiclient.errors import HttpError
 
 from ko import config
-from ko.google_auth import GoogleError, get_credentials, get_gmail_service, raise_for_status
+from ko.google_auth import (
+    GoogleError,
+    get_credentials,
+    get_gmail_service,
+    raise_for_status,
+)
 
 
 @dataclass
@@ -72,7 +77,7 @@ def _fmt_date(raw: str) -> str:
 
 _INVISIBLE_CHARS_RE = re.compile(
     "[͏"          # U+034F COMBINING GRAPHEME JOINER (common ESP padding trick)
-    "​-‍"   # U+200B ZWSP, U+200C ZWNJ, U+200D ZWJ
+    "\u200b-‍"   # U+200B ZWSP, U+200C ZWNJ, U+200D ZWJ
     "﻿]"          # U+FEFF BOM / zero-width no-break space
 )
 
