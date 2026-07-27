@@ -23,4 +23,4 @@ def test_search_returns_results():
     results = search("claude code anthropic", n=3, with_text=False)
     assert len(results) > 0
     assert all(r.url for r in results)
-    assert all(r.title for r in results)
+    assert any(r.title for r in results)  # a title-less result is legal; all-empty means parsing broke

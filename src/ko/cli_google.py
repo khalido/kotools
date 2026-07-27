@@ -1261,6 +1261,8 @@ def gmail_view(
         meta, body = gmail_mod.get_message(msg_id)
     typer.echo(f"From:    {meta.from_}")
     typer.echo(f"Date:    {meta.date}")
+    if meta.cc:
+        typer.echo(f"Cc:      {meta.cc}")
     typer.echo(f"Subject: {meta.subject}\n")
     typer.echo(body if full else body[:1500])
     if not full and len(body) > 1500:
@@ -1286,6 +1288,8 @@ def gmail_thread(
             typer.echo("\n" + "─" * 40 + "\n")
         typer.echo(f"From:    {meta.from_}")
         typer.echo(f"Date:    {meta.date}")
+        if meta.cc:
+            typer.echo(f"Cc:      {meta.cc}")
         typer.echo(f"Subject: {meta.subject}\n")
         typer.echo(body if full else body[:cap])
         if not full and len(body) > cap:
@@ -1391,6 +1395,10 @@ def gmail_draft_show(
     with _google_errors():
         _id, meta, body = gmail_mod.get_draft(draft_id)
     typer.echo(f"To:      {meta.to}")
+    if meta.cc:
+        typer.echo(f"Cc:      {meta.cc}")
+    if meta.bcc:
+        typer.echo(f"Bcc:     {meta.bcc}")
     typer.echo(f"Subject: {meta.subject}\n")
     typer.echo(body)
 
@@ -1434,8 +1442,9 @@ def gmail_draft_send(
         info = gmail_mod.draft_summary(draft_id)
     if not yes:
         prompt = (
-            f"send draft to {info['to']} — {info['subject']!r} "
-            f"({info['attachments']} attachment(s))?"
+            f"send draft to {info['to']}"
+            + (f" cc {info['cc']}" if info["cc"] else "")
+            + f" — {info['subject']!r} ({info['attachments']} attachment(s))?"
         )
         if sys.stdin.isatty():
             typer.confirm(prompt, abort=True)

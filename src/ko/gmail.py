@@ -45,6 +45,8 @@ class GmailMessage:
     subject: str
     snippet: str
     unread: bool
+    cc: str = ""
+    bcc: str = ""  # only ever present on drafts — Gmail strips it from received mail
 
 
 class GmailError(GoogleError):
@@ -65,7 +67,7 @@ def _handle(e: HttpError, context: str) -> None:
     )
 
 
-_META_HEADERS = ["From", "To", "Subject", "Date"]
+_META_HEADERS = ["From", "To", "Cc", "Subject", "Date"]
 
 
 def _fmt_date(raw: str) -> str:
@@ -98,6 +100,8 @@ def _message(m: dict) -> GmailMessage:
         from_=h.get("from", ""),
         to=h.get("to", ""),
         subject=h.get("subject", "(no subject)"),
+        cc=h.get("cc", ""),
+        bcc=h.get("bcc", ""),
         snippet=_clean_snippet(html.unescape(m.get("snippet", ""))),
         unread="UNREAD" in m.get("labelIds", []),
     )
@@ -509,7 +513,7 @@ def get_draft(draft_id: str) -> tuple[str, GmailMessage, str]:
 
 
 def draft_summary(draft_id: str) -> dict:
-    """A draft's send-preview facts: {to, subject, attachments} — body deliberately omitted."""
+    """A draft's send-preview facts: {to, cc, subject, attachments} — body deliberately omitted."""
     svc = _compose_service()
     try:
         d = svc.users().drafts().get(userId="me", id=draft_id, format="full").execute(num_retries=3)
@@ -520,6 +524,7 @@ def draft_summary(draft_id: str) -> dict:
     h = _headers(m)
     return {
         "to": h.get("to", ""),
+        "cc": h.get("cc", ""),
         "subject": h.get("subject", "(no subject)"),
         "attachments": len(_walk_attachments(m.get("payload", {}))),
     }
