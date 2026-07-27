@@ -3,12 +3,23 @@
 from __future__ import annotations
 
 import base64
+from email import message_from_bytes
+
+import pytest
 
 from ko import gmail
 
 
 def _b64(s: str) -> str:
     return base64.urlsafe_b64encode(s.encode()).decode()
+
+
+def _orig(headers: dict[str, str], thread_id: str = "t1") -> dict:
+    """A minimal message dict (threadId + payload headers) for reply-derivation tests."""
+    return {
+        "threadId": thread_id,
+        "payload": {"headers": [{"name": k, "value": v} for k, v in headers.items()]},
+    }
 
 
 def test_error_type():
@@ -102,3 +113,162 @@ def test_message_snippet_is_cleaned():
     assert "͏" not in msg.snippet
     assert "&amp;" not in msg.snippet  # html-unescape still works
     assert "Limited time offer & deal" == msg.snippet
+
+
+# --- reply derivation --------------------------------------------------------------------
+
+_BASE = {"From": "Alice <alice@x.com>", "Subject": "Budget", "Message-ID": "<m1@x>"}
+
+
+def test_derive_reply_normal():
+    r = gmail.derive_reply(_orig({**_BASE, "References": "<r0@x>"}), "me@x.com")
+    assert r.to == "Alice <alice@x.com>"  # From when no Reply-To
+    assert r.subject == "Re: Budget"  # Re: prefixed once
+    assert r.thread_id == "t1"  # threaded
+    assert r.cc == ""  # no --all
+    assert r.in_reply_to == "<m1@x>"
+    assert r.references == "<r0@x> <m1@x>"  # original References + Message-ID
+
+
+def test_derive_reply_prefixes_re_once():
+    r = gmail.derive_reply(_orig({**_BASE, "Subject": "RE: Budget"}), "me@x.com")
+    assert r.subject == "RE: Budget"  # existing Re:/RE: not doubled
+
+
+def test_derive_reply_uses_reply_to_over_from():
+    r = gmail.derive_reply(_orig({**_BASE, "Reply-To": "Bob <bob@x.com>"}), "me@x.com")
+    assert r.to == "Bob <bob@x.com>"
+
+
+def test_derive_reply_no_message_id_errors():
+    with pytest.raises(gmail.GmailError, match="Message-ID"):
+        gmail.derive_reply(_orig({"From": "a@x.com", "Subject": "hi"}), "me@x.com")
+
+
+def test_derive_reply_subject_override_drops_thread_keeps_rfc_headers():
+    r = gmail.derive_reply(_orig(_BASE), "me@x.com", subject_override="A new topic")
+    assert r.subject == "A new topic"
+    assert r.thread_id == ""  # different subject => new thread
+    assert r.in_reply_to == "<m1@x>" and r.references.endswith("<m1@x>")  # RFC headers kept
+
+
+def test_derive_reply_subject_override_matching_keeps_thread():
+    r = gmail.derive_reply(_orig(_BASE), "me@x.com", subject_override="Re: Budget")
+    assert r.thread_id == "t1"
+
+
+def test_derive_reply_all_ccs_others_minus_self():
+    orig = _orig({**_BASE, "To": "me@x.com, Carol <carol@x.com>", "Cc": "Dave <dave@x.com>"})
+    r = gmail.derive_reply(orig, "me@x.com", reply_all=True)
+    assert "carol@x.com" in r.cc and "dave@x.com" in r.cc
+    assert "me@x.com" not in r.cc  # our own address excluded
+    assert "alice@x.com" not in r.cc  # the To recipient isn't also cc'd
+
+
+# --- draft update field preservation -----------------------------------------------------
+
+
+def test_preserved_fields_carries_omitted_and_overrides_subject():
+    msg = _orig(
+        {
+            "To": "a@x.com",
+            "Cc": "c@x.com",
+            "Subject": "Old",
+            "In-Reply-To": "<m1@x>",
+            "References": "<r0@x> <m1@x>",
+        },
+        thread_id="t9",
+    )
+    keep = gmail._preserved_fields(msg, None)
+    assert keep == {
+        "to": "a@x.com",
+        "cc": "c@x.com",
+        "subject": "Old",
+        "in_reply_to": "<m1@x>",
+        "references": "<r0@x> <m1@x>",
+        "thread_id": "t9",
+    }
+    assert gmail._preserved_fields(msg, "New")["subject"] == "New"  # override wins
+
+
+# --- MIME building -----------------------------------------------------------------------
+
+
+def test_build_raw_plain_is_text_plain():
+    raw = gmail._build_raw(to="a@x.com", subject="Hi", body="just text")
+    msg = message_from_bytes(base64.urlsafe_b64decode(raw))
+    assert not msg.is_multipart()
+    assert msg.get_content_type() == "text/plain"
+    assert msg["To"] == "a@x.com" and msg["Subject"] == "Hi"
+
+
+def test_build_raw_md_is_multipart_alternative_plain_first():
+    raw = gmail._build_raw(to="a@x.com", subject="Hi", body="**bold**", html_body="<p><b>bold</b></p>")
+    msg = message_from_bytes(base64.urlsafe_b64decode(raw))
+    assert msg.get_content_type() == "multipart/alternative"
+    parts = msg.get_payload()
+    assert parts[0].get_content_type() == "text/plain"  # plain FIRST
+    assert parts[1].get_content_type() == "text/html"
+    for p in parts:
+        assert p["Content-Transfer-Encoding"] == "quoted-printable"
+        assert p.get_content_charset() == "utf-8"
+
+
+def test_build_raw_sets_threading_headers():
+    raw = gmail._build_raw(
+        to="a@x.com", subject="Re: X", body="b", in_reply_to="<m1@x>", references="<r0@x> <m1@x>"
+    )
+    msg = message_from_bytes(base64.urlsafe_b64decode(raw))
+    assert msg["In-Reply-To"] == "<m1@x>" and msg["References"] == "<r0@x> <m1@x>"
+
+
+def test_build_raw_rejects_header_newlines():
+    with pytest.raises(gmail.GmailError, match="newline"):
+        gmail._build_raw(to="a@x.com\r\nBcc: evil@x.com", subject="Hi", body="b")
+    with pytest.raises(gmail.GmailError, match="newline"):
+        gmail._build_raw(to="a@x.com", subject="Hi\nX-Injected: 1", body="b")
+
+
+# --- attachments -------------------------------------------------------------------------
+
+
+def test_walk_attachments_finds_nested_and_skips_bodies():
+    payload = {
+        "mimeType": "multipart/mixed",
+        "parts": [
+            {"mimeType": "text/plain", "body": {"data": _b64("body")}},  # no filename -> skipped
+            {"filename": "a.pdf", "mimeType": "application/pdf", "body": {"attachmentId": "A1", "size": 12}},
+            {
+                "mimeType": "multipart/related",
+                "parts": [
+                    {"filename": "b.png", "mimeType": "image/png", "body": {"attachmentId": "A2", "size": 34}}
+                ],
+            },
+        ],
+    }
+    atts = gmail._walk_attachments(payload)
+    assert [a[0] for a in atts] == ["a.pdf", "b.png"]  # nested found, body part skipped
+    assert atts[0][3] == "A1" and atts[1][3] == "A2"
+
+
+def test_unique_path_suffixes_collisions(tmp_path):
+    p = tmp_path / "report.pdf"
+    assert gmail._unique_path(p) == p  # free -> unchanged
+    p.write_bytes(b"x")
+    assert gmail._unique_path(p) == tmp_path / "report-1.pdf"
+    (tmp_path / "report-1.pdf").write_bytes(b"x")
+    assert gmail._unique_path(p) == tmp_path / "report-2.pdf"
+
+
+# --- send gate ---------------------------------------------------------------------------
+
+
+def test_send_off_by_default(monkeypatch):
+    monkeypatch.setattr(gmail.config, "setting", lambda *a, **k: None)  # nothing configured
+    assert gmail.send_allowed() is False
+
+
+def test_send_gate_env_values(monkeypatch):
+    for val, want in [("1", True), ("true", True), ("YES", True), ("0", False), ("", False)]:
+        monkeypatch.setattr(gmail.config, "setting", lambda *a, _v=val, **k: _v)
+        assert gmail.send_allowed() is want
