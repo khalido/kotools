@@ -15,6 +15,147 @@ def test_error_types_exist():
     assert issubclass(gsheets.SheetsOverwriteError, gsheets.SheetsError)
 
 
+# --- request builders (network monkeypatched away) -----------------------
+
+
+class _FakeService:
+    """Just enough of the googleapiclient chain for a metadata get()."""
+
+    def __init__(self, meta: dict):
+        self._meta = meta
+
+    def spreadsheets(self):
+        return self
+
+    def get(self, **kwargs):
+        return self
+
+    def execute(self, num_retries=0):
+        return self._meta
+
+
+_META = {
+    "sheets": [
+        {"properties": {"sheetId": 11, "title": "Summary", "index": 0}},
+        {"properties": {"sheetId": 22, "title": "kodev-007", "index": 1}},
+    ]
+}
+
+
+def test_duplicate_tab_builds_request(monkeypatch):
+    sent = {}
+
+    def fake_batch_update(sid, requests):
+        sent["requests"] = requests
+        return {"replies": [{"duplicateSheet": {"properties": {"sheetId": 33}}}]}
+
+    monkeypatch.setattr(gsheets, "_svc", lambda write=False: _FakeService(_META))
+    monkeypatch.setattr(gsheets, "batch_update", fake_batch_update)
+
+    gid = gsheets.duplicate_tab("sheet1", "kodev-007", "kodev-008")
+    assert gid == 33
+    req = sent["requests"][0]["duplicateSheet"]
+    assert req["sourceSheetId"] == 22
+    assert req["insertSheetIndex"] == 2  # right after the source
+    assert req["newSheetName"] == "kodev-008"
+
+    gsheets.duplicate_tab("sheet1", "Summary")  # no name -> API's "Copy of" default
+    assert "newSheetName" not in sent["requests"][0]["duplicateSheet"]
+
+
+def test_duplicate_tab_missing_tab_lists_tabs(monkeypatch):
+    monkeypatch.setattr(gsheets, "_svc", lambda write=False: _FakeService(_META))
+    with pytest.raises(gsheets.SheetsNotFound, match="kodev-007"):
+        gsheets.duplicate_tab("sheet1", "nope")
+
+
+def test_export_pdf_builds_request(monkeypatch):
+    sent = {}
+
+    class _FakeCreds:
+        valid = True
+        token = "tok"
+
+    class _FakeResp:
+        status_code = 200
+        content = b"%PDF-1.4 fake"
+
+    def fake_get(url, params=None, headers=None, **kw):
+        sent.update(url=url, params=params, headers=headers)
+        return _FakeResp()
+
+    monkeypatch.setattr(gsheets, "get_credentials", lambda readonly=True: _FakeCreds())
+    monkeypatch.setattr(gsheets.httpx, "get", fake_get)
+    monkeypatch.setattr(gsheets, "tab_id", lambda sid, title: 22 if title == "kodev-007" else None)
+
+    pdf = gsheets.export_pdf("sheet1", "kodev-007")
+    assert pdf.startswith(b"%PDF")
+    assert sent["url"].endswith("/sheet1/export")
+    assert sent["headers"]["Authorization"] == "Bearer tok"
+    p = sent["params"]
+    assert p["gid"] == "22" and p["size"] == "A4" and p["portrait"] == "true"
+    assert p["fitw"] == "true" and p["gridlines"] == "false"
+
+    gsheets.export_pdf("sheet1", landscape=True)  # whole spreadsheet, landscape
+    assert "gid" not in sent["params"] and sent["params"]["portrait"] == "false"
+
+    with pytest.raises(gsheets.SheetsNotFound):
+        gsheets.export_pdf("sheet1", "nope")
+
+    _FakeResp.content = b"<html>login</html>"  # auth redirect page, not a PDF
+    with pytest.raises(gsheets.SheetsError, match="non-PDF"):
+        gsheets.export_pdf("sheet1", "kodev-007")
+
+
+def test_insert_dimension_builds_request(monkeypatch):
+    sent = {}
+
+    def fake_batch_update(sid, requests):
+        sent["requests"] = requests
+        return {"replies": [{}]}
+
+    monkeypatch.setattr(gsheets, "batch_update", fake_batch_update)
+    monkeypatch.setattr(gsheets, "tab_id", lambda sid, title: 22 if title == "kodev-007" else None)
+
+    # mid-table: inherit from the row above by default
+    gsheets.insert_dimension("sheet1", "kodev-007", start_index=4, n=3)
+    req = sent["requests"][0]["insertDimension"]
+    assert req["range"] == {"sheetId": 22, "dimension": "ROWS", "startIndex": 4, "endIndex": 7}
+    assert req["inheritFromBefore"] is True
+
+    # index 0: nothing before to inherit from (the API rejects it) -> auto False
+    gsheets.insert_dimension("sheet1", "kodev-007", dimension="COLUMNS", start_index=0)
+    req = sent["requests"][0]["insertDimension"]
+    assert req["range"]["dimension"] == "COLUMNS" and req["range"]["endIndex"] == 1
+    assert req["inheritFromBefore"] is False
+
+    with pytest.raises(gsheets.SheetsNotFound):
+        gsheets.insert_dimension("sheet1", "nope")
+
+
+def test_find_replace_builds_request(monkeypatch):
+    sent = {}
+
+    def fake_batch_update(sid, requests):
+        sent["requests"] = requests
+        return {"replies": [{"findReplace": {"occurrencesChanged": 4}}]}
+
+    monkeypatch.setattr(gsheets, "batch_update", fake_batch_update)
+    monkeypatch.setattr(gsheets, "tab_id", lambda sid, title: 22 if title == "kodev-008" else None)
+
+    n = gsheets.find_replace("sheet1", "007", "008", tab="kodev-008")
+    assert n == 4
+    req = sent["requests"][0]["findReplace"]
+    assert req["sheetId"] == 22 and "allSheets" not in req
+    assert req["matchCase"] is False and req["includeFormulas"] is False
+
+    gsheets.find_replace("sheet1", "007", "008")  # no tab -> whole spreadsheet
+    assert sent["requests"][0]["findReplace"]["allSheets"] is True
+
+    with pytest.raises(gsheets.SheetsNotFound):
+        gsheets.find_replace("sheet1", "007", "008", tab="nope")
+
+
 # --- pure helpers (no network) ------------------------------------------
 
 

@@ -20,7 +20,15 @@ from dataclasses import dataclass
 
 from googleapiclient.errors import HttpError
 
-from ko.google_auth import GoogleError, get_sheets_service, id_from_url, raise_for_status
+import httpx
+
+from ko.google_auth import (
+    GoogleError,
+    get_credentials,
+    get_sheets_service,
+    id_from_url,
+    raise_for_status,
+)
 
 
 @dataclass
@@ -349,6 +357,143 @@ def delete_tab(spreadsheet_id: str, title: str) -> bool:
         return False
     batch_update(spreadsheet_id, [{"deleteSheet": {"sheetId": sid}}])
     return True
+
+
+def duplicate_tab(spreadsheet_id: str, title: str, new_title: str | None = None) -> int:
+    """Duplicate a tab — formatting, formulas, validation and all — placing the copy right
+    after the source. Returns the new tab's sheetId. new_title defaults to the API's
+    'Copy of <title>'; a new_title that already exists is an error."""
+    try:
+        meta = (
+            _svc()
+            .spreadsheets()
+            .get(spreadsheetId=spreadsheet_id, fields="sheets.properties(sheetId,title,index)")
+            .execute(num_retries=3)
+        )
+    except HttpError as e:
+        _handle(e, spreadsheet_id)
+    props = next(
+        (s["properties"] for s in meta.get("sheets", []) if s["properties"]["title"] == title),
+        None,
+    )
+    if props is None:
+        tabs = ", ".join(s["properties"]["title"] for s in meta.get("sheets", []))
+        raise SheetsNotFound(f"no tab named {title!r} — tabs: {tabs}")
+    req: dict = {"sourceSheetId": props["sheetId"], "insertSheetIndex": props["index"] + 1}
+    if new_title:
+        req["newSheetName"] = new_title
+    result = batch_update(spreadsheet_id, [{"duplicateSheet": req}])
+    return result["replies"][0]["duplicateSheet"]["properties"]["sheetId"]
+
+
+def export_pdf(
+    spreadsheet_id: str,
+    tab: str | None = None,
+    size: str = "A4",
+    landscape: bool = False,
+    gridlines: bool = False,
+    fitw: bool = True,
+) -> bytes:
+    """Render one tab (or the whole spreadsheet when tab is None) as print-ready PDF bytes.
+
+    Uses the sheet's own export endpoint (docs.google.com/…/export) with our OAuth token —
+    the Sheets v4 API has no PDF export, and Drive's does the whole file with no layout
+    control. Defaults: A4 portrait, fit-to-width, no gridlines (invoice-shaped)."""
+    params: dict[str, str] = {
+        "format": "pdf",
+        "size": size,
+        "portrait": str(not landscape).lower(),
+        "fitw": str(fitw).lower(),
+        "gridlines": str(gridlines).lower(),
+        "sheetnames": "false",
+        "printtitle": "false",
+    }
+    if tab is not None:
+        sid = tab_id(spreadsheet_id, tab)
+        if sid is None:
+            raise SheetsNotFound(f"no tab named {tab!r} — check `get_info(...).tabs`")
+        params["gid"] = str(sid)
+    creds = get_credentials(readonly=True)
+    if not creds.valid:
+        from google.auth.transport.requests import Request as _AuthRequest
+
+        creds.refresh(_AuthRequest())
+    r = httpx.get(
+        f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/export",
+        params=params,
+        headers={"Authorization": f"Bearer {creds.token}"},
+        follow_redirects=True,
+        timeout=60,
+    )
+    if r.status_code != 200:
+        raise SheetsError(f"PDF export failed: HTTP {r.status_code} — is the sheet accessible?")
+    if not r.content.startswith(b"%PDF"):
+        raise SheetsError("export returned non-PDF (auth redirect?) — try `ko gsheets auth`")
+    return r.content
+
+
+def insert_dimension(
+    spreadsheet_id: str,
+    tab: str,
+    dimension: str = "ROWS",
+    start_index: int = 0,
+    n: int = 1,
+    inherit_from_before: bool | None = None,
+) -> None:
+    """Insert n blank rows/columns at zero-based start_index (SDK semantics: the new ones
+    occupy [start_index, start_index+n) and everything after shifts). dimension is
+    "ROWS" or "COLUMNS". inherit_from_before=None auto-picks: inherit formatting from the
+    row/column before when there is one (the mid-table case — formulas and formatting
+    stretch), blank at index 0 (the API rejects inheriting there)."""
+    sid = tab_id(spreadsheet_id, tab)
+    if sid is None:
+        raise SheetsNotFound(f"no tab named {tab!r} — check `get_info(...).tabs`")
+    if inherit_from_before is None:
+        inherit_from_before = start_index > 0
+    batch_update(
+        spreadsheet_id,
+        [
+            {
+                "insertDimension": {
+                    "range": {
+                        "sheetId": sid,
+                        "dimension": dimension,
+                        "startIndex": start_index,
+                        "endIndex": start_index + n,
+                    },
+                    "inheritFromBefore": inherit_from_before,
+                }
+            }
+        ],
+    )
+
+
+def find_replace(
+    spreadsheet_id: str,
+    find: str,
+    replacement: str,
+    tab: str | None = None,
+    match_case: bool = False,
+    include_formulas: bool = False,
+) -> int:
+    """Find & replace cell text. tab=None searches EVERY tab — scope to one tab when you
+    can. Substring match within a cell (not whole-cell); values only unless
+    include_formulas=True. Returns how many occurrences changed."""
+    req: dict = {
+        "find": find,
+        "replacement": replacement,
+        "matchCase": match_case,
+        "includeFormulas": include_formulas,
+    }
+    if tab is None:
+        req["allSheets"] = True
+    else:
+        sid = tab_id(spreadsheet_id, tab)
+        if sid is None:
+            raise SheetsNotFound(f"no tab named {tab!r} — check `get_info(...).tabs`")
+        req["sheetId"] = sid
+    result = batch_update(spreadsheet_id, [{"findReplace": req}])
+    return result["replies"][0].get("findReplace", {}).get("occurrencesChanged", 0)
 
 
 def clear_range(spreadsheet_id: str, range_name: str) -> str:

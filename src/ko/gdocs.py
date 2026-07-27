@@ -53,23 +53,6 @@ def doc_id(value: str) -> str:
     return id_from_url(value, "document")
 
 
-def _para_text(para: dict, markdown: bool) -> str:
-    """One paragraph's text. With markdown=True, map heading styles to `#` and bullets to `- `."""
-    text = "".join(e.get("textRun", {}).get("content", "") for e in para.get("elements", []))
-    if not markdown:
-        return text
-    style = para.get("paragraphStyle", {}).get("namedStyleType", "")
-    if style.startswith("HEADING_"):
-        try:
-            level = int(style.split("_")[1])
-        except ValueError:
-            level = 1
-        return "#" * level + " " + text.lstrip()
-    if "bullet" in para:  # presence marks a list item; the dict can be empty
-        return "- " + text.lstrip()
-    return text
-
-
 def get_info(doc: str) -> DocInfo:
     """The doc's title + id."""
     did = doc_id(doc)
@@ -78,23 +61,6 @@ def get_info(doc: str) -> DocInfo:
     except HttpError as e:
         _handle(e, did)
     return DocInfo(id=d["documentId"], title=d.get("title", ""))
-
-
-def get_text(doc: str, markdown: bool = False) -> str:
-    """The doc body as text. markdown=True adds `#` headings and `-` bullets (light, not lossless).
-    Tables are noted but not extracted — this is for reading prose."""
-    did = doc_id(doc)
-    try:
-        document = get_docs_service().documents().get(documentId=did).execute(num_retries=3)
-    except HttpError as e:
-        _handle(e, did)
-    parts: list[str] = []
-    for el in document.get("body", {}).get("content", []):
-        if "paragraph" in el:
-            parts.append(_para_text(el["paragraph"], markdown))
-        elif "table" in el:
-            parts.append("[table omitted]\n")
-    return "".join(parts)
 
 
 def append_text(doc: str, text: str) -> int:
@@ -227,12 +193,3 @@ def shade_table(
     except HttpError as e:
         _handle(e, did)
     return len(requests)
-
-
-def create_doc(title: str) -> str:
-    """Create a new Google Doc; return its ID. Lands in My Drive root."""
-    try:
-        result = get_docs_service(readonly=False).documents().create(body={"title": title}).execute(num_retries=3)
-    except HttpError as e:
-        _handle(e, f"create doc '{title}'")
-    return result["documentId"]

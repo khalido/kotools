@@ -52,7 +52,8 @@ gsheets_app = typer.Typer(
         "Read & write Google Sheets. OAuth to your Google account on first run "
         "(`ko gsheets auth` grants read+write). Reads: info / tabs / get / find. "
         "Writes (refuse to clobber non-empty cells unless --overwrite): set / put / "
-        "header / add-tab / new / clear."
+        "header / add-tab / new / clear. Tab & bulk ops: dup-tab / delete-tab / "
+        "insert-rows / insert-cols / replace. Print: pdf."
     ),
     no_args_is_help=True,
 )
@@ -371,6 +372,206 @@ def gsheets_add_tab(
     typer.echo(str(gid))
 
 
+@gsheets_app.command("dup-tab")
+def gsheets_dup_tab(
+    spreadsheet_id: str = typer.Argument(..., help="Google Sheet ID or URL"),
+    source: str = typer.Argument(..., help="tab to duplicate (by name)"),
+    new_name: str = typer.Argument(
+        None, help="name for the copy (default: 'Copy of <tab>'); must not already exist"
+    ),
+) -> None:
+    """Duplicate a tab — formatting, formulas and all — right after the source; prints the new gid.
+
+    The invoice move: dup last month's tab, then `set`/`replace` the values."""
+    try:
+        gid = gsheets_mod.duplicate_tab(gsheets_mod.sheet_id(spreadsheet_id), source, new_name)
+    except gsheets_mod.SheetsError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1) from None
+    except HttpError as e:
+        typer.echo(_http_error_msg(e), err=True)
+        raise typer.Exit(1) from None
+    typer.echo(f"duplicated {source!r} -> {new_name or f'Copy of {source}'!r}", err=True)
+    typer.echo(str(gid))
+
+
+@gsheets_app.command("delete-tab")
+def gsheets_delete_tab(
+    spreadsheet_id: str = typer.Argument(..., help="Google Sheet ID or URL"),
+    title: str = typer.Argument(..., help="tab to delete (by name)"),
+    yes: bool = typer.Option(
+        False, "--yes", "-y", help="skip the confirm (required when not a TTY)"
+    ),
+) -> None:
+    """Delete a tab by name. Destructive — checks the tab exists, then confirms first."""
+    sid = gsheets_mod.sheet_id(spreadsheet_id)
+    try:
+        info = gsheets_mod.get_info(sid)
+    except gsheets_mod.SheetsError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1) from None
+    except HttpError as e:
+        typer.echo(_http_error_msg(e), err=True)
+        raise typer.Exit(1) from None
+    if title not in info.tabs:
+        _die(f"no tab named {title!r} in {info.title!r} — tabs: {', '.join(info.tabs)}")
+    if not yes:
+        if sys.stdin.isatty():
+            typer.confirm(f"delete tab {title!r} from {info.title!r}?", abort=True)
+        else:
+            typer.echo("refusing to delete without a TTY — pass --yes", err=True)
+            raise typer.Exit(2)
+    try:
+        gsheets_mod.delete_tab(sid, title)
+    except gsheets_mod.SheetsError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1) from None
+    except HttpError as e:
+        typer.echo(_http_error_msg(e), err=True)
+        raise typer.Exit(1) from None
+    typer.echo(f"deleted tab {title!r} from {info.title!r}", err=True)
+
+
+@gsheets_app.command("pdf")
+def gsheets_pdf(
+    spreadsheet_id: str = typer.Argument(..., help="Google Sheet ID or URL"),
+    tab: str = typer.Argument(None, help="tab to export (default: the whole spreadsheet)"),
+    out: Path = typer.Option(
+        None, "-o", "--out", help="output file (default: <tab or sheet title>.pdf in cwd)"
+    ),
+    size: str = typer.Option("A4", "--size", help="paper size (A4, letter, legal, A3, …)"),
+    landscape: bool = typer.Option(False, "--landscape", help="landscape instead of portrait"),
+    gridlines: bool = typer.Option(False, "--gridlines", help="include gridlines"),
+) -> None:
+    """Print a tab (or the whole sheet) to PDF — A4 portrait, fit-to-width by default.
+
+    The invoice move: `ko gsheets pdf <sheet> kodev-008` → kodev-008.pdf, ready to send.
+    Prints the saved path (stdout)."""
+    sid = gsheets_mod.sheet_id(spreadsheet_id)
+    try:
+        pdf = gsheets_mod.export_pdf(
+            sid, tab, size=size, landscape=landscape, gridlines=gridlines
+        )
+        name = tab or gsheets_mod.get_info(sid).title.strip()
+    except gsheets_mod.SheetsError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1) from None
+    except HttpError as e:
+        typer.echo(_http_error_msg(e), err=True)
+        raise typer.Exit(1) from None
+    path = out or Path(f"{name}.pdf")
+    path.write_bytes(pdf)
+    typer.echo(f"{len(pdf) / 1024:.0f} KB, {size} {'landscape' if landscape else 'portrait'}", err=True)
+    typer.echo(str(path))
+
+
+@gsheets_app.command("insert-rows")
+def gsheets_insert_rows(
+    spreadsheet_id: str = typer.Argument(..., help="Google Sheet ID or URL"),
+    tab: str = typer.Argument(..., help="tab to insert into (by name)"),
+    row: int = typer.Argument(..., help="1-based row number to insert before (as shown in the sheet)"),
+    n: int = typer.Option(1, "--n", "-n", help="how many rows to insert"),
+    no_inherit: bool = typer.Option(
+        False, "--no-inherit", help="blank rows instead of inheriting formatting from the row above"
+    ),
+) -> None:
+    """Insert blank rows before ROW. Formatting/formulas inherit from the row above by default.
+
+    The line-items move: insert mid-table and the layout (and =SUM ranges) stretch."""
+    if row < 1:
+        _die("row is 1-based — the first row is 1", code="usage")
+    try:
+        gsheets_mod.insert_dimension(
+            gsheets_mod.sheet_id(spreadsheet_id),
+            tab,
+            dimension="ROWS",
+            start_index=row - 1,
+            n=n,
+            inherit_from_before=False if no_inherit else None,
+        )
+    except gsheets_mod.SheetsError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1) from None
+    except HttpError as e:
+        typer.echo(_http_error_msg(e), err=True)
+        raise typer.Exit(1) from None
+    typer.echo(f"inserted {n} row(s) before row {row} in {tab!r}", err=True)
+
+
+@gsheets_app.command("insert-cols")
+def gsheets_insert_cols(
+    spreadsheet_id: str = typer.Argument(..., help="Google Sheet ID or URL"),
+    tab: str = typer.Argument(..., help="tab to insert into (by name)"),
+    col: str = typer.Argument(..., help="column letter (or 1-based number) to insert before"),
+    n: int = typer.Option(1, "--n", "-n", help="how many columns to insert"),
+    no_inherit: bool = typer.Option(
+        False, "--no-inherit", help="blank columns instead of inheriting formatting from the left"
+    ),
+) -> None:
+    """Insert blank columns before COL. Formatting inherits from the column to the left by default."""
+    if col.isdigit():
+        col_n = int(col)
+    elif col.isalpha():
+        col_n = gsheets_mod.col_num(col)
+    else:
+        _die(f"bad column {col!r} — want a letter like C or a 1-based number", code="usage")
+    if col_n < 1:
+        _die("column is 1-based — the first column is 1 (A)", code="usage")
+    try:
+        gsheets_mod.insert_dimension(
+            gsheets_mod.sheet_id(spreadsheet_id),
+            tab,
+            dimension="COLUMNS",
+            start_index=col_n - 1,
+            n=n,
+            inherit_from_before=False if no_inherit else None,
+        )
+    except gsheets_mod.SheetsError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1) from None
+    except HttpError as e:
+        typer.echo(_http_error_msg(e), err=True)
+        raise typer.Exit(1) from None
+    typer.echo(f"inserted {n} column(s) before {col.upper()} in {tab!r}", err=True)
+
+
+@gsheets_app.command("replace")
+def gsheets_replace(
+    spreadsheet_id: str = typer.Argument(..., help="Google Sheet ID or URL"),
+    find: str = typer.Argument(..., help="text to find (substring within a cell)"),
+    replacement: str = typer.Argument(..., help="replacement text"),
+    tab: str = typer.Option(None, "--tab", "-t", help="limit to one tab (by name)"),
+    all_tabs: bool = typer.Option(
+        False, "--all-tabs", help="search every tab (required when no --tab — deliberate friction)"
+    ),
+    match_case: bool = typer.Option(False, "--match-case", help="case-sensitive match"),
+    in_formulas: bool = typer.Option(
+        False, "--in-formulas", help="also replace inside formulas (default: values only)"
+    ),
+) -> None:
+    """Find & replace across a tab. Prints how many occurrences changed.
+
+    Pairs with dup-tab: duplicate an invoice, then swap the old id/dates for new ones."""
+    if not tab and not all_tabs:
+        _die("pick a --tab, or pass --all-tabs to touch the whole spreadsheet", code="usage")
+    try:
+        n = gsheets_mod.find_replace(
+            gsheets_mod.sheet_id(spreadsheet_id),
+            find,
+            replacement,
+            tab=tab,
+            match_case=match_case,
+            include_formulas=in_formulas,
+        )
+    except gsheets_mod.SheetsError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1) from None
+    except HttpError as e:
+        typer.echo(_http_error_msg(e), err=True)
+        raise typer.Exit(1) from None
+    typer.echo(str(n))
+
+
 @gsheets_app.command("new")
 def gsheets_new(
     title: str = typer.Argument(..., help="title for the new spreadsheet"),
@@ -597,8 +798,7 @@ def gdocs_comments(
     try:
         comments = gdrive_mod.list_comments(doc, include_resolved=show_all)
     except gdrive_mod.DriveError as e:
-        typer.echo(str(e), err=True)
-        raise typer.Exit(1) from None
+        _die(str(e), as_json=as_json)
     if as_json:
         typer.echo(json.dumps(comments, default=str))
         return
@@ -759,8 +959,7 @@ def _cal_main(
             ids = gcal_mod.resolve_calendar_ids(calendar) if calendar else None
             events = gcal_mod.list_events(days=n, calendar_ids=ids)
         except gcal_mod.CalError as e:
-            typer.echo(str(e), err=True)
-            raise typer.Exit(1) from None
+            _die(str(e), as_json=as_json)
     if not _emit_events(events, as_json, window_start=win_start):
         typer.echo(f"nothing in the next {n} day(s)", err=True)
 
@@ -786,8 +985,7 @@ def cal_day(
                 time_min=start, time_max=start + timedelta(days=1), calendar_ids=ids
             )
         except (gcal_mod.CalError, ValueError) as e:
-            typer.echo(str(e), err=True)
-            raise typer.Exit(1) from None
+            _die(str(e), as_json=as_json)
     if not _emit_events(events, as_json, window_start=d.isoformat()):
         typer.echo(f"nothing on {date_str}", err=True)
 
@@ -831,8 +1029,7 @@ def cal_find(
             ids = gcal_mod.resolve_calendar_ids(calendar) if calendar else None
             events = gcal_mod.search_events(text, days=days, past=past, calendar_ids=ids)
         except gcal_mod.CalError as e:
-            typer.echo(str(e), err=True)
-            raise typer.Exit(1) from None
+            _die(str(e), as_json=as_json)
     if not _emit_events(events, as_json):
         typer.echo(f"no {'past' if past else 'upcoming'} '{text}' within {days} day(s)", err=True)
 
@@ -844,8 +1041,7 @@ def cal_cals(as_json: bool = typer.Option(False, "--json", help="emit JSON")) ->
         try:
             cals = gcal_mod.list_calendars()
         except gcal_mod.CalError as e:
-            typer.echo(str(e), err=True)
-            raise typer.Exit(1) from None
+            _die(str(e), as_json=as_json)
     if as_json:
         typer.echo(json.dumps([asdict(c) for c in cals]))
         return

@@ -5,8 +5,8 @@ open by ID, and nothing else** — it cannot browse or search your Drive. That's
 Markdown↔Doc proposal workflow:
 
 - `push_markdown` — turn a Markdown file into a real, formatted Google Doc (Drive converts it).
-- `export_markdown` — pull a Doc back as proper Markdown (tables and all — higher fidelity than
-  `gdocs.get_text`, which is light/lossy).
+- `export_markdown` — pull a Doc back as proper Markdown (tables and all — replaced the old
+  light/lossy Docs-API text walk).
 - `list_comments` — read review comments + replies off a Doc (comments live in the Drive API,
   not the Docs API).
 - `ensure_folder` — find-or-create a folder so proposals don't litter My Drive root.
@@ -147,7 +147,7 @@ def diff_summary(old: str, new: str) -> tuple[str, list[str]]:
 
 
 def export_markdown(doc: str) -> str:
-    """Export a Google Doc as Markdown text (tables included — supersedes gdocs.get_text)."""
+    """Export a Google Doc as Markdown text (tables included)."""
     did = _doc_id(doc)
     try:
         data = (

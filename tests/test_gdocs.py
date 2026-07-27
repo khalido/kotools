@@ -18,22 +18,6 @@ def test_doc_id_url_or_bare():
     assert gdocs.doc_id("  1AbC_def-9 ") == "1AbC_def-9"
 
 
-def test_para_text_plain_and_markdown():
-    heading = {
-        "paragraphStyle": {"namedStyleType": "HEADING_2"},
-        "elements": [{"textRun": {"content": "Title\n"}}],
-    }
-    assert gdocs._para_text(heading, markdown=False) == "Title\n"
-    assert gdocs._para_text(heading, markdown=True) == "## Title\n"
-
-    bullet = {"bullet": {}, "elements": [{"textRun": {"content": "item\n"}}]}
-    assert gdocs._para_text(bullet, markdown=True) == "- item\n"
-
-    normal = {"elements": [{"textRun": {"content": "hi\n"}}]}
-    assert gdocs._para_text(normal, markdown=True) == "hi\n"
-    assert gdocs._para_text(normal, markdown=False) == "hi\n"
-
-
 def test_hex_to_rgb():
     assert gdocs._hex_to_rgb("#ffffff") == {"red": 1.0, "green": 1.0, "blue": 1.0}
     assert gdocs._hex_to_rgb("000000") == {"red": 0.0, "green": 0.0, "blue": 0.0}  # tolerates no '#'
