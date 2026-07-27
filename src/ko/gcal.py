@@ -61,6 +61,35 @@ def tz() -> ZoneInfo:
     return ZoneInfo(tz_name())
 
 
+def _now() -> datetime:
+    """Now, in the configured zone. A seam so tests can freeze the clock."""
+    return datetime.now(tz())
+
+
+def _to_local(dt_str: str) -> str:
+    """A Google RFC3339 dateTime (UTC 'Z' or any offset) → ISO8601 in the configured zone,
+    always with a numeric offset. '' passes through; an unparseable value is returned as-is.
+    Normalizes the three shapes Google mixes into one so --json datetimes are uniform."""
+    if not dt_str:
+        return ""
+    try:
+        return datetime.fromisoformat(dt_str).astimezone(tz()).isoformat()
+    except ValueError:
+        return dt_str
+
+
+def _inclusive_end_date(exclusive: str) -> str:
+    """Google's all-day `end.date` is EXCLUSIVE (a 1-day event ends the next day). Return the
+    inclusive last day (end − 1 day) so a single-day event reads start == end, not a 2-day span.
+    '' / unparseable pass through. Inverse of create_event's +1-day write."""
+    if not exclusive:
+        return ""
+    try:
+        return (date.fromisoformat(exclusive) - timedelta(days=1)).isoformat()
+    except ValueError:
+        return exclusive
+
+
 def list_calendars() -> list[Calendar]:
     """Every calendar on the account (primary, shared, subscribed)."""
     svc = get_calendar_service()
@@ -124,17 +153,35 @@ def _start_key(ev: CalEvent) -> datetime:
 
 def _event(raw: dict, cal_id: str, cal_name: str) -> CalEvent:
     s, e = raw.get("start", {}), raw.get("end", {})
+    all_day = "date" in s
+    if all_day:
+        start = s.get("date", "")
+        end = _inclusive_end_date(e.get("date", ""))  # Google's end.date is exclusive → last day
+    else:
+        start = _to_local(s.get("dateTime", ""))  # normalize UTC 'Z'/offset to the configured tz
+        end = _to_local(e.get("dateTime", ""))
     return CalEvent(
         id=raw.get("id", ""),
         summary=raw.get("summary", "(no title)"),
-        start=s.get("date") or s.get("dateTime", ""),
-        end=e.get("date") or e.get("dateTime", ""),
-        all_day="date" in s,
+        start=start,
+        end=end,
+        all_day=all_day,
         calendar_id=cal_id,
         calendar_name=cal_name,
         location=raw.get("location"),
         html_link=raw.get("htmlLink"),
     )
+
+
+def _window(days: int, time_min: datetime | None, time_max: datetime | None) -> tuple[str, str]:
+    """(timeMin, timeMax) RFC3339 strings for an events.list call. The default anchors to the
+    START OF TODAY in the configured zone (not 'now') — so a query at 6pm still returns the
+    morning's events — and spans `days` calendar days, which is `days` day-headers, not days+1
+    (timeMax is exclusive). Explicit time_min/time_max override each end."""
+    start_of_day = _now().replace(hour=0, minute=0, second=0, microsecond=0)
+    tmin = time_min or start_of_day
+    tmax = time_max or (start_of_day + timedelta(days=days))
+    return tmin.isoformat(), tmax.isoformat()
 
 
 def list_events(
@@ -143,12 +190,11 @@ def list_events(
     time_min: datetime | None = None,
     time_max: datetime | None = None,
 ) -> list[CalEvent]:
-    """Events from now (or time_min) over the next `days`, across all calendars (or calendar_ids),
-    sorted by start. Recurring events are expanded (singleEvents=True)."""
+    """Events over the next `days` (default: from the start of today in the configured zone),
+    across all calendars (or calendar_ids), sorted by start. `time_min`/`time_max` override the
+    window ends. Recurring events are expanded (singleEvents=True)."""
     svc = get_calendar_service()
-    now = datetime.now(tz())
-    tmin = (time_min or now).isoformat()
-    tmax = (time_max or (now + timedelta(days=days))).isoformat()
+    tmin, tmax = _window(days, time_min, time_max)
     cals = {c.id: c.name for c in list_calendars()}
     ids = calendar_ids or list(cals)
     events: list[CalEvent] = []
@@ -190,7 +236,7 @@ def search_events(
     if not q:
         return []
     if past:
-        now = datetime.now(tz())
+        now = _now()
         events = list_events(
             time_min=now - timedelta(days=days), time_max=now, calendar_ids=calendar_ids
         )
@@ -204,7 +250,7 @@ def parse_when(s: str) -> tuple[bool, date | datetime]:
     """A CLI date/time string -> (all_day, value). Accepts 'today' / 'tomorrow' / 'YYYY-MM-DD'
     (all-day) or 'YYYY-MM-DDTHH:MM' (timed, in the local zone). Raises ValueError otherwise."""
     s = s.strip()
-    today = datetime.now(tz()).date()  # the configured zone, not the host's
+    today = _now().date()  # the configured zone, not the host's
     if s == "today":
         return True, today
     if s == "tomorrow":

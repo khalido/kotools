@@ -84,6 +84,64 @@ def test_event_body_all_day_timed_and_coercion():
     assert b["start"]["timeZone"]
 
 
+def test_window_defaults_to_start_of_day_and_spans_days(monkeypatch):
+    """The default window anchors to the START OF TODAY (not 'now', so a 6pm query keeps the
+    morning) and spans `days` calendar days → `days` day-headers, not days+1 (timeMax exclusive)."""
+    fixed = datetime(2026, 7, 16, 18, 0, tzinfo=gcal.tz())  # 6pm today
+    monkeypatch.setattr(gcal, "_now", lambda: fixed)
+
+    tmin, tmax = gcal._window(7, None, None)
+    assert tmin.startswith("2026-07-16T00:00:00")  # start of TODAY, not 18:00 → keeps morning events
+    assert tmax.startswith("2026-07-23T00:00:00")  # +7 days, exclusive → headers 16..22 = 7, not 8
+
+    # --today: days=1 → a single calendar day (midnight → next midnight)
+    tmin1, tmax1 = gcal._window(1, None, None)
+    assert tmin1.startswith("2026-07-16T00:00:00") and tmax1.startswith("2026-07-17T00:00:00")
+
+    # explicit bounds override the defaults verbatim
+    lo = datetime(2026, 1, 1, tzinfo=gcal.tz())
+    hi = datetime(2026, 1, 2, tzinfo=gcal.tz())
+    assert gcal._window(7, lo, hi) == (lo.isoformat(), hi.isoformat())
+
+
+def test_event_all_day_end_is_inclusive():
+    """Google's all-day end.date is EXCLUSIVE; the read path strips the +1 so end is the last day."""
+    single = gcal._event({"start": {"date": "2026-07-05"}, "end": {"date": "2026-07-06"}}, "c", "Cal")
+    assert single.all_day and single.start == "2026-07-05" and single.end == "2026-07-05"  # 1 day, no fake span
+
+    multi = gcal._event({"start": {"date": "2026-07-05"}, "end": {"date": "2026-07-08"}}, "c", "Cal")
+    assert multi.start == "2026-07-05" and multi.end == "2026-07-07"  # Jul 5–7, not 5–8
+
+
+def test_event_all_day_round_trips_create_body():
+    """create_event writes an exclusive (+1) end; _event strips it → the same inclusive dates back."""
+    body = gcal._event_body("Trip", "2026-07-05", end="2026-07-07")
+    ev = gcal._event({"start": body["start"], "end": body["end"]}, "c", "Cal")
+    assert ev.start == "2026-07-05" and ev.end == "2026-07-07"
+
+
+def test_to_local_normalizes_mixed_offsets(monkeypatch):
+    """The three timestamp shapes Google mixes (UTC 'Z', another offset, already-local) all
+    normalize to one ISO8601 string in the configured tz, with a numeric offset."""
+    monkeypatch.setattr(gcal.config, "get", lambda *a, **k: "Australia/Sydney")  # +10:00 in July
+    utc = gcal._to_local("2026-07-16T22:00:00Z")          # 22:00 UTC
+    other = gcal._to_local("2026-07-17T00:00:00+02:00")   # same instant, +02:00
+    local = gcal._to_local("2026-07-17T08:00:00+10:00")   # same instant, already Sydney
+    assert utc == other == local == "2026-07-17T08:00:00+10:00"
+    assert gcal._to_local("") == ""            # empty passes through
+    assert gcal._to_local("garbage") == "garbage"  # unparseable passes through
+
+
+def test_event_timed_normalized_to_configured_tz(monkeypatch):
+    """A timed event's start/end are rendered in the configured zone regardless of the wire offset."""
+    monkeypatch.setattr(gcal.config, "get", lambda *a, **k: "Australia/Sydney")
+    ev = gcal._event(
+        {"start": {"dateTime": "2026-07-16T22:00:00Z"}, "end": {"dateTime": "2026-07-16T23:00:00Z"}},
+        "c", "Cal",
+    )
+    assert ev.start == "2026-07-17T08:00:00+10:00" and ev.end == "2026-07-17T09:00:00+10:00"
+
+
 def test_search_events_filters(monkeypatch):
     fake = [
         gcal.CalEvent("1", "Dentist appt", "2026-07-01", "2026-07-01", True, "c", "Cal"),

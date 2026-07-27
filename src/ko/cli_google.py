@@ -655,6 +655,16 @@ def _gdocs_account(
     _set_account(account)
 
 
+def _guard_multi_tab(doc: str, extra: str = "") -> None:
+    """Refuse a whole-doc write on a MULTI-TAB doc (exit 2). A bare `replaceAllText` with no
+    tabsCriteria rewrites EVERY tab — on a per-client doc that silently clobbers all clients. A
+    single-tab (or no-tabs) doc passes through untouched, so the common case keeps no friction.
+    `extra` names the escape hatch(es) in the message (e.g. ' or --all-tabs')."""
+    tabs = gdocs_mod.list_tabs(doc)
+    if len(tabs) > 1:
+        _die(f"this doc has {len(tabs)} tabs — pass --tab <title|id>{extra}", code="usage")
+
+
 def _guard_comment_orphans(doc: str, find: str) -> None:
     """Before a tab-scoped replace: if the text being replaced is (or contains) an open comment's
     quoted anchor, that thread would lose its anchor. List the hits and refuse (exit 1) — the
@@ -738,9 +748,12 @@ def gdocs_append(
         None, "--tab", help="append to the end of one tab (title or tabId); else the whole doc"
     ),
 ) -> None:
-    """Append text to the end of a doc (or of one tab with --tab)."""
+    """Append text to the end of a doc (or of one tab with --tab). On a multi-tab doc `--tab` is
+    required (a bare append would land in the first tab only — surprising)."""
     body = text if text is not None else sys.stdin.read()
     try:
+        if tab is None:
+            _guard_multi_tab(doc)  # multi-tab: force an explicit --tab (bare append hits tab 0)
         n = gdocs_mod.append_text(doc, body, tab=tab)
     except gdocs_mod.DocsError as e:
         typer.echo(str(e), err=True)
@@ -757,14 +770,18 @@ def gdocs_replace(
     tab: str = typer.Option(
         None, "--tab", help="scope the replace to one tab (title or tabId); else the whole doc"
     ),
+    all_tabs: bool = typer.Option(
+        False, "--all-tabs", help="rewrite EVERY tab (required on a multi-tab doc when no --tab)"
+    ),
     force: bool = typer.Option(
         False, "--force", help="with --tab: replace even if it would orphan a comment's anchor"
     ),
 ) -> None:
-    """Replace every occurrence of FIND with REPLACE. Whole-doc by default; `--tab` scopes it to one
-    tab. With --tab, first checks open comments and refuses if the replaced text is a comment's
-    quoted anchor (would orphan the thread) — `--force` overrides. Whole-doc replace has no such
-    check (deliberate: no new friction on the common path)."""
+    """Replace every occurrence of FIND with REPLACE. `--tab` scopes it to one tab; a bare replace
+    hits the whole doc. On a MULTI-TAB doc a bare replace refuses (it would rewrite every tab —
+    e.g. every client in a per-client doc) — pass `--tab` or `--all-tabs`. With --tab, first
+    checks open comments and refuses if the replaced text is a comment's quoted anchor (would
+    orphan the thread) — `--force` overrides."""
     try:
         if tab is not None:
             tab_id = gdocs_mod.resolve_tab(doc, tab)
@@ -772,6 +789,8 @@ def gdocs_replace(
                 _guard_comment_orphans(doc, find)
             n = gdocs_mod.replace_text(doc, find, replace, match_case=match_case, tab_ids=[tab_id])
         else:
+            if not all_tabs:
+                _guard_multi_tab(doc, extra=" or --all-tabs")  # bare replace clobbers all tabs
             n = gdocs_mod.replace_text(doc, find, replace, match_case=match_case)
     except gdocs_mod.DocsError as e:
         typer.echo(str(e), err=True)
@@ -1037,9 +1056,13 @@ def _cal_main(
     calendar: list[str] = typer.Option(
         None, "--calendar", "-c", help="limit to these calendar(s) by name or id; repeatable"
     ),
-    as_json: bool = typer.Option(False, "--json", help="emit JSON"),
+    as_json: bool = typer.Option(False, "--json", help="emit JSON (see shape below)"),
 ) -> None:
-    """Agenda across your calendars (bare `ko cal`). Subcommands: day / add / cals / auth."""
+    """Agenda across your calendars (bare `ko cal`). Subcommands: day / add / cals / auth.
+
+    `--json` emits an array of events; timed `start`/`end` are ISO8601 in the configured tz
+    (with offset), all-day events use bare `YYYY-MM-DD` dates with `all_day: true` and an
+    inclusive `end` (a single-day event has end == start)."""
     _set_account(account)
     if ctx.invoked_subcommand is not None:
         return
@@ -1065,7 +1088,9 @@ def cal_day(
     calendar: list[str] = typer.Option(
         None, "--calendar", "-c", help="limit to these calendar(s) by name or id; repeatable"
     ),
-    as_json: bool = typer.Option(False, "--json", help="emit JSON"),
+    as_json: bool = typer.Option(
+        False, "--json", help="emit JSON (timed start/end in the configured tz w/ offset; all-day = bare dates + all_day)"
+    ),
 ) -> None:
     """All events for a single day."""
     from datetime import datetime, timedelta
@@ -1116,7 +1141,9 @@ def cal_find(
     calendar: list[str] = typer.Option(
         None, "--calendar", "-c", help="limit to these calendar(s) by name or id; repeatable"
     ),
-    as_json: bool = typer.Option(False, "--json", help="emit JSON"),
+    as_json: bool = typer.Option(
+        False, "--json", help="emit JSON (timed start/end in the configured tz w/ offset; all-day = bare dates + all_day)"
+    ),
 ) -> None:
     """Find events whose title matches TEXT. Forward by default; `--past` for 'when was my last X'."""
     with _google_errors(as_json):
@@ -1216,7 +1243,10 @@ def _gmail_main(
     unread: bool = typer.Option(False, "--unread", help="only unread"),
     as_json: bool = typer.Option(False, "--json", help="emit JSON"),
 ) -> None:
-    """Recent inbox messages (bare `ko gmail`). Subcommands: search / from / view."""
+    """Recent inbox messages (bare `ko gmail`). Subcommands: search / from / view.
+
+    `--json` adds `labels` (Gmail labelIds) and `list_unsubscribe` (the header, empty on human
+    mail) per message — newsletter-vs-human triage data. The plain-text list is unchanged."""
     _set_account(account)
     if ctx.invoked_subcommand is not None:
         return
@@ -1464,7 +1494,8 @@ def gmail_draft_send(
 ) -> None:
     """Send a draft. OPT-IN: refuses unless `[gmail] allow_send = true` in config.toml or
     KO_GMAIL_SEND=1 — drafting is the default; a human sends from Gmail. Confirms first (shows
-    to/subject/attachment count). No scheduled-send API — create the draft, schedule it in Gmail's UI."""
+    to/subject/attachment count). Also refuses if the body says 'attached' but nothing is attached
+    (--yes overrides). No scheduled-send API — create the draft, schedule it in Gmail's UI."""
     if not gmail_mod.send_allowed():
         _die(
             "sending is disabled — drafts are the default workflow. Enable with "
@@ -1472,6 +1503,11 @@ def gmail_draft_send(
         )
     with _google_errors():
         info = gmail_mod.draft_summary(draft_id)
+    if info["mentions_attachment"] and info["attachments"] == 0 and not yes:
+        _die(
+            "body says 'attached' but the draft has no attachments — attach or pass --yes",
+            code="usage",
+        )
     if not yes:
         prompt = (
             f"send draft to {info['to']}"

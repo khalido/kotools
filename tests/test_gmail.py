@@ -115,6 +115,35 @@ def test_message_snippet_is_cleaned():
     assert "Limited time offer & deal" == msg.snippet
 
 
+def test_message_exposes_labels_and_list_unsubscribe():
+    """--json triage fields: labelIds surfaced as `labels`, the List-Unsubscribe header captured
+    (empty on human mail)."""
+    newsletter = {
+        "id": "n1",
+        "threadId": "t",
+        "snippet": "",
+        "labelIds": ["INBOX", "CATEGORY_PROMOTIONS"],
+        "payload": {"headers": [{"name": "List-Unsubscribe", "value": "<mailto:u@list.com>"}]},
+    }
+    msg = gmail._message(newsletter)
+    assert msg.labels == ["INBOX", "CATEGORY_PROMOTIONS"]
+    assert msg.list_unsubscribe == "<mailto:u@list.com>"
+
+    human = {"id": "h1", "threadId": "t", "snippet": "", "labelIds": ["INBOX"], "payload": {"headers": []}}
+    hmsg = gmail._message(human)
+    assert hmsg.labels == ["INBOX"] and hmsg.list_unsubscribe == ""  # no header → empty
+
+
+def test_mentions_attachment():
+    """The send-guard's crude /attach/i check: catches 'attached'/'attachment'/'attach'; false
+    on prose without them."""
+    assert gmail.mentions_attachment("please find the report attached")
+    assert gmail.mentions_attachment("See the attachment.")
+    assert gmail.mentions_attachment("I'll attach the invoice")
+    assert not gmail.mentions_attachment("the report is inline below")
+    assert not gmail.mentions_attachment("")
+
+
 # --- reply derivation --------------------------------------------------------------------
 
 _BASE = {"From": "Alice <alice@x.com>", "Subject": "Budget", "Message-ID": "<m1@x>"}
@@ -350,6 +379,43 @@ def test_send_gate_env_values(monkeypatch):
     for val, want in [("1", True), ("true", True), ("YES", True), ("0", False), ("", False)]:
         monkeypatch.setattr(gmail.config, "setting", lambda *a, _v=val, **k: _v)
         assert gmail.send_allowed() is want
+
+
+def test_draft_send_attach_guard(monkeypatch):
+    """`draft send` refuses when the body says 'attached' but nothing is attached; --yes overrides;
+    a no-mention draft skips the guard (and falls through to the normal non-TTY confirm gate)."""
+    from typer.testing import CliRunner
+
+    from ko import cli_google
+    from ko.cli import app
+
+    monkeypatch.setattr(cli_google.gmail_mod, "send_allowed", lambda: True)  # gate open for the test
+    summary = {
+        "to": "a@x.com", "cc": "", "bcc": "", "subject": "Invoice",
+        "attachments": 0, "mentions_attachment": True,
+    }
+    monkeypatch.setattr(cli_google.gmail_mod, "draft_summary", lambda did: summary)
+    sent: list[str] = []
+    monkeypatch.setattr(
+        cli_google.gmail_mod, "send_draft", lambda did: (sent.append(did), "sent1")[1]
+    )
+    runner = CliRunner()
+
+    # says 'attached', 0 attachments, no --yes → refuse (exit 2), never sends
+    r = runner.invoke(app, ["gmail", "draft", "send", "d1"])
+    assert r.exit_code == 2 and "attached" in r.output.lower() and not sent
+
+    # --yes overrides the guard → sends
+    r2 = runner.invoke(app, ["gmail", "draft", "send", "d1", "--yes"])
+    assert r2.exit_code == 0 and sent == ["d1"]
+
+    # no mention → guard doesn't fire; non-TTY confirm gate refuses with a *different* message
+    sent.clear()
+    monkeypatch.setattr(
+        cli_google.gmail_mod, "draft_summary", lambda did: {**summary, "mentions_attachment": False}
+    )
+    r3 = runner.invoke(app, ["gmail", "draft", "send", "d1"])
+    assert r3.exit_code == 2 and "TTY" in r3.output and not sent  # fell through, not the attach guard
 
 
 def test_md_to_html_renders_gfm_tables():

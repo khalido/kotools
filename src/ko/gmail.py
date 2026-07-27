@@ -20,7 +20,7 @@ import base64
 import html
 import mimetypes
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from email.message import EmailMessage
 from email.utils import formataddr, getaddresses, parseaddr, parsedate_to_datetime
 from pathlib import Path
@@ -48,6 +48,8 @@ class GmailMessage:
     unread: bool
     cc: str = ""
     bcc: str = ""  # only ever present on drafts — Gmail strips it from received mail
+    labels: list[str] = field(default_factory=list)  # Gmail labelIds (INBOX, UNREAD, CATEGORY_*, …)
+    list_unsubscribe: str = ""  # the List-Unsubscribe header — set on newsletters, empty on human mail
 
 
 class GmailError(GoogleError):
@@ -68,7 +70,7 @@ def _handle(e: HttpError, context: str) -> None:
     )
 
 
-_META_HEADERS = ["From", "To", "Cc", "Subject", "Date"]
+_META_HEADERS = ["From", "To", "Cc", "Subject", "Date", "List-Unsubscribe"]
 
 
 def _fmt_date(raw: str) -> str:
@@ -105,6 +107,8 @@ def _message(m: dict) -> GmailMessage:
         bcc=h.get("bcc", ""),
         snippet=_clean_snippet(html.unescape(m.get("snippet", ""))),
         unread="UNREAD" in m.get("labelIds", []),
+        labels=m.get("labelIds", []),
+        list_unsubscribe=h.get("list-unsubscribe", ""),
     )
 
 
@@ -573,8 +577,20 @@ def get_draft(draft_id: str) -> tuple[str, GmailMessage, str]:
     return d["id"], _message(m), _message_body(m)
 
 
+_ATTACH_RE = re.compile(r"attach", re.IGNORECASE)
+
+
+def mentions_attachment(body: str) -> bool:
+    """Does the plain-text body mention an attachment (attach / attached / attachment)?
+    A deliberately crude /attach/i substring — the guard's whole job is to catch 'please find
+    attached' with nothing attached, so over-matching is fine (a human passes --yes to override)."""
+    return bool(_ATTACH_RE.search(body or ""))
+
+
 def draft_summary(draft_id: str) -> dict:
-    """A draft's send-preview facts: {to, cc, subject, attachments} — body deliberately omitted."""
+    """A draft's send-preview facts: {to, cc, subject, attachments, mentions_attachment}. The
+    body text is deliberately omitted; `mentions_attachment` is a derived flag off it (the plain
+    part) so the send path can catch a 'see attached' email with zero attachments."""
     svc = _compose_service()
     try:
         d = svc.users().drafts().get(userId="me", id=draft_id, format="full").execute(num_retries=3)
@@ -589,6 +605,7 @@ def draft_summary(draft_id: str) -> dict:
         "bcc": h.get("bcc", ""),
         "subject": h.get("subject", "(no subject)"),
         "attachments": len(_walk_attachments(m.get("payload", {}))),
+        "mentions_attachment": mentions_attachment(_message_body(m)),
     }
 
 

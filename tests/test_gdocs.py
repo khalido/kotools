@@ -178,6 +178,65 @@ def test_find_orphan_comments():
     assert gdocs.find_orphan_comments([], "anything") == []
 
 
+def test_replace_multi_tab_refusal_vs_single_pass(monkeypatch):
+    """A bare (no --tab) replace on a MULTI-TAB doc refuses (exit 2) — it would rewrite every tab.
+    `--all-tabs` proceeds whole-doc; a single-tab doc keeps working bare, no friction."""
+    from typer.testing import CliRunner
+
+    from ko import cli_google
+    from ko.cli import app
+
+    calls: list = []
+    monkeypatch.setattr(
+        cli_google.gdocs_mod, "replace_text", lambda *a, **k: (calls.append((a, k)), 2)[1]
+    )
+    multi = [gdocs.TabInfo(0, "Acme", "t.0", 0), gdocs.TabInfo(1, "Globex", "t.1", 0)]
+    monkeypatch.setattr(cli_google.gdocs_mod, "list_tabs", lambda doc: multi)
+    runner = CliRunner()
+
+    # multi-tab, bare → refuse, replace_text never called
+    r = runner.invoke(app, ["gdocs", "replace", "docid", "Q2", "Q3"])
+    assert r.exit_code == 2 and "2 tabs" in r.output and not calls
+
+    # --all-tabs → whole-doc replace (no tabsCriteria)
+    r2 = runner.invoke(app, ["gdocs", "replace", "docid", "Q2", "Q3", "--all-tabs"])
+    assert r2.exit_code == 0 and len(calls) == 1 and "tab_ids" not in calls[0][1]
+
+    # single-tab doc → bare replace works with no friction
+    calls.clear()
+    monkeypatch.setattr(cli_google.gdocs_mod, "list_tabs", lambda doc: [gdocs.TabInfo(0, "Doc", "", 0)])
+    r3 = runner.invoke(app, ["gdocs", "replace", "docid", "Q2", "Q3"])
+    assert r3.exit_code == 0 and len(calls) == 1
+
+
+def test_append_multi_tab_refusal_vs_single_pass(monkeypatch):
+    """Bare append on a multi-tab doc refuses (it would silently land in tab 0) — require --tab.
+    Single-tab docs append bare."""
+    from typer.testing import CliRunner
+
+    from ko import cli_google
+    from ko.cli import app
+
+    appended: list = []
+    monkeypatch.setattr(
+        cli_google.gdocs_mod, "append_text", lambda *a, **k: (appended.append((a, k)), 3)[1]
+    )
+    multi = [gdocs.TabInfo(0, "Acme", "t.0", 0), gdocs.TabInfo(1, "Globex", "t.1", 0)]
+    monkeypatch.setattr(cli_google.gdocs_mod, "list_tabs", lambda doc: multi)
+    runner = CliRunner()
+
+    r = runner.invoke(app, ["gdocs", "append", "docid", "hello"])
+    assert r.exit_code == 2 and "2 tabs" in r.output and not appended
+
+    r2 = runner.invoke(app, ["gdocs", "append", "docid", "hello", "--tab", "Acme"])
+    assert r2.exit_code == 0 and len(appended) == 1
+
+    appended.clear()
+    monkeypatch.setattr(cli_google.gdocs_mod, "list_tabs", lambda doc: [gdocs.TabInfo(0, "Doc", "", 0)])
+    r3 = runner.invoke(app, ["gdocs", "append", "docid", "hi"])
+    assert r3.exit_code == 0 and len(appended) == 1
+
+
 def test_replace_tab_orphan_guard_cli(monkeypatch):
     """The tab-scoped replace refuses when a comment anchor would be orphaned, unless --force."""
     from typer.testing import CliRunner
