@@ -13,6 +13,11 @@ Cut a release with the repo's `/release` skill.
 
 ## [Unreleased]
 
+## [2026.7.27] - 2026-07-27
+
+The Google-suite-goes-read-write release: Sheets tab ops + print-to-PDF, draft-first
+Gmail, per-tab Docs — plus per-agent memory for `tv` and `llms.txt` on published sites.
+
 ### Added
 
 - `ko agent tv` now keeps its own markdown memory (like ai/research/repo) — it
@@ -32,6 +37,46 @@ Cut a release with the repo's `/release` skill.
   paragraph; sites of ≤2 pages inline their truncated content so one fetch reads the
   whole site. A hand-authored `llms.txt` (marker line removed) is never touched; the
   md shell now strips front matter before rendering.
+- `ko gsheets dup-tab|delete-tab|insert-rows|insert-cols|replace` — tab & bulk ops:
+  `dup-tab` clones a tab with formatting/formulas intact (the new-invoice move),
+  `insert-rows`/`insert-cols` inherit formatting from the neighbour (`--no-inherit`
+  for blank), `replace` = find&replace scoped `--tab` (or explicit `--all-tabs`),
+  `delete-tab` verifies the tab exists then confirms (`--yes` when piped).
+- `ko gsheets pdf <sheet> [tab] [-o out]` — print-ready PDF via the sheet's export
+  endpoint (A4 portrait, fit-to-width; `--size`/`--landscape`/`--gridlines`); the
+  existing OAuth token works, no new scope.
+- `ko gmail attach <id> [n] [-o DIR]` — list attachments (TSV/`--json`) and download
+  (never overwrites — appends `-1`, `-2`, …) under the existing readonly scope;
+  pairs with `ko doc <file>` for stuck client PDFs.
+- `ko gmail draft new|reply|list|show|update|send` — draft-first mail (needs
+  `gmail.compose`: `ko gmail auth --logout` then `auth`, once per account). Replies
+  thread correctly (threadId + In-Reply-To/References + `Re:`); `--all` = reply-all,
+  `--cc` adds extras; `--md` = markdown body → multipart/alternative; `update`
+  preserves to/cc/bcc/subject/threading for anything not overridden (`--to`/`--cc`
+  repair a recipient list) and refuses to drop attachments unless `--force`.
+  **Sending is opt-in**: `draft send` refuses unless `[gmail] allow_send = true` /
+  `KO_GMAIL_SEND=1`, then confirms with the full recipient list — agents draft,
+  a human sends from Gmail.
+- Gmail reads now show Cc (and drafts' Bcc) everywhere: `view`, `thread`,
+  `draft show|list`, every `--json`, and the send confirmation.
+- `ko gdocs tabs` / `add-tab <title>` / `--tab <title|tabId>` on `get`/`replace`/
+  `append` — per-tab Docs ops (per-client shared docs keep one tab each);
+  `replace --tab` refuses if it would orphan an open comment's quoted anchor
+  (`--force` overrides); `push` stays whole-doc (Drive's markdown import can't
+  target a tab).
+
+### Fixed
+
+- `--json` errors from bare `ko cal`, `cal day|find|cals`, and `gdocs comments` now
+  emit the documented `{error, code}` object instead of plain text.
+- `ko gmail draft list` crashed on every call — `drafts.get` rejects the
+  `metadataHeaders` param (a `messages.get`-only filter).
+- `ko gsheets pdf` filenames no longer break when a tab title contains `/`.
+
+### Removed
+
+- Unused `gdocs.get_text` / `gdocs.create_doc` library functions — superseded by the
+  Drive markdown export/push paths (`ko gdocs get`/`push`).
 
 ## [2026.7.14] - 2026-07-14
 
@@ -120,7 +165,8 @@ things, `--json` where structure matters.
 - **Agent contract** (AGENTS.md): stdout=data / stderr=notes, exit 0/1/2,
   `--json` errors as `{error, code}`, bare-arg shortcuts.
 
-[Unreleased]: https://github.com/khalido/kotools/compare/v2026.7.14...HEAD
+[Unreleased]: https://github.com/khalido/kotools/compare/v2026.7.27...HEAD
+[2026.7.27]: https://github.com/khalido/kotools/compare/v2026.7.14...v2026.7.27
 [2026.7.14]: https://github.com/khalido/kotools/compare/v2026.7.9...v2026.7.14
 [2026.7.9]: https://github.com/khalido/kotools/releases/tag/v2026.7.9
 
