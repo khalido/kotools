@@ -350,3 +350,12 @@ def test_send_gate_env_values(monkeypatch):
     for val, want in [("1", True), ("true", True), ("YES", True), ("0", False), ("", False)]:
         monkeypatch.setattr(gmail.config, "setting", lambda *a, _v=val, **k: _v)
         assert gmail.send_allowed() is want
+
+
+def test_md_to_html_renders_gfm_tables():
+    """Tables are GFM, not CommonMark — an agent's invoice table must become <table>,
+    not literal pipe text."""
+    html_out = gmail.md_to_html("| a | b |\n|---|---|\n| 1 | 2 |\n\n~~gone~~ **bold**")
+    assert "<table>" in html_out and "<td>1</td>" in html_out
+    assert "<s>gone</s>" in html_out and "<strong>bold</strong>" in html_out
+    assert "|" not in html_out.replace("</", "").replace("<", "")  # no raw pipes survive

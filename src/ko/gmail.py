@@ -323,10 +323,12 @@ def _re_subject(subject: str) -> str:
 
 
 def md_to_html(md: str) -> str:
-    """Markdown -> HTML via markdown-it-py (CommonMark)."""
+    """Markdown -> HTML via markdown-it-py: CommonMark + GFM tables/strikethrough.
+    (Tables are a GFM extension — the bare CommonMark preset renders them as literal
+    pipe text, which is how an agent's invoice table once went out.)"""
     from markdown_it import MarkdownIt
 
-    return MarkdownIt().render(md)
+    return MarkdownIt("commonmark").enable(["table", "strikethrough"]).render(md)
 
 
 def _build_raw(
