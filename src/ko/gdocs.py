@@ -217,7 +217,7 @@ def get_tab_text(doc: str, tab: str, markdown: bool = True) -> str:
 
 def add_tab(doc: str, title: str) -> str:
     """Create a new tab titled `title`; return its tabId. The Docs API's `addDocumentTab` request
-    (verified against the live API 2026-07). The API requires unique tab titles — refuses with a
+    (verified against the live API 2026-07). Duplicate titles are legal in Docs but un-addressable by name here, so this refuses with a
     clean error if one already matches (case-insensitive)."""
     did = doc_id(doc)
     existing = list_tabs(doc)

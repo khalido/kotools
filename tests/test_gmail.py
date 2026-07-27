@@ -183,6 +183,7 @@ def test_preserved_fields_carries_omitted_and_overrides_subject():
     assert keep == {
         "to": "a@x.com",
         "cc": "c@x.com",
+        "bcc": "",  # preserved too — an update must not silently drop a Bcc
         "subject": "Old",
         "in_reply_to": "<m1@x>",
         "references": "<r0@x> <m1@x>",

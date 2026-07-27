@@ -256,8 +256,6 @@ def _unique_path(path: Path) -> Path:
 def download_attachments(msg_id: str, index: int | None = None, out_dir: Path | None = None) -> list[Path]:
     """Download attachment `index` (1-based; None = all) to `out_dir` (default cwd). Returns the
     saved Path(s). Never overwrites — appends -1, -2, …. Works under gmail.readonly."""
-    from pathlib import Path
-
     out_dir = Path(out_dir) if out_dir is not None else Path.cwd()
     atts = list_attachments(msg_id)
     if not atts:
@@ -337,6 +335,7 @@ def _build_raw(
     body: str,
     html_body: str | None = None,
     cc: str = "",
+    bcc: str = "",
     in_reply_to: str = "",
     references: str = "",
 ) -> str:
@@ -348,6 +347,7 @@ def _build_raw(
     for hname, val in (
         ("To", to),
         ("Cc", cc),
+        ("Bcc", bcc),
         ("Subject", subject),
         ("In-Reply-To", in_reply_to),
         ("References", references),
@@ -357,6 +357,8 @@ def _build_raw(
     msg["To"] = to
     if cc:
         msg["Cc"] = cc
+    if bcc:
+        msg["Bcc"] = bcc
     msg["Subject"] = subject
     if in_reply_to:
         msg["In-Reply-To"] = in_reply_to
@@ -542,6 +544,7 @@ def draft_summary(draft_id: str) -> dict:
     return {
         "to": h.get("to", ""),
         "cc": h.get("cc", ""),
+        "bcc": h.get("bcc", ""),
         "subject": h.get("subject", "(no subject)"),
         "attachments": len(_walk_attachments(m.get("payload", {}))),
     }
@@ -555,6 +558,7 @@ def _preserved_fields(msg: dict, subject_override: str | None) -> dict:
     return {
         "to": h.get("to", ""),
         "cc": h.get("cc", ""),
+        "bcc": h.get("bcc", ""),
         "subject": subject_override if subject_override is not None else h.get("subject", ""),
         "in_reply_to": h.get("in-reply-to", ""),
         "references": h.get("references", ""),
@@ -576,9 +580,9 @@ def update_draft(
     list without retyping the rest). Re-fetches the draft first and preserves
     to/cc/subject/threadId for anything not overridden. Draft id is stable; returns it.
 
-    The API replaces the WHOLE MIME message: attachments (and any Bcc) added to the draft —
-    e.g. in Gmail's UI — cannot be carried over and would be dropped, so a draft with
-    attachments is refused unless force=True."""
+    The API replaces the WHOLE MIME message: attachments added to the draft — e.g. in
+    Gmail's UI — cannot be carried over and would be dropped, so a draft with attachments
+    is refused unless force=True. To/cc/bcc/subject/threading are preserved."""
     svc = _compose_service()
     try:
         existing = svc.users().drafts().get(userId="me", id=draft_id, format="full").execute(num_retries=3)
@@ -599,6 +603,7 @@ def update_draft(
     raw = _build_raw(
         to=f["to"],
         cc=f["cc"],
+        bcc=f["bcc"],
         subject=f["subject"],
         body=body,
         html_body=html_body,

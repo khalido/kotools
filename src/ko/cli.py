@@ -172,7 +172,7 @@ def doctor() -> None:
         ),
         (
             "gdocs/cal/gmail",
-            "Google Docs/Calendar/Gmail (shares gsheets token; gmail read-only)",
+            "Google Docs/Calendar/Gmail (shares gsheets token; gmail read + drafts, send config-gated)",
             "OAuth client + token (same as gsheets)",
             (f"✓ authed ({google_auth.active_account()})", "green")
             if google_auth.token_file().exists()
