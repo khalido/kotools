@@ -92,7 +92,10 @@ gmail_draft_app = typer.Typer(
     help=(
         "Compose Gmail drafts (needs `gmail.compose` — `ko gmail auth --logout` then `auth` to "
         "grant it). new / reply / list / show / update / send. Drafts are the default workflow; "
-        "`draft send` is opt-in (`[gmail] allow_send = true` / KO_GMAIL_SEND=1)."
+        "`draft send` is opt-in (`[gmail] allow_send = true` / KO_GMAIL_SEND=1). "
+        "Write bodies in Markdown via `--md <file>`: headings, **bold**/*italic*, bulleted + "
+        "numbered lists, [links](url), GFM tables, ~~strikethrough~~, `code` all render as "
+        "formatted mail (no underline — Markdown has none). Plain `--body` stays plain text."
     ),
     no_args_is_help=True,
 )
