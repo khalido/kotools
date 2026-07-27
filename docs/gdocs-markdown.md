@@ -85,6 +85,26 @@ Blockquote specimen (comes back as plain text):
 
 > This blockquote comes back as a normal paragraph, not a quote.
 
+## Tabs — one doc, many tabs
+
+A Google Doc can hold several **tabs** (the left-rail list), and a per-client shared doc typically keeps one tab per client or topic. Every other `ko gdocs` command works on the *whole doc body* by default; the tab commands let you list and scope to a single tab.
+
+```
+ko gdocs tabs <doc>                       # list: index, title, tabId (TSV; sub-tabs indented). --json too.
+ko gdocs add-tab <doc> "Acme"             # create a tab; prints its tabId. Refuses a duplicate title.
+ko gdocs get <doc> --tab Acme             # that tab's text (title or tabId, case-insensitive exact)
+ko gdocs append <doc> "note" --tab Acme   # append to the end of one tab
+ko gdocs replace <doc> "Q2" "Q3" --tab Acme   # find/replace scoped to one tab
+```
+
+How it works, and the sharp edges:
+
+* **`--tab` matches** a tab title (case-insensitive, exact) or a raw `tabId` (e.g. `t.0`). A miss lists the available tabs and exits 1.
+* **`get --tab`** can't use Drive's Markdown export (that's whole-doc only), so it walks the tab's Docs-API body — headings become `#`, bullets `-`, tables are noted as `[table omitted]`. It's the lighter, read-the-prose view, not the lossless table-aware export you get from `get` without `--tab`.
+* **`add-tab`** uses the Docs API's `addDocumentTab` request (verified against the live API, 2026-07). Titles must be unique — it pre-checks and refuses a duplicate with a clean error. Creates a top-level tab at the end; then fill it with `append --tab`.
+* **`replace --tab`** scopes the replacement with the Docs API's `tabsCriteria`. Before running, it lists open comments and **refuses** if the text being replaced is (or contains) a comment's quoted anchor — that edit would orphan the thread. `--force` proceeds anyway. Whole-doc `replace` (no `--tab`) keeps **no** such check, so the common path gains no new friction. The comment list isn't tab-scoped by the API, so a same-worded quote in another tab can over-warn — `--force` is the escape hatch.
+* **`push` can't target a tab.** Drive's Markdown import is whole-doc; there's no per-tab import in the API. Use `append --tab` / `replace --tab` to edit within a tab.
+
 ## References
 
 * [Use Markdown in Google Docs](https://support.google.com/docs/answer/12014036?hl=en#zippy=%2Cconvert-markdown-to-google-docs-content-on-paste) — the **editor-side** Markdown behaviour (where only `*` makes a list).

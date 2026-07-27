@@ -26,6 +26,16 @@ class DocInfo:
     title: str
 
 
+@dataclass
+class TabInfo:
+    """One tab in a Doc. `nesting_level` 0 = a top-level tab, 1 = a sub-tab, etc."""
+
+    index: int
+    title: str
+    tab_id: str
+    nesting_level: int
+
+
 class DocsError(GoogleError):
     pass
 
@@ -80,16 +90,11 @@ def get_info(doc: str) -> DocInfo:
     return DocInfo(id=d["documentId"], title=d.get("title", ""))
 
 
-def get_text(doc: str, markdown: bool = False) -> str:
-    """The doc body as text. markdown=True adds `#` headings and `-` bullets (light, not lossless).
-    Tables are noted but not extracted — this is for reading prose."""
-    did = doc_id(doc)
-    try:
-        document = get_docs_service().documents().get(documentId=did).execute(num_retries=3)
-    except HttpError as e:
-        _handle(e, did)
+def _body_text(content: list[dict], markdown: bool) -> str:
+    """A body's `content` list → text. markdown=True adds `#` headings and `-` bullets.
+    Tables are noted but not extracted — this is for reading prose. Pure; unit-testable."""
     parts: list[str] = []
-    for el in document.get("body", {}).get("content", []):
+    for el in content:
         if "paragraph" in el:
             parts.append(_para_text(el["paragraph"], markdown))
         elif "table" in el:
@@ -97,43 +102,213 @@ def get_text(doc: str, markdown: bool = False) -> str:
     return "".join(parts)
 
 
-def append_text(doc: str, text: str) -> int:
-    """Append text to the end of the doc. Returns the number of characters inserted."""
+def get_text(doc: str, markdown: bool = False) -> str:
+    """The doc body as text. markdown=True adds `#` headings and `-` bullets (light, not lossless).
+    Tables are noted but not extracted — this is for reading prose. Reads the doc's first/main tab."""
     did = doc_id(doc)
-    svc = get_docs_service(readonly=False)
     try:
-        document = svc.documents().get(documentId=did, fields="body(content(endIndex))").execute(num_retries=3)
-        end = document["body"]["content"][-1]["endIndex"]
-        index = max(1, end - 1)  # body starts at 1; insert before the final newline
-        svc.documents().batchUpdate(
-            documentId=did,
-            body={"requests": [{"insertText": {"location": {"index": index}, "text": text}}]},
-        ).execute(num_retries=3)
+        document = get_docs_service().documents().get(documentId=did).execute(num_retries=3)
     except HttpError as e:
         _handle(e, did)
-    return len(text)
+    return _body_text(document.get("body", {}).get("content", []), markdown)
 
 
-def replace_text(doc: str, find: str, replace: str, match_case: bool = False) -> int:
-    """Replace every occurrence of `find` with `replace`. Returns how many were changed."""
+# --- tabs -----------------------------------------------------------------
+# A Doc can have several tabs (one per client/topic in a shared doc). The Docs API exposes them
+# only when `documents.get(includeTabsContent=True)` — without it the response carries a single
+# implicit `body`. Tabs nest (a sub-tab under a tab); `tabProperties.nestingLevel` reports depth.
+
+_TAB_PROPS = "tabProperties(tabId,title,index,nestingLevel)"
+
+
+def _tabs_fields_mask(depth: int = 6) -> str:
+    """A `fields` mask fetching only tab properties (not body content) down `depth` nesting levels —
+    keeps `list_tabs` a tiny request. Also grabs `title` for the single-implicit-tab fallback."""
+    node = _TAB_PROPS
+    for _ in range(depth):
+        node = f"{_TAB_PROPS},childTabs({node})"
+    return f"title,tabs({node})"
+
+
+def _walk_tabs(tabs: list[dict], level: int = 0) -> list[TabInfo]:
+    """Flatten the (possibly nested) `tabs` tree into TabInfo, depth-first in tab order. Pure.
+    Uses the API's `nestingLevel` when present, else the recursion depth."""
+    out: list[TabInfo] = []
+    for t in tabs:
+        tp = t.get("tabProperties", {})
+        nl = tp.get("nestingLevel")
+        out.append(
+            TabInfo(
+                index=tp.get("index", 0),
+                title=tp.get("title", ""),
+                tab_id=tp.get("tabId", ""),
+                nesting_level=nl if nl is not None else level,
+            )
+        )
+        out += _walk_tabs(t.get("childTabs", []), level + 1)
+    return out
+
+
+def _tab_listing(tabs: list[TabInfo]) -> str:
+    """Human-readable 'title (tabId), …' for error messages. Pure."""
+    return ", ".join(f"{t.title!r} ({t.tab_id})" for t in tabs) or "(none)"
+
+
+def _resolve_tab_id(tabs: list[TabInfo], tab: str) -> str:
+    """Resolve a `--tab` value to a tabId: an exact tabId passes through; else a case-insensitive
+    exact title match. Raises DocsNotFound (miss) / DocsError (ambiguous title) listing the tabs. Pure."""
+    for t in tabs:
+        if t.tab_id == tab:
+            return t.tab_id
+    matches = [t for t in tabs if t.title.casefold() == tab.casefold()]
+    if len(matches) == 1:
+        return matches[0].tab_id
+    if len(matches) > 1:
+        raise DocsError(
+            f"tab title {tab!r} is ambiguous ({len(matches)} tabs share it) — pass the tabId. "
+            f"Tabs: {_tab_listing(tabs)}"
+        )
+    raise DocsNotFound(f"no tab matching {tab!r} — available: {_tab_listing(tabs)}")
+
+
+def _find_tab_node(tabs: list[dict], tab_id: str) -> dict | None:
+    """The raw tab dict with this tabId anywhere in the (nested) tree, else None. Pure."""
+    for t in tabs:
+        if t.get("tabProperties", {}).get("tabId") == tab_id:
+            return t
+        found = _find_tab_node(t.get("childTabs", []), tab_id)
+        if found is not None:
+            return found
+    return None
+
+
+def list_tabs(doc: str) -> list[TabInfo]:
+    """All tabs of a Doc, flattened depth-first (index, title, tabId, nesting_level). A doc with no
+    tabs field (a single implicit tab) returns one TabInfo named after the doc, tab_id ''."""
     did = doc_id(doc)
+    try:
+        document = (
+            get_docs_service()
+            .documents()
+            .get(documentId=did, includeTabsContent=True, fields=_tabs_fields_mask())
+            .execute(num_retries=3)
+        )
+    except HttpError as e:
+        _handle(e, did)
+    tabs = _walk_tabs(document.get("tabs", []))
+    if not tabs:  # older API / doc with no explicit tabs → one implicit tab
+        return [TabInfo(index=0, title=document.get("title", ""), tab_id="", nesting_level=0)]
+    return tabs
+
+
+def resolve_tab(doc: str, tab: str) -> str:
+    """A `--tab` value (title or raw tabId) → its tabId, validated against the live doc."""
+    return _resolve_tab_id(list_tabs(doc), tab)
+
+
+def get_tab_text(doc: str, tab: str, markdown: bool = True) -> str:
+    """One tab's body as text (markdown=True adds `#` headings, `-` bullets). Drive's Markdown
+    export can't scope to a tab, so this walks the tab's Docs-API body — lighter than `get`."""
+    did = doc_id(doc)
+    try:
+        document = (
+            get_docs_service().documents().get(documentId=did, includeTabsContent=True).execute(num_retries=3)
+        )
+    except HttpError as e:
+        _handle(e, did)
+    raw_tabs = document.get("tabs", [])
+    if not raw_tabs:
+        raise DocsNotFound(f"doc {did} has no tabs (single-tab doc — use `get` without --tab)")
+    tab_id = _resolve_tab_id(_walk_tabs(raw_tabs), tab)
+    node = _find_tab_node(raw_tabs, tab_id)
+    if node is None:  # unreachable — _resolve_tab_id already validated — but keep it honest
+        raise DocsNotFound(f"tab {tab_id!r} vanished from doc {did}")
+    return _body_text(node.get("documentTab", {}).get("body", {}).get("content", []), markdown)
+
+
+def add_tab(doc: str, title: str) -> str:
+    """Create a new tab titled `title`; return its tabId. The Docs API's `addDocumentTab` request
+    (verified against the live API 2026-07). The API requires unique tab titles — refuses with a
+    clean error if one already matches (case-insensitive)."""
+    did = doc_id(doc)
+    existing = list_tabs(doc)
+    if any(t.title.casefold() == title.casefold() for t in existing):
+        raise DocsError(f"a tab titled {title!r} already exists — titles must be unique. Tabs: {_tab_listing(existing)}")
     try:
         result = (
             get_docs_service(readonly=False)
             .documents()
             .batchUpdate(
                 documentId=did,
-                body={
-                    "requests": [
-                        {
-                            "replaceAllText": {
-                                "containsText": {"text": find, "matchCase": match_case},
-                                "replaceText": replace,
-                            }
-                        }
-                    ]
-                },
+                body={"requests": [{"addDocumentTab": {"tabProperties": {"title": title}}}]},
             )
+            .execute(num_retries=3)
+        )
+    except HttpError as e:
+        _handle(e, did)
+    return result.get("replies", [{}])[0].get("addDocumentTab", {}).get("tabProperties", {}).get("tabId", "")
+
+
+def find_orphan_comments(comments: list[dict], find_text: str) -> list[dict]:
+    """Open comments whose quoted anchor overlaps `find_text` (crude substring, either direction) —
+    a tab-scoped replace would orphan them. Pure; `comments` come from `gdrive.list_comments`."""
+    if not find_text:
+        return []
+    hits: list[dict] = []
+    for c in comments:
+        q = c.get("quoted_text", "")
+        if q and (find_text in q or q in find_text):
+            hits.append(c)
+    return hits
+
+
+def append_text(doc: str, text: str, tab: str | None = None) -> int:
+    """Append text to the end of the doc (or of a single tab if `tab` is a title/tabId). Returns
+    the number of characters inserted."""
+    did = doc_id(doc)
+    svc = get_docs_service(readonly=False)
+    try:
+        if tab is None:
+            document = svc.documents().get(documentId=did, fields="body(content(endIndex))").execute(num_retries=3)
+            end = document["body"]["content"][-1]["endIndex"]
+            location = {"index": max(1, end - 1)}  # body starts at 1; insert before the final newline
+        else:
+            document = svc.documents().get(documentId=did, includeTabsContent=True).execute(num_retries=3)
+            raw_tabs = document.get("tabs", [])
+            if not raw_tabs:
+                raise DocsNotFound(f"doc {did} has no tabs — append without --tab")
+            tab_id = _resolve_tab_id(_walk_tabs(raw_tabs), tab)
+            node = _find_tab_node(raw_tabs, tab_id)
+            end = node["documentTab"]["body"]["content"][-1]["endIndex"]
+            location = {"index": max(1, end - 1), "tabId": tab_id}
+        svc.documents().batchUpdate(
+            documentId=did,
+            body={"requests": [{"insertText": {"location": location, "text": text}}]},
+        ).execute(num_retries=3)
+    except HttpError as e:
+        _handle(e, did)
+    return len(text)
+
+
+def replace_text(
+    doc: str, find: str, replace: str, match_case: bool = False, tab_ids: list[str] | None = None
+) -> int:
+    """Replace every occurrence of `find` with `replace`. Returns how many were changed. With
+    `tab_ids`, scope the replacement to those tabs (`tabsCriteria`); else the whole doc."""
+    did = doc_id(doc)
+    request: dict = {
+        "replaceAllText": {
+            "containsText": {"text": find, "matchCase": match_case},
+            "replaceText": replace,
+        }
+    }
+    if tab_ids:
+        request["replaceAllText"]["tabsCriteria"] = {"tabIds": tab_ids}
+    try:
+        result = (
+            get_docs_service(readonly=False)
+            .documents()
+            .batchUpdate(documentId=did, body={"requests": [request]})
             .execute(num_retries=3)
         )
     except HttpError as e:

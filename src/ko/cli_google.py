@@ -62,8 +62,9 @@ app.add_typer(gsheets_app, name="gs", hidden=True)  # shortcut alias
 gdocs_app = typer.Typer(
     help=(
         "Read & write Google Docs as Markdown (same OAuth token as `ko gsheets`). "
-        "Read: get (Doc→Markdown) / info / comments. Write: push (Markdown→new or existing Doc) / "
-        "replace / append / reply / shade-table."
+        "Read: get (Doc→Markdown) / info / tabs / comments. Write: push (Markdown→new or existing "
+        "Doc) / replace / append / add-tab / reply / shade-table. Per-client docs use one tab each — "
+        "`tabs` lists them; get/replace/append take `--tab`."
     ),
     no_args_is_help=True,
 )
@@ -440,15 +441,60 @@ def _gdocs_account(
     _set_account(account)
 
 
+def _guard_comment_orphans(doc: str, find: str) -> None:
+    """Before a tab-scoped replace: if the text being replaced is (or contains) an open comment's
+    quoted anchor, that thread would lose its anchor. List the hits and refuse (exit 1) — the
+    caller passes --force to proceed. Comments are a whole-doc list (the API doesn't scope them by
+    tab), so this can over-warn on a same-worded quote in another tab; --force is the escape hatch."""
+    try:
+        comments = gdrive_mod.list_comments(doc)
+    except gdrive_mod.DriveError:
+        return  # can't read comments (e.g. doc not made by ko) → don't block the edit
+    hits = gdocs_mod.find_orphan_comments(comments, find)
+    if not hits:
+        return
+    typer.echo(
+        f"refusing: replacing {find!r} would orphan {len(hits)} comment anchor(s) — pass --force to proceed:",
+        err=True,
+    )
+    for c in hits:
+        quote = c.get("quoted_text", "")[:60]
+        typer.echo(f"  {c.get('author', '?')}: > {quote}", err=True)
+    raise typer.Exit(1)
+
+
+@gdocs_app.command("tabs")
+def gdocs_tabs(
+    doc: str = typer.Argument(..., help="Google Doc ID or URL"),
+    as_json: bool = typer.Option(False, "--json", help="emit a JSON array of {index,title,tab_id,nesting_level}"),
+) -> None:
+    """List a doc's tabs (TSV: index, title, tabId; sub-tabs indented). Per-client shared docs
+    keep one tab per client — feed a tabId or title to get/replace/append `--tab`."""
+    try:
+        tabs = gdocs_mod.list_tabs(doc)
+    except gdocs_mod.DocsError as e:
+        _die(str(e))
+    if as_json:
+        typer.echo(json.dumps([asdict(t) for t in tabs]))
+        return
+    for t in tabs:
+        typer.echo(f"{t.index}\t{'  ' * t.nesting_level}{t.title}\t{t.tab_id}")
+
+
 @gdocs_app.command("get")
 def gdocs_get(
     doc: str = typer.Argument(..., help="Google Doc ID or URL"),
     out: Path = typer.Option(None, "--out", "-o", help="write to a file instead of stdout"),
+    tab: str = typer.Option(
+        None, "--tab", help="read just one tab (title, case-insensitive, or a raw tabId) — see `tabs`"
+    ),
 ) -> None:
-    """Read a Doc as Markdown (tables included) — pipe it to an LLM/agent, or save with -o."""
+    """Read a Doc as Markdown (tables included) — pipe it to an LLM/agent, or save with -o.
+    `--tab` reads one tab as markdown-ish plain text (Drive export can't scope to a tab, so it's
+    walked from the Docs API — headings/bullets kept, tables noted)."""
     try:
-        md = gdrive_mod.export_markdown(doc)
-    except gdrive_mod.DriveError as e:
+        md = gdocs_mod.get_tab_text(doc, tab) if tab else gdrive_mod.export_markdown(doc)
+    except (gdrive_mod.DriveError, gdocs_mod.DocsError) as e:
         typer.echo(str(e), err=True)
         raise typer.Exit(1) from None
     if out:
@@ -474,11 +520,14 @@ def gdocs_info(doc: str = typer.Argument(..., help="Google Doc ID or URL")) -> N
 def gdocs_append(
     doc: str = typer.Argument(..., help="Google Doc ID or URL"),
     text: str = typer.Argument(None, help="text to append (omit to read stdin)"),
+    tab: str = typer.Option(
+        None, "--tab", help="append to the end of one tab (title or tabId); else the whole doc"
+    ),
 ) -> None:
-    """Append text to the end of a doc."""
+    """Append text to the end of a doc (or of one tab with --tab)."""
     body = text if text is not None else sys.stdin.read()
     try:
-        n = gdocs_mod.append_text(doc, body)
+        n = gdocs_mod.append_text(doc, body, tab=tab)
     except gdocs_mod.DocsError as e:
         typer.echo(str(e), err=True)
         raise typer.Exit(1) from None
@@ -491,14 +540,45 @@ def gdocs_replace(
     find: str = typer.Argument(..., help="text to find"),
     replace: str = typer.Argument(..., help="replacement text"),
     match_case: bool = typer.Option(False, "--match-case", help="case-sensitive match"),
+    tab: str = typer.Option(
+        None, "--tab", help="scope the replace to one tab (title or tabId); else the whole doc"
+    ),
+    force: bool = typer.Option(
+        False, "--force", help="with --tab: replace even if it would orphan a comment's anchor"
+    ),
 ) -> None:
-    """Replace every occurrence of FIND with REPLACE across the doc."""
+    """Replace every occurrence of FIND with REPLACE. Whole-doc by default; `--tab` scopes it to one
+    tab. With --tab, first checks open comments and refuses if the replaced text is a comment's
+    quoted anchor (would orphan the thread) — `--force` overrides. Whole-doc replace has no such
+    check (deliberate: no new friction on the common path)."""
     try:
-        n = gdocs_mod.replace_text(doc, find, replace, match_case=match_case)
+        if tab is not None:
+            tab_id = gdocs_mod.resolve_tab(doc, tab)
+            if not force:
+                _guard_comment_orphans(doc, find)
+            n = gdocs_mod.replace_text(doc, find, replace, match_case=match_case, tab_ids=[tab_id])
+        else:
+            n = gdocs_mod.replace_text(doc, find, replace, match_case=match_case)
     except gdocs_mod.DocsError as e:
         typer.echo(str(e), err=True)
         raise typer.Exit(1) from None
     typer.echo(f"replaced {n} occurrence(s)", err=True)
+
+
+@gdocs_app.command("add-tab")
+def gdocs_add_tab(
+    doc: str = typer.Argument(..., help="Google Doc ID or URL"),
+    title: str = typer.Argument(..., help="title for the new tab"),
+) -> None:
+    """Add a tab to a Doc (e.g. a new client/topic in a shared doc); prints its tabId (stdout).
+    Then `append --tab <title>` to fill it. Creates a top-level tab at the end."""
+    try:
+        tab_id = gdocs_mod.add_tab(doc, title)
+    except gdocs_mod.DocsError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1) from None
+    typer.echo(tab_id)
+    typer.echo(f"added tab {title!r}", err=True)
 
 
 _DRIVE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{20,}$")
@@ -565,7 +645,9 @@ def gdocs_push(
 ) -> None:
     """Markdown → Google Doc; prints ID (stdout) and URL (stderr). No TARGET creates a new doc; a
     TARGET (id or URL) updates that doc in place (same URL/sharing) after showing a diff to confirm
-    (--force skips). An update re-imports the whole body, so re-apply shading with `shade-table`."""
+    (--force skips). An update re-imports the whole body, so re-apply shading with `shade-table`.
+    Targets the whole doc; per-tab push isn't supported by the API (Drive Markdown import can't
+    aim at a tab) — use `append --tab` / `replace --tab` to edit within one tab."""
     md = sys.stdin.read() if str(markdown_file) == "-" else markdown_file.read_text()
     if target:
         _confirm_overwrite(target, md, force)

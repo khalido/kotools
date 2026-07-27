@@ -38,7 +38,7 @@ Full docs: **[kotools.khalido.dev](https://kotools.khalido.dev/)**.
 | Command | What it does | What I use it for |
 |---|---|---|
 | `ko gsheets` | read **& write** Google Sheets (OAuth) | dump/read data + formulas, overwrite-guarded |
-| `ko gdocs` | Markdown ↔ Google Docs + comments | push a proposal `.md` → Doc → read feedback back |
+| `ko gdocs` | Markdown ↔ Google Docs + comments + tabs | push a proposal `.md` → Doc → read feedback back; per-tab get/edit |
 | `ko cal` | Google Calendar agenda + quick-add | next 7 days; "when was my last dentist?" |
 | `ko gmail` | read Gmail (read-only) | `ko gmail from alice` — inbox triage in the terminal |
 
@@ -175,6 +175,13 @@ ko gdocs reply <doc> <comment-id> "on it"     # reply to a thread without leavin
 ko gdocs replace <doc> "Q2" "Q3"              # surgical in-place edit — keeps comment threads
 ko gdocs push proposal.md <doc>               # re-push edits in place (same URL; diff+confirm, --force skips)
 ko gdocs get <doc> -o proposal.md             # pull the Doc back as real Markdown (tables incl.)
+
+# Tabs — per-client shared docs keep one tab per client/topic:
+ko gdocs tabs <doc>                           # list tabs (index, title, tabId; sub-tabs indented)
+ko gdocs add-tab <doc> "Acme"                 # add a tab (Docs API; refuses a duplicate title)
+ko gdocs get <doc> --tab Acme                 # read just that tab (title or tabId, case-insensitive)
+ko gdocs append <doc> "note" --tab Acme       # append to one tab's end
+ko gdocs replace <doc> "Q2" "Q3" --tab Acme   # scope the replace to one tab (refuses if it'd orphan a comment; --force)
 ```
 
 Keep the Markdown in git as the source of truth; push to a Doc for review, export to reconcile.
