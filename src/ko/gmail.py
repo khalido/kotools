@@ -22,6 +22,7 @@ import re
 from dataclasses import dataclass
 from email.message import EmailMessage
 from email.utils import formataddr, getaddresses, parseaddr, parsedate_to_datetime
+from pathlib import Path
 
 from googleapiclient.errors import HttpError
 
@@ -235,7 +236,7 @@ def list_attachments(msg_id: str) -> list[Attachment]:
     ]
 
 
-def _unique_path(path):
+def _unique_path(path: Path) -> Path:
     """A non-colliding path: `report.pdf` -> `report.pdf`, then `report-1.pdf`, `report-2.pdf`, …
     (checks the filesystem, so it also dodges collisions within one download batch)."""
     if not path.exists():
@@ -248,7 +249,7 @@ def _unique_path(path):
         i += 1
 
 
-def download_attachments(msg_id: str, index: int | None = None, out_dir=None):
+def download_attachments(msg_id: str, index: int | None = None, out_dir: Path | None = None) -> list[Path]:
     """Download attachment `index` (1-based; None = all) to `out_dir` (default cwd). Returns the
     saved Path(s). Never overwrites — appends -1, -2, …. Works under gmail.readonly."""
     from pathlib import Path
@@ -436,7 +437,12 @@ def create_reply_draft(
     except HttpError as e:
         _handle(e, msg_id)
         raise  # unreachable
-    r = derive_reply(orig, my_address(), reply_all=reply_all, subject_override=subject_override)
+    r = derive_reply(
+        orig,
+        my_address() if reply_all else "",  # only --all filters self out of To+Cc
+        reply_all=reply_all,
+        subject_override=subject_override,
+    )
     raw = _build_raw(
         to=r.to,
         cc=r.cc,
@@ -535,16 +541,31 @@ def _preserved_fields(msg: dict, subject_override: str | None) -> dict:
 
 
 def update_draft(
-    draft_id: str, body: str, *, html_body: str | None = None, subject_override: str | None = None
+    draft_id: str,
+    body: str,
+    *,
+    html_body: str | None = None,
+    subject_override: str | None = None,
+    force: bool = False,
 ) -> str:
     """Replace a draft's body (and optionally subject). Re-fetches the draft first and preserves
-    to/cc/subject/threadId for anything not overridden. Draft id is stable; returns it."""
+    to/cc/subject/threadId for anything not overridden. Draft id is stable; returns it.
+
+    The API replaces the WHOLE MIME message: attachments (and any Bcc) added to the draft —
+    e.g. in Gmail's UI — cannot be carried over and would be dropped, so a draft with
+    attachments is refused unless force=True."""
     svc = _compose_service()
     try:
         existing = svc.users().drafts().get(userId="me", id=draft_id, format="full").execute(num_retries=3)
     except HttpError as e:
         _handle(e, draft_id)
         raise  # unreachable
+    n_att = len(_walk_attachments(existing.get("message", {}).get("payload", {})))
+    if n_att and not force:
+        raise GmailError(
+            f"refusing: draft {draft_id} has {n_att} attachment(s) this update would drop "
+            "(the API replaces the whole message) — pass --force to update anyway"
+        )
     f = _preserved_fields(existing.get("message", {}), subject_override)
     raw = _build_raw(
         to=f["to"],

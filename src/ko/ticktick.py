@@ -57,16 +57,16 @@ async def _call(tool: str, args: dict) -> dict:
         streamablehttp_client(ENDPOINT, headers=headers) as (read, write, _),
         ClientSession(read, write) as session,
     ):
-            await session.initialize()
-            result = await session.call_tool(tool, args, read_timeout_seconds=_TIMEOUT)
-            if result.isError:
-                detail = (
-                    getattr(result.content[0], "text", str(result.content[0]))
-                    if result.content
-                    else "(no detail)"
-                )
-                raise RuntimeError(f"TickTick {tool} failed: {detail}")
-            return result.structuredContent or {}
+        await session.initialize()
+        result = await session.call_tool(tool, args, read_timeout_seconds=_TIMEOUT)
+        if result.isError:
+            detail = (
+                getattr(result.content[0], "text", str(result.content[0]))
+                if result.content
+                else "(no detail)"
+            )
+            raise RuntimeError(f"TickTick {tool} failed: {detail}")
+        return result.structuredContent or {}
 
 
 def list_projects() -> list[Project]:

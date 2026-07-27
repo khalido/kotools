@@ -191,6 +191,48 @@ def test_preserved_fields_carries_omitted_and_overrides_subject():
     assert gmail._preserved_fields(msg, "New")["subject"] == "New"  # override wins
 
 
+def test_update_draft_refuses_to_drop_attachments(monkeypatch):
+    """drafts.update replaces the whole MIME message — a draft holding attachments (e.g. added
+    in Gmail's UI) must not be silently stripped by a body polish. force=True proceeds."""
+    existing = {
+        "message": {
+            "payload": {
+                "parts": [
+                    {"mimeType": "text/plain", "body": {"data": ""}},
+                    {
+                        "filename": "contract.pdf",
+                        "mimeType": "application/pdf",
+                        "body": {"attachmentId": "att1", "size": 100},
+                    },
+                ]
+            },
+            "threadId": "t1",
+        }
+    }
+
+    class _Svc:
+        def users(self):
+            return self
+
+        def drafts(self):
+            return self
+
+        def get(self, userId, id, format):
+            return self
+
+        def update(self, userId, id, body):
+            self.updated = body
+            return self
+
+        def execute(self, num_retries=0):
+            return existing if not hasattr(self, "updated") else {"id": "d1"}
+
+    monkeypatch.setattr(gmail, "_compose_service", lambda: _Svc())
+    with pytest.raises(gmail.GmailError, match="attachment"):
+        gmail.update_draft("d1", "new body")
+    assert gmail.update_draft("d1", "new body", force=True) == "d1"
+
+
 # --- MIME building -----------------------------------------------------------------------
 
 

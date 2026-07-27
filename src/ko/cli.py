@@ -19,13 +19,11 @@ from ._cli_shared import (  # noqa: F401 — re-exported for tests
     _tsv_cell,
     app,
 )
-from .cli_ai import publish_app, tt_app
+from .cli_ai import publish_app, tt_app  # needed by main()'s bare-arg dispatcher
 
 # Re-export group-local helpers that tests import via ko.cli
 from .cli_google import _norm_block, _parse_cells, _short_from  # noqa: F401
-
-# These sub-app objects are needed by main()'s bare-arg dispatcher.
-from .cli_web import x_app
+from .cli_web import x_app  # needed by main()'s bare-arg dispatcher
 
 
 def _version_callback(value: bool) -> None:

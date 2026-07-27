@@ -470,7 +470,7 @@ def gsheets_pdf(
     except HttpError as e:
         typer.echo(_http_error_msg(e), err=True)
         raise typer.Exit(1) from None
-    path = out or Path(f"{name}.pdf")
+    path = out or Path(f"{name.replace(chr(47), chr(45))}.pdf")
     path.write_bytes(pdf)
     typer.echo(f"{len(pdf) / 1024:.0f} KB, {size} {'landscape' if landscape else 'portrait'}", err=True)
     typer.echo(str(path))
@@ -684,7 +684,7 @@ def gdocs_tabs(
     try:
         tabs = gdocs_mod.list_tabs(doc)
     except gdocs_mod.DocsError as e:
-        _die(str(e))
+        _die(str(e), as_json=as_json)
     if as_json:
         typer.echo(json.dumps([asdict(t) for t in tabs]))
         return
@@ -1402,12 +1402,18 @@ def gmail_draft_update(
     body_file: Path = typer.Option(None, "--body-file", help="read the new plain-text body from a file"),
     md: Path = typer.Option(None, "--md", help="read new Markdown body → multipart/alternative"),
     subject: str = typer.Option(None, "--subject", "-s", help="new subject (else keep the existing)"),
+    force: bool = typer.Option(
+        False, "--force", help="update even if the draft has attachments (they WILL be dropped)"
+    ),
 ) -> None:
     """Replace a draft's body (and optionally subject). To/cc/subject/threadId are preserved for
-    anything you don't override (the API replaces the whole message). Draft id is unchanged."""
+    anything you don't override (the API replaces the whole message). Refuses if the draft has
+    attachments — an update drops them — unless --force. Draft id is unchanged."""
     text, html_body = _resolve_body(body, body_file, md)
     with _google_errors():
-        gmail_mod.update_draft(draft_id, text, html_body=html_body, subject_override=subject)
+        gmail_mod.update_draft(
+            draft_id, text, html_body=html_body, subject_override=subject, force=force
+        )
     typer.echo(f"updated draft {draft_id}", err=True)
 
 
