@@ -26,7 +26,9 @@ arxiv_app = typer.Typer(help="arxiv search + paper fetch.", no_args_is_help=True
 app.add_typer(arxiv_app, name="arxiv")
 
 exa_app = typer.Typer(
-    help="exa semantic web search (EXA_API_KEY required).", no_args_is_help=True
+    help="exa semantic web search + URL → markdown (EXA_API_KEY required). "
+    "`search` --highlights/--long/--type/--category/--max-age-hours; `ko prompt exa` for the guide.",
+    no_args_is_help=True,
 )
 app.add_typer(exa_app, name="exa")
 
@@ -164,14 +166,52 @@ def exa_search(
     end_date: str = typer.Option(
         None, "--end-date", help="publish date ceiling (YYYY-MM-DD)"
     ),
+    search_type: str = typer.Option(
+        None,
+        "--type",
+        "-t",
+        help="search algorithm: auto (default), instant, fast, deep-lite, deep, "
+        "deep-reasoning, neural. 'auto' picks the best approach.",
+    ),
+    category: str = typer.Option(
+        None,
+        "--category",
+        help="focus on a data category: 'research paper' (the scholarly index — upgrades the "
+        "--domains .edu workflow), news, company, pdf, 'personal site', 'financial report', people.",
+    ),
+    max_age_hours: int = typer.Option(
+        None,
+        "--max-age-hours",
+        help="freshness of cached content: 0 = always live-crawl, -1 = cached only, "
+        "omitted = live-crawl only as a fallback.",
+    ),
+    highlights: bool = typer.Option(
+        False,
+        "--highlights",
+        help="show the most-relevant sentences per result instead of a summary "
+        "(Exa's agent default; ~10x fewer tokens than full text)",
+    ),
     no_text: bool = typer.Option(
         False, "--no-text", help="skip content entirely (fastest; title + url + date only)"
     ),
     long: bool = typer.Option(False, "--long", "-l", help="fetch the full page text excerpt, not just the summary"),
     as_json: bool = typer.Option(False, "--json", help="emit JSON instead of text"),
 ) -> None:
-    """Semantic search. Each hit shows a query-relevant summary by default. For labs/faculty
-    use --domains .edu; for uni pages use --domains <uni>."""
+    """Semantic search. Each hit shows a query-relevant summary by default (--highlights for
+    key sentences, --long for full text). For labs/faculty use --domains .edu or
+    --category 'research paper'; for uni pages use --domains <uni>."""
+    if search_type is not None and search_type not in exa_mod.SEARCH_TYPES:
+        _die(
+            f"invalid --type {search_type!r}; choose one of: {', '.join(exa_mod.SEARCH_TYPES)}",
+            as_json=as_json,
+            code="usage",
+        )
+    if category is not None and category not in exa_mod.CATEGORIES:
+        _die(
+            f"invalid --category {category!r}; choose one of: {', '.join(exa_mod.CATEGORIES)}",
+            as_json=as_json,
+            code="usage",
+        )
     try:
         results = exa_mod.search(
             query,
@@ -181,8 +221,12 @@ def exa_search(
             since_months=since,
             start_published_date=start_date,
             end_published_date=end_date,
+            type=search_type,
+            category=category,
+            max_age_hours=max_age_hours,
             with_text=long,
-            with_summary=not no_text,
+            with_highlights=highlights,
+            with_summary=not no_text and not highlights,
         )
     except Exception as e:
         _die(str(e), as_json=as_json)
@@ -196,6 +240,11 @@ def exa_search(
         title = " ".join((r.title or r.url).split())  # collapse stray newlines in the title
         typer.echo(f"{title}{'  ·  ' + day if day else ''}")
         typer.echo(f"  {r.url}")
+        if highlights and r.highlights:  # render each highlight sentence on its own line
+            for h in r.highlights:
+                typer.echo(f"  • {' '.join(h.split())}")
+            typer.echo("")
+            continue
         blurb = (r.text if long else None) or r.summary
         if blurb:
             excerpt = " ".join(blurb.split())
@@ -215,16 +264,22 @@ def exa_get(
 ) -> None:
     """Fetch clean markdown for known URLs. Prints concatenated markdown to stdout by default."""
     try:
-        contents = exa_mod.get_contents(urls)
+        result = exa_mod.get_contents(urls)
     except Exception as e:
         _die(str(e))
-    missing = [u for u in urls if u not in contents]
-    if missing:  # don't let failed URLs vanish silently — an agent should know it's partial
-        note = f"fetched {len(contents)} of {len(urls)}; no content for: {', '.join(missing)}"
+    # A URL can come back present-but-empty (Exa returns HTTP 200 with a per-URL status even
+    # on failure); treat both "absent" and "empty text" as failed so agents see a partial run.
+    got = {u: t for u, t in result.texts.items() if t}
+    failed = [u for u in urls if u not in got]
+    if failed:  # don't let failed URLs vanish silently — an agent should know it's partial
+        # Exa's statuses carry the reason (e.g. error/source); surface them when present.
+        reasons = {s.url: s.status for s in result.statuses if s.status and s.status != "success"}
+        detail = ", ".join(f"{u} ({reasons[u]})" if u in reasons else u for u in failed)
+        note = f"fetched {len(got)} of {len(urls)}; no content for: {detail}"
         typer.echo(f"[{note}]", err=True)
-    if not contents:  # all URLs failed → runtime error (no output to give)
+    if not got:  # all URLs failed → runtime error (no output to give)
         _die(f"no content returned for any of the {len(urls)} URL(s)")
-    sections = [f"# {url}\n\n{text}" for url, text in contents.items()]
+    sections = [f"# {url}\n\n{text}" for url, text in got.items()]
     combined = "\n\n---\n\n".join(sections)
     if out is None:
         typer.echo(combined)
