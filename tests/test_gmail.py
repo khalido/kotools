@@ -353,9 +353,13 @@ def test_send_gate_env_values(monkeypatch):
 
 
 def test_md_to_html_renders_gfm_tables():
-    """Tables are GFM, not CommonMark — an agent's invoice table must become <table>,
-    not literal pipe text."""
-    html_out = gmail.md_to_html("| a | b |\n|---|---|\n| 1 | 2 |\n\n~~gone~~ **bold**")
-    assert "<table>" in html_out and "<td>1</td>" in html_out
+    """Tables are GFM, not CommonMark — an agent's invoice table must become a styled
+    <table> (inline faint borders; Gmail ignores <style> blocks), not literal pipe text."""
+    html_out = gmail.md_to_html("| a | b |\n|---|--:|\n| 1 | 2 |\n\n~~gone~~ **bold**")
+    assert '<table style="border-collapse:collapse">' in html_out
+    assert f'<td style="{gmail._TABLE_CSS}">1</td>' in html_out
+    # right-aligned column: border css merged IN FRONT of the alignment, no double-inject
+    assert f'<td style="{gmail._TABLE_CSS}text-align:right">2</td>' in html_out
+    assert html_out.count(gmail._TABLE_CSS) == 4  # exactly one injection per cell (2 th + 2 td)
     assert "<s>gone</s>" in html_out and "<strong>bold</strong>" in html_out
     assert "|" not in html_out.replace("</", "").replace("<", "")  # no raw pipes survive

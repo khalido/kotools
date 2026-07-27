@@ -322,13 +322,30 @@ def _re_subject(subject: str) -> str:
     return s if s[:3].lower() == "re:" else f"Re: {s}"
 
 
+_TABLE_CSS = "border:1px solid #ddd;padding:3px 8px;"
+
+
+def _style_tables(html_out: str) -> str:
+    """Inline faint-gray borders onto table/th/td — Gmail ignores <style> blocks, so
+    email-safe styling must ride on the tags. Merges with the text-align style GFM
+    column alignment already puts on th/td. Pure."""
+    html_out = html_out.replace("<table>", '<table style="border-collapse:collapse">')
+    for tag in ("th", "td"):
+        # aligned cells (style="text-align:…") first, then bare ones — this order can't double-inject
+        html_out = html_out.replace(f'<{tag} style="', f'<{tag} style="{_TABLE_CSS}')
+        html_out = html_out.replace(f"<{tag}>", f'<{tag} style="{_TABLE_CSS}">')
+    return html_out
+
+
 def md_to_html(md: str) -> str:
-    """Markdown -> HTML via markdown-it-py: CommonMark + GFM tables/strikethrough.
+    """Markdown -> HTML via markdown-it-py: CommonMark + GFM tables/strikethrough,
+    tables styled inline (faint borders) so they read as tables in Gmail.
     (Tables are a GFM extension — the bare CommonMark preset renders them as literal
     pipe text, which is how an agent's invoice table once went out.)"""
     from markdown_it import MarkdownIt
 
-    return MarkdownIt("commonmark").enable(["table", "strikethrough"]).render(md)
+    out = MarkdownIt("commonmark").enable(["table", "strikethrough"]).render(md)
+    return _style_tables(out)
 
 
 def _build_raw(
