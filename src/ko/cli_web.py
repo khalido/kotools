@@ -78,7 +78,7 @@ def arxiv_search(
         help="restrict to the last N months (hard filter in relevance mode)",
     ),
     n: int = typer.Option(
-        arxiv_mod.DEFAULT_MAX_RESULTS, "--n", help="max results to return"
+        arxiv_mod.DEFAULT_MAX_RESULTS, "--n", "-n", help="max results to return"
     ),
     long: bool = typer.Option(False, "--long", "-l", help="include abstract summary"),
     as_json: bool = typer.Option(False, "--json", help="emit JSON instead of text"),
@@ -144,7 +144,7 @@ def _parse_domains(value: str | None) -> list[str] | None:
 @exa_app.command("search")
 def exa_search(
     query: str = typer.Argument(..., help="semantic search query"),
-    n: int = typer.Option(exa_mod.DEFAULT_MAX_RESULTS, "--n", help="max results"),
+    n: int = typer.Option(exa_mod.DEFAULT_MAX_RESULTS, "--n", "-n", help="max results"),
     domains: str = typer.Option(
         None,
         "--domains",
@@ -310,7 +310,7 @@ def _echo_papers(papers: list[hf_mod.Paper], as_json: bool, long: bool) -> None:
 
 @hf_app.command("top")
 def hf_top(
-    n: int = typer.Option(hf_mod.DEFAULT_TOP_N, "--n", help="how many papers"),
+    n: int = typer.Option(hf_mod.DEFAULT_TOP_N, "--n", "-n", help="how many papers"),
     date: str = typer.Option(
         None, "--date", "-d", help="YYYY-MM-DD daily feed (default: latest)"
     ),
@@ -328,7 +328,7 @@ def hf_top(
 @hf_app.command("search")
 def hf_search(
     query: str = typer.Argument(..., help="search query (semantic + full-text)"),
-    n: int = typer.Option(hf_mod.DEFAULT_SEARCH_N, "--n", help="max results"),
+    n: int = typer.Option(hf_mod.DEFAULT_SEARCH_N, "--n", "-n", help="max results"),
     long: bool = typer.Option(False, "--long", "-l", help="include summary excerpt"),
     as_json: bool = typer.Option(False, "--json", help="emit JSON instead of text"),
 ) -> None:
@@ -432,7 +432,7 @@ def _echo_work_card(w: papers_mod.Work) -> None:
 @papers_app.command("search")
 def papers_search(
     query: str = typer.Argument(..., help="search query (title, abstract, full-text)"),
-    n: int = typer.Option(papers_mod.DEFAULT_N, "--n", help="max results"),
+    n: int = typer.Option(papers_mod.DEFAULT_N, "--n", "-n", help="max results"),
     as_json: bool = typer.Option(False, "--json", help="emit JSON instead of TSV"),
 ) -> None:
     """Search articles across all publishers, relevance order.
@@ -495,7 +495,7 @@ def papers_get(
 @papers_app.command("cites")
 def papers_cites(
     ref: str = typer.Argument(..., help="DOI, doi.org URL, arxiv id, or OpenAlex W-id"),
-    n: int = typer.Option(papers_mod.DEFAULT_N, "--n", help="max results"),
+    n: int = typer.Option(papers_mod.DEFAULT_N, "--n", "-n", help="max results"),
     as_json: bool = typer.Option(False, "--json", help="emit JSON instead of TSV"),
 ) -> None:
     """Papers citing this one, most-cited first — 'who built on it?'
@@ -513,7 +513,7 @@ def papers_cites(
 @papers_app.command("refs")
 def papers_refs(
     ref: str = typer.Argument(..., help="DOI, doi.org URL, arxiv id, or OpenAlex W-id"),
-    n: int = typer.Option(papers_mod.DEFAULT_N, "--n", help="max results (batch cap 50)"),
+    n: int = typer.Option(papers_mod.DEFAULT_N, "--n", "-n", help="max results (batch cap 50)"),
     as_json: bool = typer.Option(False, "--json", help="emit JSON instead of TSV"),
 ) -> None:
     """This paper's references, most-cited first — 'what does it build on?'"""
@@ -529,7 +529,7 @@ def papers_refs(
 @papers_app.command("similar")
 def papers_similar(
     ref: str = typer.Argument(..., help="DOI, doi.org URL, arxiv id, or OpenAlex W-id"),
-    n: int = typer.Option(papers_mod.DEFAULT_SIMILAR_N, "--n", help="max results"),
+    n: int = typer.Option(papers_mod.DEFAULT_SIMILAR_N, "--n", "-n", help="max results"),
     as_json: bool = typer.Option(False, "--json", help="emit JSON instead of TSV"),
 ) -> None:
     """Related papers via Semantic Scholar recommendations (needs S2_API_KEY, free)."""
@@ -564,7 +564,7 @@ def _echo_stories(stories: list[hn_mod.Story], as_json: bool) -> None:
 @hn_app.command("top")
 def hn_top(
     n: int = typer.Option(
-        hn_mod.DEFAULT_TOP_N, "--n", help="how many stories (10 or 20, hckrnews-style)"
+        hn_mod.DEFAULT_TOP_N, "--n", "-n", help="how many stories (10 or 20, hckrnews-style)"
     ),
     days: int = typer.Option(
         1, "--days", "-d", help="window: top stories of the last N days"
@@ -585,7 +585,7 @@ def hn_top(
 @hn_app.command("search")
 def hn_search(
     query: str = typer.Argument(..., help="search query"),
-    n: int = typer.Option(hn_mod.DEFAULT_SEARCH_N, "--n", help="max results"),
+    n: int = typer.Option(hn_mod.DEFAULT_SEARCH_N, "--n", "-n", help="max results"),
     since: int = typer.Option(
         hn_mod.DEFAULT_SINCE_MONTHS,
         "--since",
@@ -617,7 +617,7 @@ def hn_search(
 def hn_item(
     item_id: str = typer.Argument(..., help="story id (first column of top/search)"),
     n: int = typer.Option(
-        hn_mod.DEFAULT_MAX_COMMENTS, "--n", help="max comments to show (0 = all)"
+        hn_mod.DEFAULT_MAX_COMMENTS, "--n", "-n", help="max comments to show (0 = all)"
     ),
     as_json: bool = typer.Option(False, "--json", help="emit JSON instead of text"),
 ) -> None:
@@ -718,7 +718,7 @@ def x_search(
     ),
     n: int = typer.Option(
         x_mod.DEFAULT_MAX_RESULTS,
-        "--n",
+        "--n", "-n",
         help="max posts; API minimum 10 per read (X bills per post read) — smaller --n just truncates the display",
     ),
     days: int = typer.Option(
@@ -764,7 +764,7 @@ def x_list(
     ),
     n: int = typer.Option(
         x_mod.DEFAULT_LIST_N,
-        "--n",
+        "--n", "-n",
         help="max posts; API minimum 10 per read (X bills per post read) — smaller --n just truncates the display",
     ),
     as_json: bool = typer.Option(False, "--json", help="emit JSON instead of text"),
@@ -786,7 +786,7 @@ def x_user(
     ),
     n: int = typer.Option(
         x_mod.DEFAULT_MAX_RESULTS,
-        "--n",
+        "--n", "-n",
         help="max posts; API minimum 5 per read (X bills per post read) — smaller --n just truncates the display",
     ),
     as_json: bool = typer.Option(False, "--json", help="emit JSON instead of text"),
@@ -877,7 +877,7 @@ def tv(
     country: str = typer.Option(
         tmdb_mod.DEFAULT_COUNTRY, "--country", "-c", help="watch-provider region"
     ),
-    n: int = typer.Option(3, "--n", help="how many runner-up matches to list"),
+    n: int = typer.Option(3, "--n", "-n", help="how many runner-up matches to list"),
     as_json: bool = typer.Option(False, "--json", help="emit JSON instead of text"),
 ) -> None:
     """Movie/TV quick check: rating, overview, and where to watch (AU by default)."""

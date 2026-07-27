@@ -204,3 +204,36 @@ def test_publish_list_json_mixes_dataclasses_and_cf_rows(monkeypatch, tmp_path, 
     assert (
         rows[1]["url"] == "https://elsewhere.example.com"
     )  # cf-only row, domain resolved
+
+
+def test_count_flags_accept_both_n_forms():
+    """Agents guess either `-n` or `--n`; every count flag takes both (gmail keeps --max too).
+    `cal --days` stays a window, not a count."""
+    import typer as _typer
+
+    from ko.cli import app
+
+    root = _typer.main.get_command(app)
+
+    def opts_for(path: list[str]) -> set[str]:
+        cmd = root
+        for part in path:
+            cmd = cmd.commands[part]
+        return {o for p in cmd.params for o in p.opts}
+
+    for path in (["hn", "top"], ["papers", "search"], ["logs"], ["exa", "search"]):
+        o = opts_for(path)
+        assert {"-n", "--n"} <= o, (path, o)
+    gmail = opts_for(["gmail"])
+    assert {"-n", "--n", "--max"} <= gmail  # --max kept as a back-compat alias
+    assert {"-d", "--days"} <= opts_for(["cal"])  # a window, deliberately not -n
+
+
+def test_bare_tt_and_todo_alias_dispatch_to_lists():
+    """House style: a bare group does the useful thing. `ko tt` / `ko todo` -> lists;
+    `ko todo Shopping` -> items Shopping."""
+    assert cli._route(["tt"]) == ["tt", "lists"]
+    assert cli._route(["todo"]) == ["todo", "lists"]
+    assert cli._route(["todo", "Shopping"]) == ["todo", "items", "Shopping"]
+    assert cli._route(["tt", "lists"]) == ["tt", "lists"]  # explicit subcommand untouched
+    assert cli._route(["tt", "--help"]) == ["tt", "--help"]

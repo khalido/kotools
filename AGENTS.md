@@ -34,9 +34,9 @@ they're present. If a command fails with an auth/key error, `ko doctor` tells yo
 
 ## Limits / pagination
 
-- List commands take `--n` (default ~10) to bound output. Note: `ko gmail` / `ko cal`
-  currently use `-n` as the short alias; most other commands use `--n` with no short form.
-  When in doubt, check `ko <cmd> --help`.
+- List commands take `-n` **or** `--n` (default ~10) to bound output — both work everywhere,
+  so you never have to guess (`ko gmail` also still accepts `--max`). `ko cal --days/-d` is a
+  time *window*, not a result count.
 
 ## Bare-argument shortcuts (not visible in `--help`)
 
@@ -45,6 +45,7 @@ they're present. If a command fails with an auth/key error, `ko doctor` tells yo
 - `ko <url>` → `ko fetch <url>` (URL → markdown; YouTube URLs return the transcript, or fail cleanly when captions are off)
 - `ko <file>` → `ko doc <file>` (PDF/Office/image → text), when the arg is an existing file
 - `ko x <name>` → `ko x list <name>` (anything after `x` that isn't an x subcommand is a list name)
+- `ko tt` (alias `ko todo`) → `ko tt lists`; `ko tt <name>` → `ko tt items <name>` (anything that isn't a tt subcommand is a list name)
 - `ko <anything> help` → `ko <anything> --help` (trailing `help` prints help at any level: `ko help`, `ko exa help`, `ko exa search help`)
 
 ## Auth

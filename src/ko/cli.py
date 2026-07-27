@@ -49,13 +49,22 @@ def _startup(
 
 
 @app.command("doctor")
-def doctor() -> None:
-    """Setup health check: every tool, what it needs, and whether it's ready."""
+def doctor(
+    as_json: bool = typer.Option(
+        False, "--json", help="emit JSON (tools, settings, dirs) — full values, no table truncation"
+    ),
+) -> None:
+    """Setup health check: every tool, what it needs, and whether it's ready.
+
+    --json: {tools:[{tool,does,needs,status}], settings:[{name,value,source}], dirs:{…},
+    models:{count,providers}} — the table truncates long values, JSON never does."""
     import shutil
     import sys
 
     from rich.console import Console
     from rich.table import Table
+
+    console = Console(quiet=as_json)  # --json: suppress the human table, emit one object at the end
 
     from . import config, google_auth
     from . import llm as _llm
@@ -206,12 +215,12 @@ def doctor() -> None:
     table.add_column("status")
     for name, does, needs, (status, color) in rows:
         table.add_row(name, does, needs, f"[{color}]{status}[/{color}]")
-    Console().print(table)
+    console.print(table)
 
     _llm.refresh_openrouter_models()  # populate/refresh the OR catalog cache
     extra = [m for m in _llm.available_models() if ":" in m]
     providers = sorted({m.split(":")[0] for m in extra})
-    Console().print(
+    console.print(
         f"[dim]models available to -m: {len(extra)} across {', '.join(providers) or 'none'}[/dim]"
     )
 
@@ -237,18 +246,18 @@ def doctor() -> None:
         ("google account", active_account(), config.setting_source("KO_GOOGLE_ACCOUNT", "google", "account")),
         ("publish domain", _publish.publish_domain() or "(workers.dev)", "config" if config.get("publish", "domain") else "default"),
     ]
-    Console().print(
+    console.print(
         "[dim]settings: "
         + " · ".join(f"{name}={val} ({src})" for name, val, src in settings)
         + "[/dim]"
     )
-    Console().print(
+    console.print(
         f"[dim]dirs: config={dirs.config_dir()} · state={dirs.state_dir()} · cache={dirs.cache_dir()}[/dim]"
     )
     if err := config.config_error():
-        Console().print(f"[red]⚠ config.toml is malformed — keys/settings above are IGNORED: {err}[/red]")
+        console.print(f"[red]⚠ config.toml is malformed — keys/settings above are IGNORED: {err}[/red]")
     elif not (dirs.config_dir() / "config.toml").exists():
-        Console().print("[dim]no config.toml (env vars + baked defaults only)[/dim]")
+        console.print("[dim]no config.toml (env vars + baked defaults only)[/dim]")
 
     # refs folder: count + disk weight, flagging clones heavy enough to care about
     from . import refs as refs_mod
@@ -262,7 +271,7 @@ def doctor() -> None:
             line = f"refs: {len(_sizes)} repos · {_total / 1e9:.1f} GB at {_refs_base}"
             if _big:
                 line += "  [red]⚠ big: " + ", ".join(f"{n} {b / 1e9:.1f} GB" for n, b in _big) + "[/red]"
-            Console().print(f"[dim]{line}[/dim]")
+            console.print(f"[dim]{line}[/dim]")
 
     # live OpenRouter key check — /credits is a free authenticated GET, so this both
     # proves the key works and shows money left (the agent-tier default rides on it)
@@ -271,13 +280,35 @@ def doctor() -> None:
 
         b = billing.openrouter()  # never raises — errors land in b.error
         if b.error:
-            Console().print(f"[red]openrouter: key set but /credits failed — {b.error}[/red]")
+            console.print(f"[red]openrouter: key set but /credits failed — {b.error}[/red]")
         elif b.remaining is not None:
-            Console().print(
+            console.print(
                 f"[dim]openrouter: key works — ${b.remaining:.2f} of ${b.total:.2f} credits left"
                 + (f" ({b.trend})" if b.trend else "")
                 + "[/dim]"
             )
+
+    if as_json:
+        import json as _json
+
+        typer.echo(
+            _json.dumps(
+                {
+                    "tools": [
+                        {"tool": name, "does": does, "needs": needs, "status": status}
+                        for name, does, needs, (status, _color) in rows
+                    ],
+                    "settings": [{"name": n, "value": v, "source": src} for n, v, src in settings],
+                    "dirs": {
+                        "config": str(dirs.config_dir()),
+                        "state": str(dirs.state_dir()),
+                        "cache": str(dirs.cache_dir()),
+                    },
+                    "models": {"count": len(extra), "providers": providers},
+                    "config_error": config.config_error(),
+                }
+            )
+        )
 
 
 # --- refs: reference-repo folder manager ---
@@ -452,12 +483,14 @@ def refs_list(
 
 @app.command("logs")
 def logs_cmd(
-    n: int = typer.Option(20, "--n", help="how many recent events"),
+    n: int = typer.Option(20, "--n", "-n", help="how many recent events"),
     errors: bool = typer.Option(False, "--errors", help="only error events"),
     as_json: bool = typer.Option(False, "--json", help="emit JSON"),
 ) -> None:
     """Recent ko command logs — local structured JSONL (one event per command, no args/secrets).
     On by default; disable with `[logs] enabled = false` in config.toml. A PostHog sync is later.
+
+    --json fields: ts, level, event, cmd, duration_ms, exit_code, error, ko_version.
     """
     import json as _json
 
@@ -517,8 +550,11 @@ def _route(args: list[str]) -> list[str]:
     elif args[0] == "x" and len(args) > 1 and not args[1].startswith("-"):
         if args[1] not in {c.name for c in x_app.registered_commands}:
             args.insert(1, "list")
-    elif args[0] == "tt" and len(args) > 1 and not args[1].startswith("-"):
-        if args[1] not in {c.name for c in tt_app.registered_commands}:
+    elif args[0] in ("tt", "todo"):
+        tt_known = {c.name for c in tt_app.registered_commands}
+        if not args[1:]:
+            args.insert(1, "lists")  # bare `ko tt` -> your lists (house style: do the useful thing)
+        elif not args[1].startswith("-") and args[1] not in tt_known:
             args.insert(1, "items")  # `ko tt Shopping` -> `ko tt items Shopping`
     elif args[0] == "publish":
         pub_known = {c.name for c in publish_app.registered_commands}

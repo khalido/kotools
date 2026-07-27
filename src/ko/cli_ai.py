@@ -38,10 +38,14 @@ mcp_app = typer.Typer(
 app.add_typer(mcp_app, name="mcp")
 
 tt_app = typer.Typer(
-    help="TickTick lists/tasks, read-only via its hosted MCP (TICKTICK_API_KEY). Manage tasks in TickTick itself.",
-    no_args_is_help=True,
+    help=(
+        "TickTick lists/tasks, read-only via its hosted MCP (TICKTICK_API_KEY). Manage tasks in "
+        "TickTick itself. Bare `ko tt` lists your lists; `ko tt <list>` opens one. "
+        "`ko todo` is an alias."
+    ),
 )
 app.add_typer(tt_app, name="tt")
+app.add_typer(tt_app, name="todo")  # `ko todo` — same subapp, the name I reach for
 
 publish_app = typer.Typer(
     help=(
@@ -291,7 +295,7 @@ def agent_sessions(
 @sessions_app.command("summarize")
 def agent_sessions_summarize(
     n: int = typer.Option(
-        None, "--n", help="max sessions to summarize this run (default: all pending)"
+        None, "--n", "-n", help="max sessions to summarize this run (default: all pending)"
     ),
     model: str = typer.Option(
         None,

@@ -1239,7 +1239,7 @@ def _gmail_main(
     account: str = typer.Option(
         None, "--account", "-a", help="Google account (else env / config / 'default')"
     ),
-    n: int = typer.Option(10, "-n", "--max", help="how many messages (default 10)"),
+    n: int = typer.Option(10, "-n", "--n", "--max", help="how many messages (default 10)"),
     unread: bool = typer.Option(False, "--unread", help="only unread"),
     as_json: bool = typer.Option(False, "--json", help="emit JSON"),
 ) -> None:
@@ -1258,7 +1258,7 @@ def _gmail_main(
 @gmail_app.command("search")
 def gmail_search(
     query: list[str] = typer.Argument(..., help="Gmail query, e.g. from:alice newer_than:7d"),
-    n: int = typer.Option(10, "-n", "--max", help="how many (default 10)"),
+    n: int = typer.Option(10, "-n", "--n", "--max", help="how many (default 10)"),
     unread: bool = typer.Option(False, "--unread", help="only unread"),
     as_json: bool = typer.Option(False, "--json", help="emit JSON"),
 ) -> None:
@@ -1272,7 +1272,7 @@ def gmail_search(
 @gmail_app.command("from")
 def gmail_from(
     who: str = typer.Argument(..., help="sender name or email"),
-    n: int = typer.Option(10, "-n", "--max", help="how many (default 10)"),
+    n: int = typer.Option(10, "-n", "--n", "--max", help="how many (default 10)"),
     unread: bool = typer.Option(False, "--unread", help="only unread"),
     as_json: bool = typer.Option(False, "--json", help="emit JSON"),
 ) -> None:
@@ -1424,7 +1424,7 @@ def gmail_draft_reply(
 
 @gmail_draft_app.command("list")
 def gmail_draft_list(
-    n: int = typer.Option(10, "-n", "--max", help="how many (default 10)"),
+    n: int = typer.Option(10, "-n", "--n", "--max", help="how many (default 10)"),
     as_json: bool = typer.Option(False, "--json", help="emit JSON"),
 ) -> None:
     """List drafts (TSV: draft id, to, subject, cc)."""
