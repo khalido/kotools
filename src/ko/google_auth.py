@@ -10,8 +10,8 @@ optional — you only need one when a single client can't authorize the account 
 Workspace "Internal" consent screen won't authorize a personal Gmail; give that account
 its own `google_client_<account>.json`).
 
-Scopes are per-API: `ko` requests Sheets + Docs + Calendar (read or read+write) + Gmail (read-only)
-+ Drive `drive.file`. It deliberately does NOT request a broad Drive scope (`drive`/`drive.readonly`),
+Scopes are per-API: `ko` requests Sheets + Docs + Calendar (read or read+write) + Gmail (read
++ `gmail.compose` for drafts, no `gmail.modify`) + Drive `drive.file`. It deliberately does NOT request a broad Drive scope (`drive`/`drive.readonly`),
 so it still can't browse your whole Drive — only the docs/sheets you address by ID. The narrow
 `drive.file` scope grants access *only to files `ko` itself creates or that you open by ID*, which is
 exactly what the Markdown↔Doc round-trip and comment-reading need (those are Drive-API features the
@@ -50,7 +50,8 @@ SCOPES_READWRITE = [
     "https://www.googleapis.com/auth/documents",
     "https://www.googleapis.com/auth/calendar.events",
     "https://www.googleapis.com/auth/calendar.readonly",  # list calendars + read events
-    "https://www.googleapis.com/auth/gmail.readonly",  # Gmail is read-only in ko (no send/modify)
+    "https://www.googleapis.com/auth/gmail.readonly",  # read Gmail (compose alone can't read)
+    "https://www.googleapis.com/auth/gmail.compose",  # create/update/send drafts (NOT gmail.modify)
     "https://www.googleapis.com/auth/drive.file",  # per-file Drive: only files ko creates/opens
 ]
 

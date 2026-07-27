@@ -82,11 +82,23 @@ app.add_typer(cal_app, name="cal")
 
 gmail_app = typer.Typer(
     help=(
-        "Read Gmail (read-only; same OAuth token as `ko gsheets`). Bare `ko gmail` = recent "
-        "inbox; also `search` (Gmail query syntax), `from <who>`, `view <id>`, `thread <id>`."
+        "Gmail (same OAuth token as `ko gsheets`). Read (read-only): bare `ko gmail` = recent "
+        "inbox; also `search` (Gmail query syntax), `from <who>`, `view <id>`, `thread <id>`, "
+        "`attach <id>` (list/download attachments). `draft` = compose drafts (needs `gmail.compose` "
+        "— re-auth once). Sending is opt-in (`draft send`)."
     ),
 )
 app.add_typer(gmail_app, name="gmail")
+
+gmail_draft_app = typer.Typer(
+    help=(
+        "Compose Gmail drafts (needs `gmail.compose` — `ko gmail auth --logout` then `auth` to "
+        "grant it). new / reply / list / show / update / send. Drafts are the default workflow; "
+        "`draft send` is opt-in (`[gmail] allow_send = true` / KO_GMAIL_SEND=1)."
+    ),
+    no_args_is_help=True,
+)
+gmail_app.add_typer(gmail_draft_app, name="draft")
 
 
 # --- google auth helpers (shared across gsheets / gdocs / cal — one token per account) ---
@@ -1172,6 +1184,24 @@ def _emit_messages(msgs, as_json: bool) -> None:
             typer.echo(f"    {m.snippet[:160]}")
 
 
+def _resolve_body(body: str | None, body_file: Path | None, md: Path | None) -> tuple[str, str | None]:
+    """Exactly one of --body / --body-file / --md -> (plain_text, html_or_None). `--md` renders
+    HTML for a multipart/alternative message; the others stay plain text/plain."""
+    given = [x for x in (body, body_file, md) if x is not None]
+    if len(given) != 1:
+        _die("pass exactly one of --body / --body-file / --md", code="usage")
+    if body is not None:
+        return body, None
+    src = body_file if body_file is not None else md
+    try:
+        text = src.read_text()
+    except OSError as e:
+        _die(f"can't read {src}: {e}")
+    if md is not None:
+        return text, gmail_mod.md_to_html(text)
+    return text, None
+
+
 # --- gmail commands ---
 
 
@@ -1262,6 +1292,156 @@ def gmail_thread(
         typer.echo(body if full else body[:cap])
         if not full and len(body) > cap:
             typer.echo(f"\n… {len(body) - cap} more chars — pass --full", err=True)
+
+
+@gmail_app.command("attach")
+def gmail_attach(
+    msg_id: str = typer.Argument(..., help="message id (from a list/search row)"),
+    n: int = typer.Argument(
+        None, help="which attachment to download (1-based; omit in download mode = all)"
+    ),
+    out: Path = typer.Option(None, "-o", "--out", help="output dir for downloads (default: cwd)"),
+    as_json: bool = typer.Option(False, "--json", help="emit the attachment list as JSON"),
+) -> None:
+    """List a message's attachments, or download them.
+
+    Bare `ko gmail attach <id>` lists (TSV: index, filename, size, mimeType; `--json` for the
+    array agents parse). Pass N or -o DIR to download: the Nth attachment, or all if N is
+    omitted, to DIR (default cwd). Never overwrites — appends -1, -2, …; prints saved paths.
+    Downloads compose with `ko doc <file>` (PDF/Office/image → text)."""
+    download = n is not None or out is not None
+    with _google_errors(as_json):
+        if download:
+            paths = gmail_mod.download_attachments(msg_id, index=n, out_dir=out)
+            for p in paths:
+                typer.echo(str(p))
+            typer.echo(f"saved {len(paths)} file(s)", err=True)
+            return
+        atts = gmail_mod.list_attachments(msg_id)
+    if not atts:
+        _no_results("no attachments", as_json)
+    if as_json:
+        typer.echo(json.dumps([asdict(a) for a in atts]))
+        return
+    for a in atts:
+        typer.echo(f"{a.index}\t{_tsv_cell(a.filename)}\t{a.size}\t{a.mime_type}")
+
+
+@gmail_draft_app.command("new")
+def gmail_draft_new(
+    to: str = typer.Option(..., "--to", help="recipient(s), comma-separated"),
+    subject: str = typer.Option(..., "--subject", "-s", help="subject line"),
+    body: str = typer.Option(None, "--body", help="body text (plain text/plain)"),
+    body_file: Path = typer.Option(None, "--body-file", help="read the plain-text body from a file"),
+    md: Path = typer.Option(
+        None, "--md", help="read a Markdown file → multipart/alternative (plain + html)"
+    ),
+    cc: str = typer.Option(None, "--cc", help="cc recipient(s), comma-separated"),
+) -> None:
+    """Create a new draft. Prints the draft id (stable across updates). Nothing is sent."""
+    text, html_body = _resolve_body(body, body_file, md)
+    with _google_errors():
+        draft_id = gmail_mod.create_draft(to, subject, text, cc=cc or "", html_body=html_body)
+    typer.echo(draft_id)
+    typer.echo(f"draft created — review/send in Gmail, or `ko gmail draft send {draft_id}`", err=True)
+
+
+@gmail_draft_app.command("reply")
+def gmail_draft_reply(
+    msg_id: str = typer.Argument(..., help="message id to reply to"),
+    body: str = typer.Option(None, "--body", help="reply text (plain text/plain)"),
+    body_file: Path = typer.Option(None, "--body-file", help="read the plain-text reply from a file"),
+    md: Path = typer.Option(None, "--md", help="read a Markdown reply → multipart/alternative"),
+    all_: bool = typer.Option(False, "--all", help="reply-all (cc the original To+Cc, minus you)"),
+    subject: str = typer.Option(
+        None, "--subject", "-s", help="override the 'Re: …' subject (a different subject drops threading)"
+    ),
+) -> None:
+    """Draft a threaded reply (threadId + In-Reply-To/References + 'Re: '). Prints the draft id.
+    Errors if the original has no Message-ID. Nothing is sent."""
+    text, html_body = _resolve_body(body, body_file, md)
+    with _google_errors():
+        draft_id = gmail_mod.create_reply_draft(
+            msg_id, text, html_body=html_body, reply_all=all_, subject_override=subject
+        )
+    typer.echo(draft_id)
+    typer.echo(f"reply draft created — `ko gmail draft send {draft_id}` to send", err=True)
+
+
+@gmail_draft_app.command("list")
+def gmail_draft_list(
+    n: int = typer.Option(10, "-n", "--max", help="how many (default 10)"),
+    as_json: bool = typer.Option(False, "--json", help="emit JSON"),
+) -> None:
+    """List drafts (TSV: draft id, to, subject)."""
+    with _google_errors(as_json):
+        drafts = gmail_mod.list_drafts(n=n)
+    if not drafts:
+        _no_results("no drafts", as_json)
+    if as_json:
+        typer.echo(json.dumps([asdict(d) for d in drafts]))
+        return
+    for d in drafts:
+        typer.echo(f"{d.id}\t{_tsv_cell(d.to)}\t{_tsv_cell(d.subject)}")
+
+
+@gmail_draft_app.command("show")
+def gmail_draft_show(
+    draft_id: str = typer.Argument(..., help="draft id (from `ko gmail draft list`)"),
+) -> None:
+    """Show a draft: headers + plain-text body."""
+    with _google_errors():
+        _id, meta, body = gmail_mod.get_draft(draft_id)
+    typer.echo(f"To:      {meta.to}")
+    typer.echo(f"Subject: {meta.subject}\n")
+    typer.echo(body)
+
+
+@gmail_draft_app.command("update")
+def gmail_draft_update(
+    draft_id: str = typer.Argument(..., help="draft id to update"),
+    body: str = typer.Option(None, "--body", help="new body text (plain text/plain)"),
+    body_file: Path = typer.Option(None, "--body-file", help="read the new plain-text body from a file"),
+    md: Path = typer.Option(None, "--md", help="read new Markdown body → multipart/alternative"),
+    subject: str = typer.Option(None, "--subject", "-s", help="new subject (else keep the existing)"),
+) -> None:
+    """Replace a draft's body (and optionally subject). To/cc/subject/threadId are preserved for
+    anything you don't override (the API replaces the whole message). Draft id is unchanged."""
+    text, html_body = _resolve_body(body, body_file, md)
+    with _google_errors():
+        gmail_mod.update_draft(draft_id, text, html_body=html_body, subject_override=subject)
+    typer.echo(f"updated draft {draft_id}", err=True)
+
+
+@gmail_draft_app.command("send")
+def gmail_draft_send(
+    draft_id: str = typer.Argument(..., help="draft id to send"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="skip the confirm (required when not a TTY)"),
+) -> None:
+    """Send a draft. OPT-IN: refuses unless `[gmail] allow_send = true` in config.toml or
+    KO_GMAIL_SEND=1 — drafting is the default; a human sends from Gmail. Confirms first (shows
+    to/subject/attachment count). No scheduled-send API — create the draft, schedule it in Gmail's UI."""
+    if not gmail_mod.send_allowed():
+        _die(
+            "sending is disabled — drafts are the default workflow. Enable with "
+            "`[gmail] allow_send = true` in config.toml or KO_GMAIL_SEND=1."
+        )
+    with _google_errors():
+        info = gmail_mod.draft_summary(draft_id)
+    if not yes:
+        prompt = (
+            f"send draft to {info['to']} — {info['subject']!r} "
+            f"({info['attachments']} attachment(s))?"
+        )
+        if sys.stdin.isatty():
+            typer.confirm(prompt, abort=True)
+        else:
+            typer.echo("refusing to send without a TTY — pass --yes", err=True)
+            raise typer.Exit(2)
+    with _google_errors():
+        sent_id = gmail_mod.send_draft(draft_id)
+    typer.echo(sent_id)
+    typer.echo("sent", err=True)
 
 
 @gmail_app.command("auth")

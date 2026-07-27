@@ -50,7 +50,8 @@ they're present. If a command fails with an auth/key error, `ko doctor` tells yo
 ## Auth
 
 Google commands (`gsheets`/`gdocs`/`cal`/`gmail`) share one OAuth token per account.
-`ko gsheets auth` grants it (covers Sheets+Docs+Calendar read+write, Gmail read-only).
+`ko gsheets auth` grants it (covers Sheets+Docs+Calendar read+write, Gmail read + `gmail.compose`
+for drafts — sending stays opt-in behind `[gmail] allow_send`).
 No browser? The only interactive prompt in the whole CLI is that one-time OAuth consent.
 
 ## Working on the code

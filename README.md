@@ -40,7 +40,7 @@ Full docs: **[kotools.khalido.dev](https://kotools.khalido.dev/)**.
 | `ko gsheets` | read **& write** Google Sheets (OAuth) | dump/read data + formulas, overwrite-guarded |
 | `ko gdocs` | Markdown ↔ Google Docs + comments + tabs | push a proposal `.md` → Doc → read feedback back; per-tab get/edit |
 | `ko cal` | Google Calendar agenda + quick-add | next 7 days; "when was my last dentist?" |
-| `ko gmail` | read Gmail (read-only) | `ko gmail from alice` — inbox triage in the terminal |
+| `ko gmail` | read Gmail + attachments + drafts | `ko gmail from alice`; `ko gmail attach <id>` → `ko doc`; `ko gmail draft reply <id> --md note.md` |
 
 ### Make & manage
 
@@ -120,7 +120,8 @@ in the console's top bar. The **gcloud CLI** can do step 2; steps 3–4 are cons
    **project ID** (e.g. `kotools-500611`) — the links below use it.
 2. **Enable the APIs** → [API Library](https://console.cloud.google.com/apis/library?project=<project-id>):
    enable *Google Sheets*, *Google Docs* (`ko gdocs`), *Google Calendar* (`ko cal`), *Gmail*
-   (`ko gmail`, read-only), and *Google Drive* (the narrow `drive.file` scope only — see below).
+   (`ko gmail` — reads are read-only; `gmail.compose` adds drafts, sending stays opt-in), and
+   *Google Drive* (the narrow `drive.file` scope only — see below).
    `ko` still can't browse your Drive; one token covers all.
    Fast path with the gcloud CLI:
    ```
