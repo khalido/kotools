@@ -1,8 +1,13 @@
-"""Offline tests for config.setting()/setting_source() and telemetry gating."""
+"""Offline tests for config.setting()/setting_source(), require_key, and telemetry gating."""
 
 from __future__ import annotations
 
+import os
+
+import pytest
+
 from ko import config, telemetry
+from ko.config import MissingKeyError
 
 
 def _with_config(monkeypatch, tmp_path, toml: str):
@@ -34,6 +39,36 @@ def test_setting_falls_back_to_default(monkeypatch, tmp_path):
     assert config.setting("KO_DEFAULT_MODEL", "llm", "model", "fallback") == "fallback"
     assert config.setting_source("KO_DEFAULT_MODEL", "llm", "model") == "default"
     config._data.cache_clear()
+
+
+# --- require_key: one error type for "the human hasn't set this" ---
+
+
+def test_require_key_returns_env_value(monkeypatch):
+    monkeypatch.setenv("KO_TEST_KEY", "sk-123")
+    assert config.require_key("KO_TEST_KEY", "get one at example.com") == "sk-123"
+
+
+def test_require_key_raises_with_the_hint(monkeypatch):
+    monkeypatch.delenv("KO_TEST_KEY", raising=False)
+    with pytest.raises(MissingKeyError, match="KO_TEST_KEY is not set. get one at example.com"):
+        config.require_key("KO_TEST_KEY", "get one at example.com")
+
+
+def test_require_key_reads_config_toml_keys(monkeypatch, tmp_path):
+    """config.toml [keys] is injected into env at startup — require_key sees it from there."""
+    _with_config(monkeypatch, tmp_path, '[keys]\nKO_TEST_KEY = "from-config"\n')
+    monkeypatch.delenv("KO_TEST_KEY", raising=False)
+    config.load_keys_into_env()
+    assert config.require_key("KO_TEST_KEY", "hint") == "from-config"
+    os.environ.pop("KO_TEST_KEY", None)  # load_keys_into_env writes straight to os.environ
+    config._from_config.discard("KO_TEST_KEY")
+    config._data.cache_clear()
+
+
+def test_missing_key_error_is_a_runtime_error():
+    """Subclassing keeps every existing `except RuntimeError` and CLI error path working."""
+    assert issubclass(MissingKeyError, RuntimeError)
 
 
 # --- telemetry gating (never touches OTel when off) ---

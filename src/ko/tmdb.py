@@ -8,10 +8,11 @@ legacy v3 key isn't needed. Ported from my chota-bot TypeScript tool.
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
 
 import httpx
+
+from . import config
 
 BASE = "https://api.themoviedb.org/3"
 DEFAULT_COUNTRY = "AU"
@@ -45,12 +46,11 @@ class Title:
 
 
 def _headers() -> dict[str, str]:
-    token = os.environ.get("TMDB_READ_ACCESS_TOKEN")
-    if not token:
-        raise RuntimeError(
-            "TMDB_READ_ACCESS_TOKEN is not set. Grab the v4 Read Access Token "
-            "from https://www.themoviedb.org/settings/api and export it."
-        )
+    token = config.require_key(
+        "TMDB_READ_ACCESS_TOKEN",
+        "Grab the v4 Read Access Token from https://www.themoviedb.org/settings/api "
+        "and export it.",
+    )
     return {"accept": "application/json", "authorization": f"Bearer {token}"}
 
 

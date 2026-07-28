@@ -20,6 +20,27 @@ from ko.dirs import config_dir
 _from_config: set[str] = set()
 
 
+class MissingKeyError(RuntimeError):
+    """A required API key/token is unset everywhere in the chain (env → config.toml).
+
+    Subclasses RuntimeError so every existing `except RuntimeError` / CLI error path
+    keeps working unchanged. The distinct type exists so the agent toolsets can
+    re-raise it instead of degrading it into "source unavailable, try another" —
+    an unset key is the human's to fix, and must reach them.
+    """
+
+
+def require_key(name: str, hint: str) -> str:
+    """Return an API key, or raise MissingKeyError with `hint` (how to get one).
+
+    Only the environment is consulted: `load_keys_into_env()` has already folded
+    config.toml's `[keys]` into it at startup, so env is the single lookup point."""
+    value = os.environ.get(name)
+    if not value:
+        raise MissingKeyError(f"{name} is not set. {hint}")
+    return value
+
+
 @lru_cache
 def _data() -> dict:
     try:

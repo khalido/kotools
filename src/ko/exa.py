@@ -13,11 +13,13 @@ below are copied from the installed SDK — the CLI validates against them.
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from typing import Literal, get_args
 
 from exa_py import Exa
+
+from ko import config
 
 DEFAULT_MAX_RESULTS = 10
 DEFAULT_MAX_CHARS = 3000
@@ -28,7 +30,11 @@ DEFAULT_HIGHLIGHT_CHARS = 1000  # bound highlights — unbounded, Exa returns ne
 # 'neural' is the legacy embedding search. NOTE: the papers index category is "research
 # paper" (there is no "publication" category in the SDK, despite older docs).
 SEARCH_TYPES = ("auto", "instant", "fast", "deep-lite", "deep", "deep-reasoning", "neural")
-CATEGORIES = (
+
+# A Literal so agent tools can type the param (pydantic-ai renders it as an enum in the
+# tool schema, so a model can't invent a category); CATEGORIES stays the tuple the CLI
+# validates against — one source of truth, two shapes.
+Category = Literal[
     "company",
     "research paper",
     "news",
@@ -36,7 +42,8 @@ CATEGORIES = (
     "personal site",
     "financial report",
     "people",
-)
+]
+CATEGORIES = get_args(Category)
 
 
 @dataclass
@@ -72,13 +79,24 @@ class Contents:
 
 
 def _client() -> Exa:
-    key = os.environ.get("EXA_API_KEY")
-    if not key:
-        raise RuntimeError(
-            "EXA_API_KEY is not set. Get a key at https://exa.ai/ and "
-            "export EXA_API_KEY=<key> (or add it to your shell profile)."
-        )
+    key = config.require_key(
+        "EXA_API_KEY",
+        "Get a key at https://exa.ai/ and export EXA_API_KEY=<key> "
+        "(or add it to your shell profile).",
+    )
     return Exa(api_key=key)
+
+
+def _cap(text: str | None, max_chars: int) -> str | None:
+    """Trim `text` to `max_chars`, marking it when content was actually cut.
+
+    Exa truncates server-side via `max_characters`, which gives no "there was more"
+    signal — so callers ask for one character of headroom: anything longer than
+    `max_chars` proves the page continued, and the marker tells a reader (agent or
+    human) to fetch the URL in full rather than assume it saw everything."""
+    if text is None or len(text) <= max_chars:
+        return text
+    return f"{text[:max_chars]}\n\n[... truncated at {max_chars} characters]"
 
 
 def search(
@@ -90,7 +108,7 @@ def search(
     start_published_date: str | None = None,
     end_published_date: str | None = None,
     type: str | None = None,
-    category: str | None = None,
+    category: Category | None = None,
     max_age_hours: int | None = None,
     with_text: bool = False,
     with_highlights: bool = False,
@@ -108,7 +126,15 @@ def search(
       None (omitted) = livecrawl only as a fallback. Applied inside the contents request.
     - `since_months`: ergonomic shortcut for "last N months" — sets `start_published_date`
       if one isn't given.
+    - `include_domains`/`exclude_domains`: mutually exclusive (Exa's API rejects both).
+
+    Page text is capped at `max_chars` and marked when cut — see `_cap`.
     """
+    if include_domains and exclude_domains:
+        raise ValueError(
+            "include_domains and exclude_domains are mutually exclusive — Exa's API "
+            "rejects both at once; pass one or the other."
+        )
     client = _client()
     kwargs: dict = {"num_results": n}
     if include_domains:
@@ -132,7 +158,9 @@ def search(
     # contents=False keeps the no-content path lean.
     contents: dict = {}
     if with_text:
-        contents["text"] = {"max_characters": max_chars}
+        # +1 character of headroom: if Exa hands back more than max_chars, the page had
+        # more to give — that's how _cap knows to mark the excerpt as truncated.
+        contents["text"] = {"max_characters": max_chars + 1}
     if with_highlights:
         # Bias highlights to the query and bound them — highlights=True returns near-full-page
         # text, defeating the ~10x token saving that makes highlights worthwhile.
@@ -149,7 +177,7 @@ def search(
             title=item.title or "",
             score=float(item.score or 0.0),
             published_date=item.published_date,
-            text=getattr(item, "text", None),
+            text=_cap(getattr(item, "text", None), max_chars),
             summary=getattr(item, "summary", None),
             highlights=getattr(item, "highlights", None),
         )
@@ -161,12 +189,16 @@ def get_contents(urls: list[str], max_chars: int | None = None) -> Contents:
     """Fetch clean text for known URLs. Returns a Contents (`texts` = {url: text}, `statuses`
     = per-URL retrieval status). The /contents endpoint returns HTTP 200 even when a URL
     fails — a failed URL yields an empty string in `texts`, so inspect `statuses` (or the
-    empty text) to detect partial failures. No text truncation unless max_chars is set.
+    empty text) to detect partial failures. No text truncation unless max_chars is set
+    (and when set, a clipped page carries a truncation marker — see `_cap`).
     """
     client = _client()
-    text_arg: bool | dict = True if max_chars is None else {"max_characters": max_chars}
+    text_arg: bool | dict = True if max_chars is None else {"max_characters": max_chars + 1}
     response = client.get_contents(urls=urls, text=text_arg)
-    texts = {item.url: (item.text or "") for item in response.results}
+    texts = {
+        item.url: (_cap(item.text, max_chars) if max_chars is not None else item.text) or ""
+        for item in response.results
+    }
     statuses = [
         UrlStatus(url=s.id, status=s.status, source=getattr(s, "source", None))
         for s in (response.statuses or [])

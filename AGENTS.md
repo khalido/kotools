@@ -30,6 +30,9 @@ they're present. If a command fails with an auth/key error, `ko doctor` tells yo
 
 - `0` — success, **including empty results** (empty is not an error).
 - `1` — runtime error (network, auth, bad upstream). One clean line on stderr; no traceback.
+  An unset API key lands here too — including mid-agent-run (`ko ai`/`ko agent`), which
+  aborts rather than quietly working around the missing tool. The line names the env var
+  and where to get a key; `ko doctor` lists them all.
 - `2` — usage error (bad flags/args; Typer prints usage to stderr).
 
 ## Limits / pagination
@@ -45,7 +48,7 @@ they're present. If a command fails with an auth/key error, `ko doctor` tells yo
 - `ko <url>` → `ko fetch <url>` (URL → markdown; YouTube URLs return the transcript, or fail cleanly when captions are off)
 - `ko <file>` → `ko doc <file>` (PDF/Office/image → text), when the arg is an existing file
 - `ko x <name>` → `ko x list <name>` (anything after `x` that isn't an x subcommand is a list name)
-- `ko tt` (alias `ko todo`) → `ko tt lists`; `ko tt <name>` → `ko tt items <name>` (anything that isn't a tt subcommand is a list name)
+- `ko tt` (alias `ko todo`) → `ko tt lists`; `ko tt <name>` → `ko tt items <name>` (anything that isn't a tt subcommand — `lists`/`items`/`add`/`done`/`search` — is a list name)
 - `ko <anything> help` → `ko <anything> --help` (trailing `help` prints help at any level: `ko help`, `ko exa help`, `ko exa search help`)
 
 ## Auth

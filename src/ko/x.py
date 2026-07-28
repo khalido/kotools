@@ -81,13 +81,12 @@ class Post:
 
 @lru_cache(maxsize=1)
 def _client() -> Client:
-    token = os.environ.get("X_BEARER_TOKEN")
-    if not token:
-        raise RuntimeError(
-            "X_BEARER_TOKEN is not set. Create an app at https://developer.x.com/, grab "
-            "the Bearer Token, export X_BEARER_TOKEN=<token>. Reads are pay-per-use "
-            "(prepaid credits, ~$0.005/post read); see https://docs.x.com/x-api/getting-started/pricing"
-        )
+    token = config.require_key(
+        "X_BEARER_TOKEN",
+        "Create an app at https://developer.x.com/, grab the Bearer Token, export "
+        "X_BEARER_TOKEN=<token>. Reads are pay-per-use (prepaid credits, ~$0.005/post "
+        "read); see https://docs.x.com/x-api/getting-started/pricing",
+    )
     return Client(bearer_token=token)
 
 

@@ -22,6 +22,8 @@ from ko import papers as papers_mod
 from ko import tmdb as tmdb_mod
 from ko.agents import _files as _files_mod
 from ko.arxiv import SearchResult as ArxivResult
+from ko.config import MissingKeyError
+from ko.exa import Category as ExaCategory
 from ko.exa import ExaResult
 from ko.hf import Paper
 from ko.hn import Story
@@ -32,10 +34,15 @@ def _try(label: str, fn, *args, **kwargs):
     """Call a source, returning an error note instead of raising — so one flaky source
     doesn't abort a run. Programming errors (TypeError/AttributeError/NameError/ImportError)
     are re-raised, not disguised as 'unavailable': those are our bugs and should surface
-    loudly, not send the agent routing around a code defect forever."""
+    loudly, not send the agent routing around a code defect forever.
+
+    MissingKeyError re-raises for the same reason from the other direction: an unset
+    key is *config*, which no amount of model cleverness fixes. Swallowed, the agent
+    quietly routes around the tool for the whole run and Ko never learns the key is
+    missing — so it aborts the run and lands as one clear line on stderr instead."""
     try:
         return fn(*args, **kwargs)
-    except TypeError, AttributeError, NameError, ImportError:
+    except TypeError, AttributeError, NameError, ImportError, MissingKeyError:
         raise
     except Exception as e:
         return f"{label} unavailable ({type(e).__name__}: {e}). Note this and try another source."
@@ -43,7 +50,11 @@ def _try(label: str, fn, *args, **kwargs):
 
 # --- web ---
 web = FunctionToolset(
-    instructions="Web: exa_search to find sources, exa_get/fetch_url to read pages in full."
+    instructions="Web: exa_search finds sources and returns only bounded, query-relevant "
+    "highlight sentences per hit — enough to judge relevance, never the whole page. Search "
+    "wide, then read narrow: pass the 1-3 URLs that actually matter to exa_get (several at "
+    "once, clean markdown) or fetch_url (any URL, incl. PDFs/arxiv/Wayback). Quote from a "
+    "page you read in full, not from a highlight fragment."
 )
 
 
@@ -51,38 +62,49 @@ web = FunctionToolset(
 def exa_search(
     query: str,
     n: int = 5,
+    category: ExaCategory | None = None,
     include_domains: list[str] | None = None,
     exclude_domains: list[str] | None = None,
     since_months: int | None = None,
     start_published_date: str | None = None,
     end_published_date: str | None = None,
 ) -> list[ExaResult]:
-    """Semantic web search. Returns title, URL, date, and a text excerpt per result
-    (capped ~3000 chars — use exa_get/fetch_url when a page needs full reading).
+    """Semantic web search. Returns title, URL, date, and `highlights` — the handful of
+    sentences most relevant to the query, bounded to ~1000 chars per result (roughly 10x
+    cheaper than page text). Highlights are for TRIAGE: to actually read a page, pass its
+    URL to exa_get or fetch_url. `text` and `summary` come back null here by design.
 
-    Filter params (all optional):
-    - include_domains / exclude_domains: e.g. [".edu"] or ["reddit.com"]
+    Params (all optional):
+    - category: focus Exa's index. Exactly one of 'research paper' (the scholarly index —
+      the .edu-domains trick, done properly), 'news', 'company', 'pdf', 'personal site',
+      'financial report', 'people'. Note it is 'research paper', NOT 'publication'.
+    - include_domains / exclude_domains: e.g. ['.edu'] or ['reddit.com'] — mutually
+      exclusive, passing both is an error.
     - since_months: restrict to the last N months (ergonomic shortcut for start_published_date)
     - start_published_date / end_published_date: YYYY-MM-DD date bounds (override since_months if both set)
-    Results cover all time by default."""
+    Results cover all time and all categories by default."""
     return _try(
         "exa_search",
         exa_mod.search,
         query,
         n=n,
+        category=category,
         include_domains=include_domains,
         exclude_domains=exclude_domains,
         since_months=since_months,
         start_published_date=start_published_date,
         end_published_date=end_published_date,
-        with_text=True,
+        with_text=False,
+        with_highlights=True,
+        with_summary=False,
     )
 
 
 @web.tool_plain
 def exa_get(urls: list[str]) -> dict[str, str]:
-    """Fetch full markdown content for known URLs (via Exa). Use when a result needs deeper
-    reading. A URL that failed comes back with empty text."""
+    """Fetch full markdown content for known URLs (via Exa) — the deep-read step after
+    exa_search's highlights. Takes several URLs in one call. Untruncated; a URL that
+    failed comes back with empty text."""
     result = _try("exa_get", exa_mod.get_contents, urls)
     return result.texts if isinstance(result, exa_mod.Contents) else result
 

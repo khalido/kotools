@@ -10,6 +10,7 @@ from typer.testing import CliRunner
 
 from ko import exa
 from ko.cli import app
+from ko.config import MissingKeyError
 from ko.exa import Contents, _client, get_contents, search
 
 runner = CliRunner()
@@ -63,7 +64,11 @@ def fake_client(monkeypatch):
 
 def test_missing_api_key_raises(monkeypatch):
     monkeypatch.delenv("EXA_API_KEY", raising=False)
-    with pytest.raises(RuntimeError, match="EXA_API_KEY"):
+    # MissingKeyError so agent tooling can tell "unset key" (Ko's to fix) from a flaky
+    # source; still a RuntimeError, so every existing except/CLI path is unchanged.
+    with pytest.raises(MissingKeyError, match="EXA_API_KEY"):
+        _client()
+    with pytest.raises(RuntimeError):
         _client()
 
 
@@ -95,6 +100,69 @@ def test_search_omits_unset_options(fake_client):
     assert "category" not in kw
     assert "summary" in kw["contents"]
     assert "max_age_hours" not in kw["contents"]
+
+
+def test_search_marks_truncated_text(monkeypatch):
+    """A clipped excerpt says so — otherwise the reader can't tell a page ended from a
+    page that was cut, and never escalates to a full fetch."""
+    long_page = "x" * 5000
+
+    class Clipping:
+        """Stands in for Exa: truncates server-side at the requested max_characters."""
+
+        def search(self, query, **kwargs):
+            self.kwargs = {"query": query, **kwargs}
+            cap = kwargs["contents"]["text"]["max_characters"]
+            item = SimpleNamespace(
+                url="https://example.com/a",
+                title="t",
+                score=0.1,
+                published_date=None,
+                text=long_page[:cap],
+                summary=None,
+                highlights=None,
+            )
+            return SimpleNamespace(results=[item])
+
+    fc = Clipping()
+    monkeypatch.setattr(exa, "_client", lambda: fc)
+    r = search("q", with_text=True, max_chars=100)[0]
+    # one char of headroom is what makes truncation detectable at all
+    assert fc.kwargs["contents"]["text"]["max_characters"] == 101
+    assert r.text.startswith("x" * 100)
+    assert "[... truncated at 100 characters]" in r.text
+
+
+def test_search_does_not_mark_short_text(monkeypatch):
+    """No marker when nothing was cut — a false marker is worse than none."""
+
+    class Short:
+        def search(self, query, **kwargs):
+            item = SimpleNamespace(
+                url="https://example.com/a",
+                title="t",
+                score=0.1,
+                published_date=None,
+                text="brief page",
+                summary=None,
+                highlights=None,
+            )
+            return SimpleNamespace(results=[item])
+
+    monkeypatch.setattr(exa, "_client", lambda: Short())
+    assert search("q", with_text=True, max_chars=100)[0].text == "brief page"
+
+
+def test_search_rejects_both_domain_filters(fake_client):
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        search("q", include_domains=[".edu"], exclude_domains=["reddit.com"])
+    assert fake_client.search_kwargs is None  # rejected before spending a request
+
+
+def test_cli_both_domain_filters_exits_2():
+    r = runner.invoke(app, ["exa", "search", "q", "--domains", ".edu", "--exclude", "reddit.com"])
+    assert r.exit_code == 2
+    assert "mutually exclusive" in r.output
 
 
 def test_get_contents_returns_statuses(fake_client):

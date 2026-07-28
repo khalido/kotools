@@ -212,6 +212,12 @@ def exa_search(
             as_json=as_json,
             code="usage",
         )
+    if domains and exclude:  # Exa's API rejects both; catch it here so it's a usage error (2)
+        _die(
+            "--domains and --exclude are mutually exclusive — Exa's API rejects both at once",
+            as_json=as_json,
+            code="usage",
+        )
     try:
         results = exa_mod.search(
             query,
