@@ -25,6 +25,9 @@ they're present. If a command fails with an auth/key error, `ko doctor` tells yo
   - Under `--json`, **errors are a JSON object on stderr**: `{"error": "...", "code": "..."}`.
   - Under `--json`, **empty results are `[]` on stdout** (plus a note on stderr), so a
     downstream `| jq` never chokes.
+- **A command that writes a file prints that file's path to stdout** — nothing else — so
+  it composes: `ko gmail draft new … -a "$(ko pdf status.md)"`. Notes about the render
+  (e.g. an unresolved letterhead brand) go to stderr, where they can't corrupt the path.
 
 ## Exit codes
 

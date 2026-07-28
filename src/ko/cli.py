@@ -86,6 +86,13 @@ def doctor(
     default = _llm.default_model()
     default_key = _llm.PROVIDER_KEYS.get(default.split(":")[0], "")
 
+    from . import pdf as pdf_mod
+
+    # A configured brand path that doesn't exist is worse than none — ko pdf would fail
+    # outright — so require the file, not just the setting.
+    _brand = pdf_mod.brand_path()
+    pdf_brand_set = bool(_brand and _brand.exists())
+
     try:
         _mcp_servers = mcp_client_mod.load_servers()
         _mcp_status = (
@@ -131,6 +138,16 @@ def doctor(
             "PDF/Office/image → text (local)",
             "LibreOffice for Office files",
             ("✓ found", "green") if soffice else ("– optional", "yellow"),
+        ),
+        (
+            "pdf",
+            "markdown → print-ready PDF (local)",
+            "pango/cairo (brew install pango) + [pdf] brand",
+            ("✗ brew install pango", "red")
+            if not pdf_mod.native_libs_ok()
+            else ("✓ ready", "green")
+            if pdf_brand_set
+            else ("– no brand.yml: letterhead placeholder", "yellow"),
         ),
         ("exa", "semantic web search (paid)", "EXA_API_KEY", env("EXA_API_KEY")),
         (

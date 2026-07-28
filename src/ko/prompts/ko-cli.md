@@ -28,6 +28,9 @@ triage, `--category 'research paper'` for scholarly), `ko fetch <url>` (any URL 
 handles arxiv, PDFs, YouTube, paywalls, dead links via Wayback), `ko doc <file>` (PDF/Office/
 image → text, local), `ko yt <url>` (YouTube transcript). Shortcuts: `ko <url>` and `ko <file>`.
 
+**Writing out** — `ko pdf <file.md>` (markdown → print-ready A4 PDF: letterhead, numbered
+sections, Contents, page footer; prints the path it wrote). The inverse of `ko doc`.
+
 **Research** — `ko papers search|get|cites|refs|similar` (cross-publisher via OpenAlex; takes
 DOIs, arxiv ids, or W-ids), `ko arxiv search|fetch`, `ko hf top|search|get` (HF Daily Papers).
 
@@ -50,7 +53,9 @@ Task notes are markdown and render in the app.
 ## How to use it well
 
 - **Compose, don't parse prose.** `ko hn item 123 | ko llm "summarize the debate"`,
-  `ko gsheets get <id> | cut -f 3`, `ko papers search "..." --json | jq`.
+  `ko gsheets get <id> | cut -f 3`, `ko papers search "..." --json | jq`. Commands that
+  write a file print its path, so they chain:
+  `ko gmail draft new --to x@y.com -s "Status" --body-file note.txt -a "$(ko pdf status.md)"`.
 - **Search wide, read narrow.** `ko exa search --highlights` to find candidates, then
   `ko fetch <url>` on the two that matter. Don't pull full text for ten results.
 - **Reach for the specific tool.** `ko papers` beats `ko exa` for literature; `ko yt` beats

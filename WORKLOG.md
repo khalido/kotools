@@ -2,6 +2,35 @@
 
 Newest first. Big picture only — git commits have the detail; candidate ideas and decisions live in `docs/ideas.md`.
 
+## 2026-07-28 — `ko pdf` (markdown → PDF), ported from ops
+
+- **`ko pdf <file.md>`** — WeasyPrint renderer lifted from `ops/scripts/md_to_pdf.py`,
+  CSS reused verbatim so output is byte-identical in text (verified by diffing a real
+  4-page uts-tmos status doc rendered both ways). ko is the right home: it composes with
+  `ko gmail draft new -a "$(ko pdf status.md)"`, which was the actual task that prompted it.
+- **Fixed the pattern's two footguns rather than porting them.** The ops script needed
+  `--brand path` on *every* call and printed a `yourbrand.dev` placeholder when you forgot
+  — a trap documented in the tmos repo's own lab-doc skill. Here the brand resolves through
+  ko's config chain (`--brand` > front-matter > `KO_BRAND` > `[pdf] brand`) and an
+  unresolved one warns on stderr. Also dropped its hardcoded
+  `h2#hosting-ownership { page-break-before }` rule — a per-document hack that broke
+  silently whenever that heading was reworded — for a generic `<div class="page-break">`.
+- **Left the resume stylesheet in ops.** ~90 lines of CSS for one document's layout isn't a
+  generic renderer's job; `--bare` (typography only) + `--css FILE` (appended, so it wins)
+  covers a bespoke look with the sheet living next to the CV. This split also made the CSS
+  readable: BASE (typography) / DOC (numbering, letterhead, TOC, footer) / PAGE.
+- **The native-deps problem, solved without asking the caller for anything.** WeasyPrint
+  needs pango/cairo, which on macOS sit where dyld doesn't look, and dyld reads its search
+  path at process *start* — so no in-process fix exists (ctypes preloading doesn't satisfy
+  cffi's dlopen-by-leafname; tested). The ops script re-execs itself. Here the HTML is
+  built in-process and handed to a short-lived child interpreter with
+  `DYLD_FALLBACK_LIBRARY_PATH` set: one code path, no re-exec, ~0.35s, and no
+  `export` line an agent could never add. `ko doctor` gained a row that says
+  `brew install pango` when the libs are missing.
+- Deps: weasyprint, pyyaml, mdit-py-plugins (footnotes). 15 tests, all offline except one
+  end-to-end render that skips if the native libs are absent — `build_html` is separated
+  from the byte-writing precisely so the markup is testable without them.
+
 ## 2026-07-10/11 — money layer, refs, repo agent, memory (post-release arc)
 
 - **First release cut**: v2026.7.9 tagged + GitHub release via the new `/release` skill

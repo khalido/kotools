@@ -691,6 +691,68 @@ def doc(
         typer.echo(f"Wrote {len(text):,} chars to {out}", err=True)
 
 
+@app.command("pdf")
+def pdf(
+    file: Path = typer.Argument(
+        ..., exists=True, dir_okay=False, help="Input .md file (YAML front matter honoured)"
+    ),
+    out: Path = typer.Option(
+        None,
+        "--out",
+        "-o",
+        help="output .pdf (default: a sibling pdf/ dir, else docs/pdf/, else beside the input)",
+    ),
+    no_toc: bool = typer.Option(False, "--no-toc", help="skip the auto Contents block"),
+    no_letterhead: bool = typer.Option(
+        False, "--no-letterhead", help="skip the page-1 letterhead (keeps the footer)"
+    ),
+    bare: bool = typer.Option(
+        False,
+        "--bare",
+        help="typography only — no letterhead, Contents, footer or section numbers; "
+        "pair with --css for a custom look",
+    ),
+    css: list[Path] = typer.Option(
+        None, "--css", exists=True, dir_okay=False, help="extra stylesheet, appended so it wins (repeatable)"
+    ),
+    brand: Path = typer.Option(
+        None,
+        "--brand",
+        exists=True,
+        dir_okay=False,
+        help="brand.yml for the letterhead/footer identity; else $KO_BRAND or `[pdf] brand`",
+    ),
+) -> None:
+    """Markdown → print-ready PDF (A4, numbered sections, Contents, letterhead, page
+    footer). Prints the output path to stdout, so `-a "$(ko pdf doc.md)"` composes."""
+    from . import pdf as pdf_mod
+
+    try:
+        resolved = pdf_mod.load_brand(brand)
+        written = pdf_mod.render(
+            file,
+            out,
+            toc=not no_toc,
+            letterhead=not no_letterhead,
+            bare=bare,
+            css=tuple(css or ()),
+            brand_file=brand,
+        )
+    except FileNotFoundError as e:
+        _die(f"{e.filename}: no such file")
+    except (OSError, RuntimeError, ValueError) as e:
+        _die(str(e))
+    # The ops script's one recurring bug: forgetting --brand shipped a PDF whose footer
+    # read "yourbrand.dev". Cheap to say so; the file is already written either way.
+    if pdf_mod.is_placeholder(resolved) and not bare:
+        typer.echo(
+            f"note: no brand.yml found, so the letterhead reads "
+            f"'{pdf_mod.BRAND['name']}' — set `[pdf] brand` in config.toml",
+            err=True,
+        )
+    typer.echo(written)
+
+
 # --- x helpers ---
 
 

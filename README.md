@@ -20,6 +20,7 @@ Full docs: **[kotools.khalido.dev](https://kotools.khalido.dev/)**.
 | `ko exa` | semantic web search + URL → markdown ([Exa](https://exa.ai)) | find posts/lab-pages a keyword search misses |
 | `ko fetch` | any URL → clean markdown (PDF, arxiv, Wayback fallback) | `ko <url>` — read a page or PDF as text |
 | `ko doc` | PDF/Office/image → text, fully local (no models) | `ko report.pdf` — no upload, no key |
+| `ko pdf` | markdown → print-ready PDF (A4, letterhead, TOC) | send a status update as a PDF, not a wall of email |
 | `ko yt` | YouTube → transcript (free, no key); `-s` summarizes | "what does this 40-min talk actually say" |
 | `ko tv` | movie/TV rating + where to stream ([TMDB](https://developer.themoviedb.org), AU) | "worth watching, and where can I?" |
 | `ko tt` | TickTick lists + tasks, read **& write** (Open API v1) | `ko tt today` — my open tasks; `ko tt add "…" --due tomorrow` |

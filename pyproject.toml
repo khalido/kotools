@@ -28,14 +28,17 @@ dependencies = [
     "loguru~=0.7.3",
     "markdown-it-py>=3.0",  # gmail draft --md: markdown -> html (also arrives transitively via rich)
     "mcp[cli]>=1.28.0",
+    "mdit-py-plugins>=0.6.1",
     "opentelemetry-exporter-otlp-proto-http>=1.43.0",
     "opentelemetry-sdk>=1.43.0",
     "pydantic-ai-slim[google,openrouter,mcp]>=2.4,<3",
+    "pyyaml>=6.0.3",
     "requests>=2.33.1",
     "rich>=13.0",  # direct import in agents/_shared.py; don't rely on typer's transitive extra
     "trafilatura>=2.1.0",
     "typer>=0.26.7",
     "tzdata>=2025.1",  # guarantees zoneinfo works cross-platform (ko cal)
+    "weasyprint>=69.0",
     "xdk>=0.9.0",
     "youtube-transcript-api>=1.2.4",
 ]
