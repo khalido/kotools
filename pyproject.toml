@@ -79,5 +79,5 @@ exclude = [".claude", "node_modules", "package.json", "package-lock.json"]
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
-    "ruff>=0.15.18",
+    "ruff>=0.16",  # formatter output is version-sensitive; an older ruff would rewrap the repo
 ]
