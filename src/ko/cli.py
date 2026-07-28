@@ -287,6 +287,16 @@ def doctor(
                 + (f" ({b.trend})" if b.trend else "")
                 + "[/dim]"
             )
+        # A key can be capped below the account balance, so "credits left" reads healthy
+        # while every call 403s. Say so loudly — that gap cost a debugging session.
+        if b.key_capped:
+            console.print(
+                f"[red]openrouter: this key's ${b.key_limit:.0f} spend cap is used up "
+                f"(${b.key_used:.2f}) — calls 403 until you raise it at "
+                f"https://openrouter.ai/settings/keys, even with credit left[/red]"
+            )
+        elif b.key_left is not None:
+            console.print(f"[dim]openrouter: key cap ${b.key_limit:.0f}, ${b.key_left:.2f} left[/dim]")
 
     if as_json:
         import json as _json

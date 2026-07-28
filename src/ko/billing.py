@@ -25,6 +25,18 @@ class Balance:
     used: float | None = None  # total used
     trend: str = ""  # e.g. "today $0.00 · month $0.11"
     error: str = ""  # set instead of the numbers when unavailable
+    # A key can have its own spend cap, separate from the account balance — hit it and
+    # every call 403s while the account still shows credit. Worth its own line: a
+    # healthy balance next to a dead key is the confusing case this exists to name.
+    key_limit: float | None = None  # this key's cap (None = uncapped)
+    key_used: float | None = None  # spent on this key
+    key_left: float | None = None  # cap minus spend (None = uncapped)
+    key_expires: str = ""  # ISO date if the key expires
+
+    @property
+    def key_capped(self) -> bool:
+        """True when this key has spent its cap — calls will fail regardless of balance."""
+        return self.key_left is not None and self.key_left <= 0
 
 
 def openrouter() -> Balance:
@@ -50,7 +62,22 @@ def openrouter() -> Balance:
     account = keyinfo.get("label", "") or ""
     if keyinfo.get("is_free_tier"):
         account = f"{account} (free tier)".strip()
-    return Balance("openrouter", account, remaining, total, used, trend)
+    key_limit, key_used = keyinfo.get("limit"), keyinfo.get("usage")
+    key_left = keyinfo.get("limit_remaining")
+    if key_left is None and key_limit is not None and key_used is not None:
+        key_left = key_limit - key_used  # older responses omit limit_remaining
+    return Balance(
+        "openrouter",
+        account,
+        remaining,
+        total,
+        used,
+        trend,
+        key_limit=key_limit,
+        key_used=key_used,
+        key_left=key_left,
+        key_expires=keyinfo.get("expires_at") or "",
+    )
 
 
 PROVIDERS = [openrouter]

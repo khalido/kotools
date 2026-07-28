@@ -1099,7 +1099,10 @@ def billing(
     """Balance + recent usage across paid services (read-only). v1: OpenRouter credits."""
     balances = [fn() for fn in billing_mod.PROVIDERS]
     if as_json:
-        typer.echo(json.dumps([asdict(b) for b in balances], default=str))
+        # key_capped is a property, so asdict() drops it — but it's the field an agent
+        # actually wants ("why did that call 403?"), so put it in explicitly.
+        payload = [{**asdict(b), "key_capped": b.key_capped} for b in balances]
+        typer.echo(json.dumps(payload, default=str))
         return
     for b in balances:
         if b.error:
@@ -1110,6 +1113,15 @@ def billing(
         trend = f"  · {b.trend}" if b.trend else ""
         acct = f"  [{b.account}]" if b.account else ""
         typer.echo(f"{b.provider:12}{acct}  {left}{of}{trend}")
+        if b.key_limit is not None:
+            # The key's own cap. Printed second because it's the one that actually stops
+            # calls — an exhausted key 403s while the account line above still looks fine.
+            state = "CAP REACHED — calls will fail" if b.key_capped else f"${b.key_left:.2f} left"
+            expires = f"; expires {b.key_expires[:10]}" if b.key_expires else ""
+            typer.echo(
+                f"{'':12}  key cap ${b.key_limit:.0f}: ${b.key_used:.2f} used, {state}{expires}",
+                err=b.key_capped,
+            )
 
 
 @mcp_app.command("auth-info")
