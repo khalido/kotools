@@ -13,6 +13,7 @@ by name to load it into an agent or copy-paste it: `ko prompt sveltekit-app`.
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
@@ -83,9 +84,37 @@ def names() -> list[str]:
     return [p.name for p in list_prompts()]
 
 
-def get_prompt(name: str) -> Prompt:
-    """One brief by name. Raises KeyError if there's no such brief."""
+def resolve(name: str) -> Prompt | None:
+    """Find a brief by exact name, then unique prefix, then substring (case-insensitive).
+
+    Short tags are the point — `ko prompt research` should reach `research-papers` without
+    my having to remember the full filename. Same shape as `ticktick.resolve_list`: an
+    ambiguous tag notes the alternatives on stderr and takes the first rather than failing,
+    because in a personal library of a dozen briefs a near-miss is more useful than an error.
+    """
     prompts = _all()
-    if name not in prompts:
+    if name in prompts:
+        return prompts[name]
+    lowered = name.lower()
+    for match in (
+        [p for p in list_prompts() if p.name.lower().startswith(lowered)],
+        [p for p in list_prompts() if lowered in p.name.lower()],
+    ):
+        if match:
+            if len(match) > 1:
+                others = ", ".join(p.name for p in match[1:])
+                print(
+                    f"note: {len(match)} briefs match {name!r}; using {match[0].name!r} "
+                    f"(others: {others})",
+                    file=sys.stderr,
+                )
+            return match[0]
+    return None
+
+
+def get_prompt(name: str) -> Prompt:
+    """One brief by name or short tag. Raises KeyError if nothing matches."""
+    found = resolve(name)
+    if found is None:
         raise KeyError(name)
-    return prompts[name]
+    return found

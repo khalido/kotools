@@ -30,6 +30,19 @@ def test_get_unknown_raises():
         prompt.get_prompt("does-not-exist")
 
 
+def test_short_tag_resolves_by_prefix_then_substring():
+    assert prompt.get_prompt("research").name == "research-papers"  # prefix
+    assert prompt.get_prompt("publish").name == "ko-publish-site"  # substring
+    assert prompt.get_prompt("exa").name == "exa"  # exact still wins
+
+
+def test_ambiguous_tag_takes_first_and_notes_others(capsys):
+    p = prompt.get_prompt("sveltekit")  # matches -app and -embedded-ai
+    assert p.name == "sveltekit-app"
+    err = capsys.readouterr().err
+    assert "2 briefs match" in err and "sveltekit-embedded-ai" in err
+
+
 def test_user_dir_overrides_packaged(tmp_path, monkeypatch):
     monkeypatch.setenv("KO_CONFIG_DIR", str(tmp_path))
     pdir = tmp_path / "prompts"
