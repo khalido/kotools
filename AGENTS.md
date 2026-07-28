@@ -53,6 +53,7 @@ they're present. If a command fails with an auth/key error, `ko doctor` tells yo
 - `ko x <name>` → `ko x list <name>` (anything after `x` that isn't an x subcommand is a list name)
 - `ko tt` (alias `ko todo`) → `ko tt lists`; `ko tt <name>` → `ko tt items <name>` (anything that isn't a tt subcommand — `lists`/`items`/`add`/`done`/`search` — is a list name)
 - `ko <anything> help` → `ko <anything> --help` (trailing `help` prints help at any level: `ko help`, `ko exa help`, `ko exa search help`)
+- `ko md-to-pdf` ≡ `ko pdf` (same command, spelled out — markdown *in*, PDF *out*; `ko doc` runs the other direction)
 
 ## Auth
 

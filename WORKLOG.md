@@ -27,9 +27,28 @@ Newest first. Big picture only — git commits have the detail; candidate ideas 
   `DYLD_FALLBACK_LIBRARY_PATH` set: one code path, no re-exec, ~0.35s, and no
   `export` line an agent could never add. `ko doctor` gained a row that says
   `brew install pango` when the libs are missing.
-- Deps: weasyprint, pyyaml, mdit-py-plugins (footnotes). 15 tests, all offline except one
-  end-to-end render that skips if the native libs are absent — `build_html` is separated
-  from the byte-writing precisely so the markup is testable without them.
+- Deps: weasyprint, pyyaml, mdit-py-plugins (footnotes), pygments. 26 tests, all offline
+  except two end-to-end renders that skip if the native libs are absent — `build_html` is
+  separated from the byte-writing precisely so the markup is testable without them.
+- **Then reworked against Quarto's PDF docs + the WeasyPrint 69 notes** (both read, not
+  skimmed):
+  - **Named styles**, because "quickly make a PDF" and "client handover doc" want
+    different furniture: `note` (default — typography + page footer), `report` (the ops
+    look: letterhead, Contents, numbered sections), `bare`, plus any
+    `~/.config/ko/pdf/<name>.css` layered on `note`. **Quarto's `toc` and
+    `number-sections` are both opt-in**, which is the right call — a Contents block
+    listing two headings is furniture, not navigation — so the default got lighter.
+  - **Numbering is tied to the TOC** rather than separately switchable: the TOC prints
+    "N." prefixes that must match the body's CSS counter, so splitting them is a way to
+    render a document whose two halves disagree.
+  - **Syntax highlighting** via pygments (`friendly` — light themes survive printing).
+    Pandoc does 140 languages by default and we did none; the ops script even declared a
+    pygments dep it never used. An unknown language falls back to a plain block.
+  - **Tagged PDFs by default** (`pdf_tags=True`) — the structure a screen reader needs,
+    which is most of what Quarto's accessibility section is about, and WeasyPrint 69
+    specifically improved its validity. `--pdf-a` adds PDF/A-3b for archival (~8% bigger).
+  - Named `ko pdf` with a visible `ko md-to-pdf` alias, following the house split where
+    clarifying aliases (`ko todo`) show in help and terse shortcuts (`ko a`, `ko gd`) hide.
 
 ## 2026-07-10/11 — money layer, refs, repo agent, memory (post-release arc)
 

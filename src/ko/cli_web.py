@@ -692,6 +692,9 @@ def doc(
 
 
 @app.command("pdf")
+# Spelled-out alias, visible like `ko todo` — ko hides terse shortcuts (`ko a`, `ko gd`)
+# but shows the ones that make a terse name obvious.
+@app.command("md-to-pdf")
 def pdf(
     file: Path = typer.Argument(
         ..., exists=True, dir_okay=False, help="Input .md file (YAML front matter honoured)"
@@ -702,18 +705,25 @@ def pdf(
         "-o",
         help="output .pdf (default: a sibling pdf/ dir, else docs/pdf/, else beside the input)",
     ),
-    no_toc: bool = typer.Option(False, "--no-toc", help="skip the auto Contents block"),
-    no_letterhead: bool = typer.Option(
-        False, "--no-letterhead", help="skip the page-1 letterhead (keeps the footer)"
+    style: str = typer.Option(
+        None,
+        "--style",
+        "-s",
+        help="note (default: typography + page footer) | report (+ letterhead, Contents, "
+        "numbered sections) | bare (typography only) | any ~/.config/ko/pdf/<name>.css",
     ),
-    bare: bool = typer.Option(
-        False,
-        "--bare",
-        help="typography only — no letterhead, Contents, footer or section numbers; "
-        "pair with --css for a custom look",
+    toc: bool = typer.Option(
+        None, "--toc/--no-toc", help="force the Contents block on/off (also numbers the sections)"
+    ),
+    letterhead: bool = typer.Option(
+        None, "--letterhead/--no-letterhead", help="force the page-1 letterhead on/off"
     ),
     css: list[Path] = typer.Option(
-        None, "--css", exists=True, dir_okay=False, help="extra stylesheet, appended so it wins (repeatable)"
+        None,
+        "--css",
+        exists=True,
+        dir_okay=False,
+        help="extra stylesheet, appended so it wins (repeatable)",
     ),
     brand: Path = typer.Option(
         None,
@@ -722,32 +732,38 @@ def pdf(
         dir_okay=False,
         help="brand.yml for the letterhead/footer identity; else $KO_BRAND or `[pdf] brand`",
     ),
+    archival: bool = typer.Option(
+        False, "--pdf-a", help="PDF/A-3b: self-contained for archiving (bigger file)"
+    ),
 ) -> None:
-    """Markdown → print-ready PDF (A4, numbered sections, Contents, letterhead, page
-    footer). Prints the output path to stdout, so `-a "$(ko pdf doc.md)"` composes."""
+    """Markdown → print-ready PDF (A4, code highlighting, page footer; `--style report`
+    adds a letterhead + Contents). Prints the path it wrote to stdout, so
+    `-a "$(ko pdf doc.md)"` composes. `ko pdf` and `ko md-to-pdf` are the same command."""
     from . import pdf as pdf_mod
 
     try:
-        resolved = pdf_mod.load_brand(brand)
-        written = pdf_mod.render(
+        written, used_brand = pdf_mod.render(
             file,
             out,
-            toc=not no_toc,
-            letterhead=not no_letterhead,
-            bare=bare,
+            style=style,
+            toc=toc,
+            letterhead=letterhead,
             css=tuple(css or ()),
             brand_file=brand,
+            archival=archival,
         )
+    except ValueError as e:  # unknown --style: a usage error, not a runtime one
+        _die(str(e), code="usage")
     except FileNotFoundError as e:
         _die(f"{e.filename}: no such file")
-    except (OSError, RuntimeError, ValueError) as e:
+    except (OSError, RuntimeError) as e:
         _die(str(e))
-    # The ops script's one recurring bug: forgetting --brand shipped a PDF whose footer
-    # read "yourbrand.dev". Cheap to say so; the file is already written either way.
-    if pdf_mod.is_placeholder(resolved) and not bare:
+    # The ops script's recurring bug: forgetting --brand shipped a PDF footed
+    # "yourbrand.dev". Only worth saying when the document actually shows the brand.
+    if pdf_mod.is_placeholder(used_brand) and pdf_mod.resolve_style(style).shows_brand:
         typer.echo(
-            f"note: no brand.yml found, so the letterhead reads "
-            f"'{pdf_mod.BRAND['name']}' — set `[pdf] brand` in config.toml",
+            f"note: no brand.yml found, so this reads '{pdf_mod.BRAND['name']}' — "
+            f"set `[pdf] brand` in config.toml",
             err=True,
         )
     typer.echo(written)

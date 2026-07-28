@@ -17,6 +17,11 @@ author: Ko
 
 Body text.
 
+```python
+def hello(name):
+    return name
+```
+
 ## First section
 
 ## Second & Third
@@ -26,53 +31,135 @@ Body text.
 ```
 """
 
+NOTE = pdf.BUILTIN_STYLES["note"]
+REPORT = pdf.BUILTIN_STYLES["report"]
+BARE = pdf.BUILTIN_STYLES["bare"]
+
+
+@pytest.fixture
+def body():
+    return pdf.split_front_matter(DOC)[1]
+
+
+@pytest.fixture(autouse=True)
+def _no_machine_config(monkeypatch):
+    """Neutralise the real `[pdf] brand`/`[pdf] style` and $KO_BRAND — otherwise these
+    render with whatever the machine happens to configure, and the brand test fails
+    outright where that path doesn't exist."""
+    monkeypatch.delenv("KO_BRAND", raising=False)
+    monkeypatch.delenv("KO_PDF_STYLE", raising=False)
+    monkeypatch.setattr(pdf.config, "get", lambda s, k: None)
+
 
 def test_front_matter_split():
-    front, body = pdf.split_front_matter(DOC)
+    front, rest = pdf.split_front_matter(DOC)
     assert front["title"] == "Front matter wins" and front["author"] == "Ko"
-    assert body.startswith("# Heading one")
+    assert rest.startswith("# Heading one")
 
 
 def test_front_matter_absent_passes_through():
-    front, body = pdf.split_front_matter("# Plain\n")
-    assert front == {} and body == "# Plain\n"
+    front, rest = pdf.split_front_matter("# Plain\n")
+    assert front == {} and rest == "# Plain\n"
 
 
-def test_title_and_toc_skips_fenced_headings():
-    _, body = pdf.split_front_matter(DOC)
+def test_title_and_toc_skips_fenced_headings(body):
     title, toc = pdf.title_and_toc(body)
     assert title == "Heading one"
     assert [text for _, text in toc] == ["First section", "Second & Third"]
 
 
-def test_toc_anchors_match_the_rendered_heading_ids():
+def test_toc_anchors_match_the_rendered_heading_ids(body):
     # The bug this guards: rendered HTML carries "&amp;", and slugifying that leaks the
     # entity name into the id ("second-amp-third") while the TOC href says "second-third".
-    _, body = pdf.split_front_matter(DOC)
     _, toc = pdf.title_and_toc(body)
     html = pdf.render_html(body)
     for slug, _ in toc:
         assert f'id="{slug}"' in html
 
 
-def test_build_html_doc_chrome_present():
-    _, body = pdf.split_front_matter(DOC)
-    html = pdf.build_html(body, brand=dict(pdf.BRAND), title="T", date="2026-07-28", author="Ko")
-    assert "nav class=\"toc\"" in html and "letterhead" in html
+def test_fenced_code_is_syntax_highlighted(body):
+    html = pdf.render_html(body)
+    assert '<pre class="highlight">' in html and 'class="k"' in html  # pygments keyword span
+
+
+def test_unknown_language_falls_back_to_a_plain_block():
+    html = pdf.render_html("```notalanguage\nx = 1\n```\n")
+    assert "<pre>" in html and "highlight" not in html
+
+
+# --- styles ---
+
+
+def test_default_style_is_the_quick_one():
+    style = pdf.resolve_style(None)
+    assert style.name == "note"
+    assert style.footer and not style.toc and not style.letterhead
+
+
+def test_note_style_has_a_footer_but_no_chrome(body):
+    html = pdf.build_html(body, brand=dict(pdf.BRAND), title="T", style=NOTE)
     assert "page-footer-runner" in html and "counter(page)" in html
-    assert 'content="2026-07-28"' in html and 'name="author" content="Ko"' in html
-
-
-def test_build_html_bare_drops_every_bit_of_chrome():
-    _, body = pdf.split_front_matter(DOC)
-    html = pdf.build_html(body, brand=dict(pdf.BRAND), title="T", bare=True)
-    for chrome in ("nav class=\"toc\"", "letterhead", "page-footer-runner", "counter(section)"):
+    for chrome in ('nav class="toc"', "letterhead", "counter(section)"):
         assert chrome not in html
 
 
+def test_report_style_adds_letterhead_contents_and_numbering(body):
+    html = pdf.build_html(body, brand=dict(pdf.BRAND), title="T", style=REPORT)
+    assert 'nav class="toc"' in html and "letterhead" in html
+    assert "counter(section)" in html and "page-footer-runner" in html
+
+
+def test_bare_style_drops_every_bit_of_chrome(body):
+    html = pdf.build_html(body, brand=dict(pdf.BRAND), title="T", style=BARE)
+    for chrome in ('nav class="toc"', "letterhead", "page-footer-runner", "counter(section)"):
+        assert chrome not in html
+    assert "@bottom-right" not in html  # no footer boxes either
+
+
+def test_numbering_only_ships_with_the_contents_block(body):
+    # They're tied on purpose: the TOC prints "N." prefixes that must match the body's
+    # CSS counter, so a document can't have one without the other and stay consistent.
+    for style in (NOTE, REPORT, BARE):
+        html = pdf.build_html(body, brand=dict(pdf.BRAND), title="T", style=style)
+        assert ('nav class="toc"' in html) == ("counter(section)" in html)
+
+
+def test_metadata_lands_in_the_head(body):
+    html = pdf.build_html(
+        body, brand=dict(pdf.BRAND), title="T", style=NOTE, date="2026-07-28", author="Ko"
+    )
+    assert 'content="2026-07-28"' in html and 'name="author" content="Ko"' in html
+
+
 def test_extra_css_lands_last_so_it_wins():
-    html = pdf.build_html("# T\n", brand=dict(pdf.BRAND), title="T", extra_css="body{color:red}")
+    html = pdf.build_html(
+        "# T\n", brand=dict(pdf.BRAND), title="T", style=NOTE, extra_css="body{color:red}"
+    )
     assert html.index("body{color:red}") > html.index("@page")
+
+
+def test_user_style_layers_its_css_on_the_note_chrome(tmp_path, monkeypatch):
+    styles = tmp_path / "pdf"
+    styles.mkdir()
+    (styles / "serif.css").write_text("body{font-family:Georgia}")
+    monkeypatch.setattr(pdf, "user_style_dir", lambda: styles)
+    style = pdf.resolve_style("serif")
+    assert style.name == "serif" and style.footer and not style.letterhead
+    assert style.css == "body{font-family:Georgia}"
+    assert "serif" in pdf.style_names()
+
+
+def test_unknown_style_raises_and_lists_the_real_ones():
+    with pytest.raises(ValueError, match="unknown style 'nope'"):
+        pdf.resolve_style("nope")
+
+
+def test_style_from_config_when_no_flag(monkeypatch):
+    monkeypatch.setattr(pdf.config, "get", lambda s, k: "report" if (s, k) == ("pdf", "style") else None)
+    assert pdf.resolve_style(None).name == "report"
+
+
+# --- brand ---
 
 
 def test_flatten_brand_maps_brand_yml_shape():
@@ -97,12 +184,18 @@ def test_placeholder_detection():
     assert not pdf.is_placeholder({**pdf.BRAND, "name": "khalido.dev"})
 
 
+def test_only_brand_showing_styles_are_worth_warning_about():
+    assert NOTE.shows_brand and REPORT.shows_brand and not BARE.shows_brand
+
+
 def test_brand_path_prefers_env_over_config(monkeypatch, tmp_path):
     monkeypatch.setenv("KO_BRAND", str(tmp_path / "b.yml"))
     assert pdf.brand_path() == tmp_path / "b.yml"
     monkeypatch.delenv("KO_BRAND")
-    monkeypatch.setattr(pdf.config, "get", lambda s, k: None)
     assert pdf.brand_path() is None
+
+
+# --- output paths + environment ---
 
 
 def test_default_out_prefers_a_sibling_pdf_dir(tmp_path):
@@ -125,17 +218,23 @@ def test_child_env_only_touches_dyld_on_macos(monkeypatch):
     assert "DYLD_FALLBACK_LIBRARY_PATH" not in pdf._child_env()
 
 
-def test_render_end_to_end(tmp_path, monkeypatch):
-    # Neutralise the real `[pdf] brand` / $KO_BRAND — otherwise this test renders with
-    # whatever brand.yml the machine happens to configure, and fails outright where that
-    # path doesn't exist.
-    monkeypatch.delenv("KO_BRAND", raising=False)
-    monkeypatch.setattr(pdf.config, "get", lambda s, k: None)
+def test_render_end_to_end(tmp_path):
     src = tmp_path / "doc.md"
     src.write_text(DOC)
     try:
-        out = pdf.render(src, brand_file=None)
+        out, brand = pdf.render(src)
     except RuntimeError as e:
         pytest.skip(f"WeasyPrint native libs unavailable: {e}")
     assert out == tmp_path / "doc.pdf"
     assert out.read_bytes().startswith(b"%PDF-")
+    assert pdf.is_placeholder(brand)  # nothing configured in this test env
+
+
+def test_render_honours_front_matter_style(tmp_path):
+    src = tmp_path / "doc.md"
+    src.write_text("---\nstyle: bare\n---\n# T\n\ntext\n")
+    try:
+        out, _ = pdf.render(src)
+    except RuntimeError as e:
+        pytest.skip(f"WeasyPrint native libs unavailable: {e}")
+    assert out.exists()

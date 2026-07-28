@@ -32,6 +32,7 @@ dependencies = [
     "opentelemetry-exporter-otlp-proto-http>=1.43.0",
     "opentelemetry-sdk>=1.43.0",
     "pydantic-ai-slim[google,openrouter,mcp]>=2.4,<3",
+    "pygments>=2.20.0",
     "pyyaml>=6.0.3",
     "requests>=2.33.1",
     "rich>=13.0",  # direct import in agents/_shared.py; don't rely on typer's transitive extra

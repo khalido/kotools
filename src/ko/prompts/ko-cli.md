@@ -28,8 +28,9 @@ triage, `--category 'research paper'` for scholarly), `ko fetch <url>` (any URL 
 handles arxiv, PDFs, YouTube, paywalls, dead links via Wayback), `ko doc <file>` (PDF/Office/
 image → text, local), `ko yt <url>` (YouTube transcript). Shortcuts: `ko <url>` and `ko <file>`.
 
-**Writing out** — `ko pdf <file.md>` (markdown → print-ready A4 PDF: letterhead, numbered
-sections, Contents, page footer; prints the path it wrote). The inverse of `ko doc`.
+**Writing out** — `ko pdf <file.md>` (alias `ko md-to-pdf`): markdown → print-ready A4 PDF,
+prints the path it wrote. Default style is a plain note with a page footer; `--style report`
+adds a letterhead, Contents and numbered sections. The inverse of `ko doc`.
 
 **Research** — `ko papers search|get|cites|refs|similar` (cross-publisher via OpenAlex; takes
 DOIs, arxiv ids, or W-ids), `ko arxiv search|fetch`, `ko hf top|search|get` (HF Daily Papers).

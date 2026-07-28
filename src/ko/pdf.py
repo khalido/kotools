@@ -1,25 +1,28 @@
 """Markdown → print-ready PDF via WeasyPrint. Local, no models, no service.
 
-Ported from ops/scripts/md_to_pdf.py, which was written for client handover docs and is
-the pattern here: A4, generous margins, numbered sections, an auto Contents block, a
-letterhead on page 1 and a `brand · title (Printed date)  N / M` footer on every page.
+Ported from ops/scripts/md_to_pdf.py, which was written for client handover docs. Its look
+survives as the `report` style; its two footguns did not (see `load_brand` and the
+`.page-break` note below).
 
-Two things changed in the port, both because the ops script had the same footgun twice:
-identity had to be passed as `--brand path` on *every* invocation, and forgetting it
-silently shipped a PDF whose footer read "yourbrand.dev". Here the brand resolves through
-ko's normal config chain (`--brand` > front-matter > KO_BRAND > `[pdf] brand`), so it is
-set once, and a still-unresolved brand warns on stderr rather than printing quietly into
-the document.
+**Styles.** A style is a named bundle of page furniture, not a whole stylesheet:
 
-Left behind deliberately: the resume stylesheet. It is one document's bespoke layout, not
-a generic renderer's job — `--bare --css my.css` covers that case with the sheet living
-next to the CV.
+    note    typography + a page footer                (default — the quick PDF)
+    report  + letterhead, Contents, numbered sections (the ops handover look)
+    bare    typography only                           (a canvas for --css)
 
-WeasyPrint needs pango/cairo/gobject, which on macOS come from Homebrew in a directory
-dyld does not search. Since dyld reads its search path at process start, no in-process
-fix exists (ctypes preloading does not satisfy cffi's dlopen-by-leafname), so the HTML is
-built here and handed to a short-lived child interpreter with the path set — see
-`_write_pdf`. Zero setup for the caller, which matters because agents call this too.
+plus any `~/.config/ko/pdf/<name>.css`, which layers on `note`. Defaults follow Quarto,
+where `toc` and `number-sections` are both opt-in: most documents are a page of notes, and
+a Contents block listing two headings is furniture, not navigation.
+
+Numbered sections are tied to the Contents block rather than being separately switchable —
+the TOC prints "N." prefixes that have to match the body's CSS counter, so splitting them
+is a way to render a document whose two halves disagree.
+
+WeasyPrint needs pango/cairo, which on macOS come from Homebrew in a directory dyld does
+not search. dyld reads its search path at process start, so no in-process fix exists
+(ctypes preloading does not satisfy cffi's dlopen-by-leafname). The HTML is therefore built
+here and handed to a short-lived child interpreter with the path set — see `_write_pdf`.
+Zero setup for the caller, which matters because agents call this too.
 """
 
 from __future__ import annotations
@@ -30,10 +33,12 @@ import os
 import re
 import subprocess
 import sys
+from dataclasses import dataclass, replace
+from functools import lru_cache
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from ko import config
+from ko import config, dirs
 
 # --- Brand -------------------------------------------------------------------------
 
@@ -88,8 +93,8 @@ def brand_path() -> Path | None:
 
 def load_brand(path: Path | None = None) -> dict:
     """Generic defaults merged with a brand.yml. `path` (the --brand flag) wins over the
-    configured one. Raises FileNotFoundError if a path was given but doesn't exist — a
-    silently-ignored brand file is how the placeholder used to ship."""
+    configured one. Raises FileNotFoundError if a path was given but doesn't exist — the
+    ops script ignored a bad path and shipped a placeholder letterhead instead."""
     import yaml
 
     brand = dict(BRAND)
@@ -100,9 +105,60 @@ def load_brand(path: Path | None = None) -> dict:
 
 
 def is_placeholder(brand: dict) -> bool:
-    """True when no brand.yml resolved, so the letterhead/footer would print the generic
-    default. Worth a stderr note: the output looks finished but isn't."""
+    """True when no brand.yml resolved, so anything showing the brand would print the
+    generic default. Worth a stderr note: the output looks finished but isn't."""
     return brand.get("name") == BRAND["name"]
+
+
+# --- Styles ------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Style:
+    """A named bundle of page furniture. `toc` also switches on numbered sections."""
+
+    name: str
+    letterhead: bool = False
+    toc: bool = False
+    footer: bool = True
+    css: str = ""  # appended last, so a user style overrides the built-in sheets
+
+    @property
+    def shows_brand(self) -> bool:
+        return self.letterhead or self.footer
+
+
+BUILTIN_STYLES = {
+    "note": Style("note"),
+    "report": Style("report", letterhead=True, toc=True),
+    "bare": Style("bare", footer=False),
+}
+
+DEFAULT_STYLE = "note"
+
+
+def user_style_dir() -> Path:
+    """`~/.config/ko/pdf/` — drop `<name>.css` in here and it becomes `--style <name>`."""
+    return dirs.config_dir() / "pdf"
+
+
+def style_names() -> list[str]:
+    """Built-in styles first, then whatever the user has dropped in their style dir."""
+    extra = sorted(p.stem for p in user_style_dir().glob("*.css")) if user_style_dir().is_dir() else []
+    return list(BUILTIN_STYLES) + [n for n in extra if n not in BUILTIN_STYLES]
+
+
+def resolve_style(name: str | None) -> Style:
+    """A style by name: built-in, else `~/.config/ko/pdf/<name>.css` layered on `note`.
+    An unknown name raises ValueError rather than quietly falling back — a typo'd style
+    that renders the default look is indistinguishable from the style not working."""
+    name = name or config.setting("KO_PDF_STYLE", "pdf", "style") or DEFAULT_STYLE
+    if name in BUILTIN_STYLES:
+        return BUILTIN_STYLES[name]
+    path = user_style_dir() / f"{name}.css"
+    if path.is_file():
+        return replace(BUILTIN_STYLES["note"], name=name, css=path.read_text())
+    raise ValueError(f"unknown style {name!r} — available: {', '.join(style_names())}")
 
 
 # --- Stylesheets -------------------------------------------------------------------
@@ -121,10 +177,10 @@ PAGE_CSS = """
 }
 """
 
-# --bare: same page geometry, no footer boxes (nothing populates them).
-BARE_PAGE_CSS = "@page { size: A4; margin: 2cm; }\n"
+# No footer boxes — nothing would populate them.
+PAGE_CSS_NO_FOOTER = "@page { size: A4; margin: 2cm; }\n"
 
-# Typography only — everything a plain document needs, and all `--bare` keeps.
+# Typography only: what every style gets.
 BASE_CSS = """
 body {
     font-family: -apple-system, "Helvetica Neue", "Segoe UI", Arial, sans-serif;
@@ -231,13 +287,13 @@ sup.footnote-ref a { color: #1a5490; text-decoration: none; }
 .footnote-backref { display: none; }
 """
 
-# Document chrome: numbered sections, letterhead, Contents, footer runner. Dropped by
-# --bare so a custom sheet gets a clean canvas.
-DOC_CSS = """
+NUMBERING_CSS = """
 body { counter-reset: section; }
 h2 { counter-increment: section; }
 h2::before { content: counter(section) ". "; color: #888; font-weight: 500; }
+"""
 
+LETTERHEAD_CSS = """
 .letterhead {
     border-bottom: 2px solid #61afef;
     padding-bottom: 0.55em;
@@ -252,10 +308,11 @@ h2::before { content: counter(section) ". "; color: #888; font-weight: 500; }
 }
 .letterhead .lh-tag { font-size: 9.5pt; color: #444; margin-top: 0.15em; }
 .letterhead .lh-contact { font-size: 8.5pt; color: #8a8a8a; margin-top: 0.2em; }
+"""
 
-/* Pulled out of flow and rendered in @bottom-left on every page via element(footerLeft).
-   A running element rather than a `content:` string so the "(Printed …)" half can be
-   fainter than the title. */
+# Pulled out of flow and rendered in @bottom-left on every page via element(footerLeft).
+# A running element rather than a `content:` string so "(Printed …)" can be fainter.
+FOOTER_CSS = """
 .page-footer-runner {
     position: running(footerLeft);
     font-family: -apple-system, system-ui, sans-serif;
@@ -263,7 +320,9 @@ h2::before { content: counter(section) ". "; color: #888; font-weight: 500; }
     color: #888;
 }
 .page-footer-runner .dim { color: #bcbcbc; }
+"""
 
+TOC_CSS = """
 nav.toc {
     margin: 1.5em 0 2em 0;
     padding: 0.8em 1em;
@@ -297,6 +356,15 @@ nav.toc a { color: #333; }
 """
 
 
+@lru_cache(maxsize=1)
+def _highlight_css() -> str:
+    """Pygments' style definitions, scoped to .highlight. `friendly` is a light theme that
+    survives being printed — the dark themes turn into ink."""
+    from pygments.formatters import HtmlFormatter
+
+    return HtmlFormatter(style="friendly").get_style_defs(".highlight")
+
+
 # --- Markdown ----------------------------------------------------------------------
 
 FRONT_MATTER_RE = re.compile(r"\A---\r?\n(.*?)\r?\n---\r?\n", re.DOTALL)
@@ -308,9 +376,9 @@ SLUG_WS_RE = re.compile(r"[\s_-]+")
 
 def split_front_matter(text: str) -> tuple[dict, str]:
     """Split a leading YAML front-matter block (--- … ---) from the body. Recognised keys:
-    `title`, `date`, `author` (the last two land in the PDF's own metadata), `brand` (a
-    path, relative to the document), `style: bare`, plus any BRAND key as an inline
-    override. Everything else is carried but unused."""
+    `title`, `date`, `author` (the last two land in the PDF's own metadata), `style` (a
+    style name), `brand` (a path, relative to the document), plus any BRAND key as an
+    inline override. Everything else is carried but unused."""
     m = FRONT_MATTER_RE.match(text)
     if not m:
         return {}, text
@@ -347,13 +415,35 @@ def title_and_toc(md_text: str) -> tuple[str, list[tuple[str, str]]]:
     return title, toc
 
 
+def _highlight(code: str, lang: str, _attrs) -> str:
+    """markdown-it highlight hook → Pygments. Returning "" lets markdown-it fall back to
+    its own escaped <pre><code>, which is what an unknown or absent language should get:
+    a code block that renders plainly beats one that raises."""
+    if not lang:
+        return ""
+    from pygments import highlight
+    from pygments.formatters import HtmlFormatter
+    from pygments.lexers import get_lexer_by_name
+    from pygments.util import ClassNotFound
+
+    try:
+        lexer = get_lexer_by_name(lang)
+    except ClassNotFound:
+        return ""
+    body = highlight(code, lexer, HtmlFormatter(nowrap=True))
+    return f'<pre class="highlight"><code>{body}</code></pre>'
+
+
 def render_html(md_text: str) -> str:
-    """Markdown → HTML with tables, strikethrough and footnotes, and an id on every <h2>
-    so the Contents anchors land."""
+    """Markdown → HTML with tables, strikethrough, footnotes and highlighted code, and an
+    id on every <h2> so the Contents anchors land."""
     from markdown_it import MarkdownIt
     from mdit_py_plugins.footnote import footnote_plugin
 
-    md = MarkdownIt("commonmark", {"html": True, "linkify": True, "typographer": True})
+    md = MarkdownIt(
+        "commonmark",
+        {"html": True, "linkify": True, "typographer": True, "highlight": _highlight},
+    )
     md.enable("table").enable("strikethrough")
     md.use(footnote_plugin)
     html = md.render(md_text)
@@ -413,11 +503,14 @@ def default_out(input_path: Path) -> Path:
 
 # --- Render ------------------------------------------------------------------------
 
-# Runs in the child: HTML on stdin, base_url and output path as argv.
+# Runs in the child: HTML on stdin, then base_url / output path / pdf_variant as argv.
+# pdf_tags is always on — it is what makes the PDF navigable by a screen reader, costs
+# only structure metadata, and WeasyPrint 69 specifically improved its validity.
 _CHILD = (
     "import sys\n"
     "from weasyprint import HTML\n"
-    "HTML(string=sys.stdin.read(), base_url=sys.argv[1]).write_pdf(sys.argv[2])\n"
+    "HTML(string=sys.stdin.read(), base_url=sys.argv[1]).write_pdf(\n"
+    "    sys.argv[2], pdf_tags=True, pdf_variant=(sys.argv[3] or None))\n"
 )
 
 
@@ -448,18 +541,18 @@ def _child_env() -> dict[str, str]:
     env = dict(os.environ)
     if sys.platform != "darwin":
         return env
-    dirs = [p for p in ("/opt/homebrew/lib", "/usr/local/lib") if Path(p).is_dir()]
-    if not dirs:
+    lib_dirs = [p for p in ("/opt/homebrew/lib", "/usr/local/lib") if Path(p).is_dir()]
+    if not lib_dirs:
         return env
     existing = env.get("DYLD_FALLBACK_LIBRARY_PATH", "")
-    env["DYLD_FALLBACK_LIBRARY_PATH"] = ":".join([*dirs, existing] if existing else dirs)
+    env["DYLD_FALLBACK_LIBRARY_PATH"] = ":".join([*lib_dirs, existing] if existing else lib_dirs)
     return env
 
 
-def _write_pdf(html: str, out: Path, base_url: Path) -> None:
+def _write_pdf(html: str, out: Path, base_url: Path, variant: str = "") -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
     proc = subprocess.run(
-        [sys.executable, "-c", _CHILD, str(base_url), str(out)],
+        [sys.executable, "-c", _CHILD, str(base_url), str(out), variant],
         input=html.encode(),
         capture_output=True,
         env=_child_env(),
@@ -480,35 +573,35 @@ def build_html(
     *,
     brand: dict,
     title: str,
+    style: Style,
     date: str = "",
     author: str = "",
-    toc: bool = True,
-    letterhead: bool = True,
-    bare: bool = False,
     extra_css: str = "",
 ) -> str:
     """The full HTML document. Separated from `_write_pdf` so the markup is testable
     without WeasyPrint (and its native libraries) present."""
     _, headings = title_and_toc(md_text)
     body = render_html(md_text)
-    if bare:
-        page_css, sheets, runner = BARE_PAGE_CSS, BASE_CSS, ""
-    else:
-        page_css, sheets = PAGE_CSS, BASE_CSS + DOC_CSS
-        if toc and headings:
-            # Right after the first </h1>, so the title stays on top.
-            h1_end = body.find("</h1>")
-            at = h1_end + len("</h1>") if h1_end != -1 else 0
-            body = body[:at] + "\n" + _render_toc(headings) + body[at:]
-        if letterhead:
-            body = _letterhead_html(brand) + "\n" + body
+    sheets = BASE_CSS + _highlight_css()
+    runner = ""
+
+    if style.toc and headings:
+        sheets += NUMBERING_CSS + TOC_CSS
+        # Right after the first </h1>, so the title stays on top.
+        h1_end = body.find("</h1>")
+        at = h1_end + len("</h1>") if h1_end != -1 else 0
+        body = body[:at] + "\n" + _render_toc(headings) + body[at:]
+    if style.letterhead:
+        sheets += LETTERHEAD_CSS + f".letterhead {{ border-bottom-color: {brand['accent']}; }}\n"
+        body = _letterhead_html(brand) + "\n" + body
+    if style.footer:
+        sheets += FOOTER_CSS
         # Has to sit in the body — position: running() pulls it into the margin box.
         runner = (
             f'<div class="page-footer-runner">{html_lib.escape(brand["name"])} · '
-            f'{html_lib.escape(title)} '
+            f"{html_lib.escape(title)} "
             f'<span class="dim">(Printed {_printed_on()})</span></div>'
         )
-        sheets += f".letterhead {{ border-bottom-color: {brand['accent']}; }}\n"
 
     # date/author land in the PDF's own metadata (WeasyPrint reads these two meta tags),
     # so an export found on disk months later can still identify itself.
@@ -520,7 +613,8 @@ def build_html(
     return (
         '<!DOCTYPE html>\n<html><head><meta charset="utf-8">'
         f"{head}<title>{html_lib.escape(title)}</title>"
-        f"<style>{page_css}{sheets}{extra_css}</style></head><body>\n"
+        f"<style>{PAGE_CSS if style.footer else PAGE_CSS_NO_FOOTER}{sheets}"
+        f"{style.css}{extra_css}</style></head><body>\n"
         f"{runner}\n{body}\n</body></html>"
     )
 
@@ -529,14 +623,23 @@ def render(
     input_path: Path,
     out: Path | None = None,
     *,
-    toc: bool = True,
-    letterhead: bool = True,
-    bare: bool = False,
+    style: str | None = None,
+    toc: bool | None = None,
+    letterhead: bool | None = None,
     css: tuple[Path, ...] = (),
     brand_file: Path | None = None,
-) -> Path:
-    """Render a markdown file to PDF and return the path written."""
+    archival: bool = False,
+) -> tuple[Path, dict]:
+    """Render a markdown file to PDF. Returns (path written, the brand actually used) —
+    the caller needs the brand to warn when it never resolved past the placeholder."""
     front, md_text = split_front_matter(input_path.read_text())
+    resolved = resolve_style(style or front.get("style"))
+    # Per-run overrides sit on top of whichever style was chosen.
+    if toc is not None:
+        resolved = replace(resolved, toc=toc)
+    if letterhead is not None:
+        resolved = replace(resolved, letterhead=letterhead)
+
     # A document may name its own brand.yml (relative to itself), then override single
     # keys inline — most specific wins.
     brand = load_brand(brand_file)
@@ -552,13 +655,13 @@ def render(
         md_text,
         brand=brand,
         title=str(front.get("title") or h1_title or input_path.stem),
+        style=resolved,
         date=str(front.get("date") or ""),
         author=str(front.get("author") or brand.get("name") or ""),
-        toc=toc,
-        letterhead=letterhead,
-        bare=bare or front.get("style") == "bare",
         extra_css="\n".join(p.read_text() for p in css),
     )
     out = out or default_out(input_path)
-    _write_pdf(html, out, input_path.resolve().parent)
-    return out
+    # PDF/A-3b: self-contained and archival. Not the default — it embeds colour profile
+    # and font data most documents never need (~8% on a one-pager, more as fonts grow).
+    _write_pdf(html, out, input_path.resolve().parent, "pdf/a-3b" if archival else "")
+    return out, brand
