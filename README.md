@@ -22,7 +22,7 @@ Full docs: **[kotools.khalido.dev](https://kotools.khalido.dev/)**.
 | `ko doc` | PDF/Office/image → text, fully local (no models) | `ko report.pdf` — no upload, no key |
 | `ko yt` | YouTube → transcript (free, no key); `-s` summarizes | "what does this 40-min talk actually say" |
 | `ko tv` | movie/TV rating + where to stream ([TMDB](https://developer.themoviedb.org), AU) | "worth watching, and where can I?" |
-| `ko tt` | TickTick lists + tasks (read-only, via MCP) | `ko tt today` — my open tasks |
+| `ko tt` | TickTick lists + tasks, read **& write** (Open API v1) | `ko tt today` — my open tasks; `ko tt add "…" --due tomorrow` |
 
 ### AI agents
 
@@ -88,7 +88,7 @@ Keys live in environment variables (shell profile or `.env`) or in `~/.config/ko
 | `GEMINI_API_KEY` | `-m google:…` escape hatch | 💰 | Direct Gemini (`-m google:gemini-3.5-flash`), or for Gemini-only features later. |
 | `X_BEARER_TOKEN` | `ko x` | 💰 | X API v2 Bearer Token. Pay-per-use since 2026 (prepaid credits, ~$0.005/post read). [developer.x.com](https://developer.x.com) |
 | `TMDB_READ_ACCESS_TOKEN` | `ko tv` | free | v4 Read Access Token from [TMDB settings](https://www.themoviedb.org/settings/api). |
-| `TICKTICK_API_KEY` | `ko tt` | (TickTick sub) | TickTick app → Account → MCP → generate. Read-only here. |
+| `TICKTICK_API_KEY` | `ko tt` | (TickTick sub) | TickTick → avatar → Settings → Account → API Token. One token authenticates both the Open API (reads + `add`/`done`) and the hosted MCP (`search`). |
 | `S2_API_KEY` | `ko papers` (optional) | free | [Semantic Scholar](https://www.semanticscholar.org/product/api) key — adds `tldr` + `similar`; everything else works keyless. |
 | — (Google OAuth) | `ko gsheets` | free | Not a key: one-off browser consent, token cached locally. See below. |
 | — | `ko arxiv`, `ko hn`, `ko hf`, `ko papers`, `ko doc` | free | No auth at all. |

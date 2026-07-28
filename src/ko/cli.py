@@ -142,7 +142,7 @@ def doctor(
         ("x", "X posts (paid tier for reads)", "X_BEARER_TOKEN", env("X_BEARER_TOKEN")),
         (
             "tt",
-            "TickTick lists/tasks (read-only, via MCP) — developer.ticktick.com",
+            "TickTick tasks (read+write via Open API v1; search via MCP) — Settings → Account → API Token",
             "TICKTICK_API_KEY",
             env("TICKTICK_API_KEY"),
         ),

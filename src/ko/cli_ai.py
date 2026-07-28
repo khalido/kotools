@@ -39,9 +39,10 @@ app.add_typer(mcp_app, name="mcp")
 
 tt_app = typer.Typer(
     help=(
-        "TickTick lists/tasks, read-only via its hosted MCP (TICKTICK_API_KEY). Manage tasks in "
-        "TickTick itself. Bare `ko tt` lists your lists; `ko tt <list>` opens one. "
-        "`ko todo` is an alias."
+        "TickTick lists/tasks over the Open API (TICKTICK_API_KEY: avatar → Settings → Account "
+        "→ API Token). Read: `lists`, `items <list>`, `search <query>`. Write: `add`, `done`. "
+        "Bare `ko tt` lists your lists; `ko tt <list>` opens one. `ko todo` is an alias. "
+        "No delete/un-complete — do those in TickTick itself."
     ),
 )
 app.add_typer(tt_app, name="tt")
@@ -455,10 +456,15 @@ def tt_lists(
 
 @tt_app.command("items")
 def tt_items(
-    list_name: str = typer.Argument(..., help="list name (substring ok) or id"),
+    list_name: str = typer.Argument(
+        ..., help="list name (substring/emoji ok) or id; `inbox` works"
+    ),
     json_out: bool = typer.Option(False, "--json", help="JSON instead of TSV"),
 ) -> None:
-    """Open tasks in a list (TSV: priority, due, title). `ko tt <list>` is a shortcut."""
+    """Open tasks in a list (TSV: priority, due, title). `ko tt <list>` is a shortcut.
+
+    Open (undone) tasks only — completed ones are reachable via `ko tt search`. Due dates
+    render in the ko cal timezone: 'YYYY-MM-DD' all-day, 'YYYY-MM-DD HH:MM' timed."""
     try:
         proj = ticktick_mod.resolve_list(list_name)
         if not proj:
@@ -474,7 +480,166 @@ def tt_items(
         _emit_json(tasks)
         return
     for t in tasks:
-        typer.echo(f"{t.priority}\t{t.due or '—'}\t{t.title}")
+        typer.echo(f"{t.priority}\t{t.due or '—'}\t{_tsv_cell(t.title)}")
+
+
+@tt_app.command("add")
+def tt_add(
+    title: str = typer.Argument(..., help="task title"),
+    list_name: str = typer.Argument(
+        None, metavar="[LIST]", help="list name (substring/emoji ok) or id; default: your Inbox"
+    ),
+    note: str = typer.Option(
+        None, "--note", help="markdown body (the task's `content`) — renders in the app"
+    ),
+    due: str = typer.Option(
+        None,
+        "--due",
+        help="today | tomorrow | YYYY-MM-DD (all-day) | YYYY-MM-DDTHH:MM (timed), in the "
+        "ko cal timezone",
+    ),
+    priority: str = typer.Option(
+        None, "--priority", "-p", help="none|low|med|high (default: none)"
+    ),
+    tag: list[str] = typer.Option(None, "--tag", help="tag to attach (repeatable)"),
+    json_out: bool = typer.Option(False, "--json", help="JSON instead of TSV"),
+) -> None:
+    """Create a task (TSV: id, list, title). No LIST → your Inbox.
+
+    --note is markdown, written verbatim into `content` and rendered by TickTick. Quirks:
+    single `~text~` is UNDERLINE (strikethrough is `~~text~~`), `::text::` is highlight,
+    headings stop at 3 levels. Quote it and use real newlines: --note $'# heading\\n- item'.
+    """
+    level = 0
+    if priority is not None:
+        if priority.lower() not in ticktick_mod.PRIORITIES:
+            _die(
+                f"bad --priority {priority!r}: pick one of "
+                f"{', '.join(sorted(set(ticktick_mod.PRIORITIES)))}",
+                as_json=json_out,
+                code="usage",
+            )
+        level = ticktick_mod.PRIORITIES[priority.lower()]
+    if due:
+        try:  # fail as a usage error here, before we create anything
+            ticktick_mod.parse_due(due)
+        except ValueError:
+            _die(
+                f"bad --due {due!r}: use today | tomorrow | YYYY-MM-DD | YYYY-MM-DDTHH:MM",
+                as_json=json_out,
+                code="usage",
+            )
+    try:
+        proj = None
+        if list_name:
+            proj = ticktick_mod.resolve_list(list_name)
+            if not proj:
+                _die(f"no list matching {list_name!r}", as_json=json_out, code="not_found")
+        task = ticktick_mod.create_task(
+            title,
+            projectId=proj.id if proj else None,
+            content=note,
+            due=due,
+            priority=level,
+            tags=list(tag) if tag else None,
+        )
+    except typer.Exit:
+        raise
+    except Exception as e:
+        _die(str(e), as_json=json_out)
+    if json_out:
+        _emit_json([task])
+        return
+    typer.echo(f"{task.id}\t{proj.name if proj else 'Inbox'}\t{_tsv_cell(task.title)}")
+
+
+@tt_app.command("done")
+def tt_done(
+    query: str = typer.Argument(..., help="task id, or a substring of its title"),
+    list_name: str = typer.Option(
+        None, "--list", "-l", help="only look in this list (name substring/emoji ok, or id)"
+    ),
+    yes: bool = typer.Option(False, "--yes", "-y", help="skip the TTY confirmation"),
+    json_out: bool = typer.Option(False, "--json", help="JSON instead of TSV"),
+) -> None:
+    """Complete a task, matched by id or title substring (TSV: id, list, title).
+
+    Searches your OPEN tasks (all lists, Inbox included, unless --list). Several matches =
+    exit 1 with the candidates listed, never a guess — narrow the query or pass an id.
+    Confirms on a TTY (`--yes` skips; pipes/agents are never prompted). Not reversible
+    from here — un-complete in TickTick.
+    """
+    try:
+        projects = ticktick_mod.list_projects()
+        scope = None
+        if list_name:
+            proj = ticktick_mod.resolve_list(list_name, projects)
+            if not proj:
+                _die(f"no list matching {list_name!r}", as_json=json_out, code="not_found")
+            scope = [proj.id]
+        matches = ticktick_mod.find_tasks(query, ticktick_mod.open_tasks(scope))
+    except typer.Exit:
+        raise
+    except Exception as e:
+        _die(str(e), as_json=json_out)
+    names = {p.id: p.name for p in projects}
+
+    def _list_of(task) -> str:
+        return names.get(task.project_id, "Inbox" if task.project_id.startswith("inbox") else "?")
+
+    if not matches:
+        where = f" in {list_name!r}" if list_name else ""
+        _die(f"no open task matching {query!r}{where}", as_json=json_out, code="not_found")
+    if len(matches) > 1:
+        note = f"{len(matches)} open tasks match {query!r} — narrow it or pass an id"
+        if json_out:
+            # the {error, code} contract, plus the candidates so an agent can pick an id
+            payload = {"error": note, "code": "ambiguous", "matches": [asdict(m) for m in matches]}
+            typer.echo(json.dumps(payload), err=True)
+        else:
+            typer.echo(f"{note}:", err=True)
+            for m in matches:
+                typer.echo(f"  {m.id}\t{_list_of(m)}\t{_tsv_cell(m.title)}", err=True)
+        raise typer.Exit(1)
+    task = matches[0]
+    if not yes and sys.stdin.isatty():
+        typer.confirm(f"complete {task.title!r} in {_list_of(task)}?", abort=True)
+    try:
+        ticktick_mod.complete_task(task.project_id, task.id)
+    except Exception as e:
+        _die(str(e), as_json=json_out)
+    if json_out:
+        _emit_json([task])
+        return
+    typer.echo(f"{task.id}\t{_list_of(task)}\t{_tsv_cell(task.title)}")
+
+
+@tt_app.command("search")
+def tt_search(
+    query: str = typer.Argument(..., help="keyword(s) to match against titles and bodies"),
+    n: int = typer.Option(20, "-n", "--n", help="max results (default 20)"),
+    json_out: bool = typer.Option(False, "--json", help="JSON instead of TSV"),
+) -> None:
+    """Keyword search over every task, open and completed (TSV: id, list, title, url).
+
+    Fuzzy: matches the markdown body (`content`) as well as the title, and ranks loosely.
+    The only command that goes via TickTick's hosted MCP (REST has no search endpoint), so
+    it costs a ~3s handshake, its index trails writes by ~10-30s (a task you just added
+    won't be found yet — `items`/`done` read live), and it is occasionally flaky: an empty
+    result for a query you know matches means re-run it.
+    """
+    try:
+        hits = ticktick_mod.search(query)
+    except Exception as e:
+        _die(str(e), as_json=json_out)
+    if not hits:
+        _no_results(f"no tasks matching {query!r}", json_out)
+    hits = hits[:n]
+    if json_out:
+        _emit_json(hits)
+        return
+    for h in hits:
+        typer.echo(f"{h.id}\t{h.project}\t{_tsv_cell(h.title)}\t{h.url}")
 
 
 # --- publish commands ---
