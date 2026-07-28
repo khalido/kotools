@@ -10,9 +10,11 @@ survives as the `report` style; its two footguns did not (see `load_brand` and t
     report  + letterhead, Contents, numbered sections (the ops handover look)
     bare    typography only                           (a canvas for --css)
 
-plus any `~/.config/ko/pdf/<name>.css`, which layers on `note`. Defaults follow Quarto,
-where `toc` and `number-sections` are both opt-in: most documents are a page of notes, and
-a Contents block listing two headings is furniture, not navigation.
+plus any `~/.config/ko/pdf/<name>.css`, which layers on `note`'s furniture. That style dir
+is the *only* way to add CSS — an ad-hoc `--css` flag would be a second answer to the same
+question, and a named style is reusable where a flag isn't. Defaults follow Quarto, where
+`toc` and `number-sections` are both opt-in: most documents are a page of notes, and a
+Contents block listing two headings is furniture, not navigation.
 
 Numbered sections are tied to the Contents block rather than being separately switchable —
 the TOC prints "N." prefixes that have to match the body's CSS counter, so splitting them
@@ -376,9 +378,8 @@ SLUG_WS_RE = re.compile(r"[\s_-]+")
 
 def split_front_matter(text: str) -> tuple[dict, str]:
     """Split a leading YAML front-matter block (--- … ---) from the body. Recognised keys:
-    `title`, `date`, `author` (the last two land in the PDF's own metadata), `style` (a
-    style name), `brand` (a path, relative to the document), plus any BRAND key as an
-    inline override. Everything else is carried but unused."""
+    `title`, `date`, `author` (the last two land in the PDF's own metadata) and `style`.
+    Everything else is carried but unused."""
     m = FRONT_MATTER_RE.match(text)
     if not m:
         return {}, text
@@ -440,10 +441,11 @@ def render_html(md_text: str) -> str:
     from markdown_it import MarkdownIt
     from mdit_py_plugins.footnote import footnote_plugin
 
-    md = MarkdownIt(
-        "commonmark",
-        {"html": True, "linkify": True, "typographer": True, "highlight": _highlight},
-    )
+    # `html: True` is load-bearing — it's what lets <div class="page-break"> through.
+    # The ops script also passed linkify/typographer, which are silently inert on the
+    # commonmark preset (verified). Left off rather than switched on: typographer would
+    # rewrite `--` to an en dash, and these documents are full of --flags in prose.
+    md = MarkdownIt("commonmark", {"html": True, "highlight": _highlight})
     md.enable("table").enable("strikethrough")
     md.use(footnote_plugin)
     html = md.render(md_text)
@@ -487,30 +489,26 @@ def _letterhead_html(brand: dict) -> str:
 
 
 def default_out(input_path: Path) -> Path:
-    """Where the PDF lands when -o is omitted: a sibling `pdf/` dir if one exists, else
-    `<docs>/pdf/` if the input is anywhere under a `docs/` tree, else beside the input.
-    Generated artifacts stay out of the source folder without anyone passing a path."""
-    pdf_name = input_path.with_suffix(".pdf").name
+    """Where the PDF lands when -o is omitted: a `pdf/` dir beside the input if one
+    already exists, else next to the input. The ops script also walked up to any enclosing
+    `docs/` and wrote to `docs/pdf/`, which surprises (it can land two levels from the
+    source, in a directory it creates) and turned out to be unused — every real call
+    passes -o."""
     sibling = input_path.resolve().parent / "pdf"
     if sibling.is_dir():
-        return sibling / pdf_name
-    parts = input_path.resolve().parts
-    if "docs" in parts:
-        docs_idx = len(parts) - 1 - parts[::-1].index("docs")
-        return Path(*parts[: docs_idx + 1]) / "pdf" / pdf_name
+        return sibling / input_path.with_suffix(".pdf").name
     return input_path.with_suffix(".pdf")
 
 
 # --- Render ------------------------------------------------------------------------
 
-# Runs in the child: HTML on stdin, then base_url / output path / pdf_variant as argv.
-# pdf_tags is always on — it is what makes the PDF navigable by a screen reader, costs
-# only structure metadata, and WeasyPrint 69 specifically improved its validity.
+# Runs in the child: HTML on stdin, base_url and output path as argv. pdf_tags is always
+# on — it is what makes the PDF navigable by a screen reader, costs only structure
+# metadata, and WeasyPrint 69 specifically improved its validity.
 _CHILD = (
     "import sys\n"
     "from weasyprint import HTML\n"
-    "HTML(string=sys.stdin.read(), base_url=sys.argv[1]).write_pdf(\n"
-    "    sys.argv[2], pdf_tags=True, pdf_variant=(sys.argv[3] or None))\n"
+    "HTML(string=sys.stdin.read(), base_url=sys.argv[1]).write_pdf(sys.argv[2], pdf_tags=True)\n"
 )
 
 
@@ -549,10 +547,10 @@ def _child_env() -> dict[str, str]:
     return env
 
 
-def _write_pdf(html: str, out: Path, base_url: Path, variant: str = "") -> None:
+def _write_pdf(html: str, out: Path, base_url: Path) -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
     proc = subprocess.run(
-        [sys.executable, "-c", _CHILD, str(base_url), str(out), variant],
+        [sys.executable, "-c", _CHILD, str(base_url), str(out)],
         input=html.encode(),
         capture_output=True,
         env=_child_env(),
@@ -576,7 +574,6 @@ def build_html(
     style: Style,
     date: str = "",
     author: str = "",
-    extra_css: str = "",
 ) -> str:
     """The full HTML document. Separated from `_write_pdf` so the markup is testable
     without WeasyPrint (and its native libraries) present."""
@@ -614,7 +611,7 @@ def build_html(
         '<!DOCTYPE html>\n<html><head><meta charset="utf-8">'
         f"{head}<title>{html_lib.escape(title)}</title>"
         f"<style>{PAGE_CSS if style.footer else PAGE_CSS_NO_FOOTER}{sheets}"
-        f"{style.css}{extra_css}</style></head><body>\n"
+        f"{style.css}</style></head><body>\n"
         f"{runner}\n{body}\n</body></html>"
     )
 
@@ -624,32 +621,19 @@ def render(
     out: Path | None = None,
     *,
     style: str | None = None,
-    toc: bool | None = None,
     letterhead: bool | None = None,
-    css: tuple[Path, ...] = (),
     brand_file: Path | None = None,
-    archival: bool = False,
 ) -> tuple[Path, dict]:
     """Render a markdown file to PDF. Returns (path written, the brand actually used) —
     the caller needs the brand to warn when it never resolved past the placeholder."""
     front, md_text = split_front_matter(input_path.read_text())
     resolved = resolve_style(style or front.get("style"))
-    # Per-run overrides sit on top of whichever style was chosen.
-    if toc is not None:
-        resolved = replace(resolved, toc=toc)
+    # The one per-run override that earns a flag: the `report` look is also how internal
+    # docs are rendered, minus the letterhead they shouldn't carry.
     if letterhead is not None:
         resolved = replace(resolved, letterhead=letterhead)
 
-    # A document may name its own brand.yml (relative to itself), then override single
-    # keys inline — most specific wins.
     brand = load_brand(brand_file)
-    if not brand_file and front.get("brand"):
-        import yaml
-
-        path = (input_path.parent / str(front["brand"])).expanduser()
-        brand.update(_flatten_brand(yaml.safe_load(path.read_text()) or {}))
-    brand.update({k: v for k, v in front.items() if k in BRAND and isinstance(v, str)})
-
     h1_title, _ = title_and_toc(md_text)
     html = build_html(
         md_text,
@@ -658,10 +642,7 @@ def render(
         style=resolved,
         date=str(front.get("date") or ""),
         author=str(front.get("author") or brand.get("name") or ""),
-        extra_css="\n".join(p.read_text() for p in css),
     )
     out = out or default_out(input_path)
-    # PDF/A-3b: self-contained and archival. Not the default — it embeds colour profile
-    # and font data most documents never need (~8% on a one-pager, more as fonts grow).
-    _write_pdf(html, out, input_path.resolve().parent, "pdf/a-3b" if archival else "")
+    _write_pdf(html, out, input_path.resolve().parent)
     return out, brand

@@ -4,6 +4,8 @@ render skips when pango/cairo aren't installed."""
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from ko import pdf
@@ -131,10 +133,12 @@ def test_metadata_lands_in_the_head(body):
     assert 'content="2026-07-28"' in html and 'name="author" content="Ko"' in html
 
 
-def test_extra_css_lands_last_so_it_wins():
-    html = pdf.build_html(
-        "# T\n", brand=dict(pdf.BRAND), title="T", style=NOTE, extra_css="body{color:red}"
-    )
+def test_user_style_css_lands_last_so_it_wins(tmp_path, monkeypatch):
+    styles = tmp_path / "pdf"
+    styles.mkdir()
+    (styles / "red.css").write_text("body{color:red}")
+    monkeypatch.setattr(pdf, "user_style_dir", lambda: styles)
+    html = pdf.build_html("# T\n", brand=dict(pdf.BRAND), title="T", style=pdf.resolve_style("red"))
     assert html.index("body{color:red}") > html.index("@page")
 
 
@@ -203,14 +207,16 @@ def test_default_out_prefers_a_sibling_pdf_dir(tmp_path):
     assert pdf.default_out(tmp_path / "doc.md") == tmp_path / "pdf" / "doc.pdf"
 
 
-def test_default_out_uses_the_docs_tree(tmp_path):
-    deep = tmp_path / "docs" / "lab" / "discovery"
-    deep.mkdir(parents=True)
-    assert pdf.default_out(deep / "state.md") == tmp_path / "docs" / "pdf" / "state.pdf"
-
-
 def test_default_out_falls_back_to_beside_the_input(tmp_path):
     assert pdf.default_out(tmp_path / "doc.md") == tmp_path / "doc.pdf"
+
+
+def test_default_out_does_not_climb_to_an_enclosing_docs_dir(tmp_path):
+    # The ops script wrote docs/lab/discovery/x.md to docs/pdf/ — two levels up, into a
+    # directory it created. Surprising, and unused: every real call passes -o.
+    deep = tmp_path / "docs" / "lab" / "discovery"
+    deep.mkdir(parents=True)
+    assert pdf.default_out(deep / "state.md") == deep / "state.pdf"
 
 
 def test_child_env_only_touches_dyld_on_macos(monkeypatch):
@@ -238,3 +244,19 @@ def test_render_honours_front_matter_style(tmp_path):
     except RuntimeError as e:
         pytest.skip(f"WeasyPrint native libs unavailable: {e}")
     assert out.exists()
+
+
+SAMPLE = Path(__file__).parent.parent / "docs" / "pdf-sample.md"
+
+
+@pytest.mark.parametrize("style", list(pdf.BUILTIN_STYLES))
+def test_sample_document_renders_in_every_style(style, tmp_path):
+    """The sample exercises every element the renderer claims to handle, so a style that
+    breaks on one of them (a table, a highlighted block, a forced page break) fails here
+    rather than in a document someone is about to send."""
+    try:
+        out, _ = pdf.render(SAMPLE, tmp_path / f"{style}.pdf", style=style)
+    except RuntimeError as e:
+        pytest.skip(f"WeasyPrint native libs unavailable: {e}")
+    assert out.read_bytes().startswith(b"%PDF-")
+    assert out.stat().st_size > 10_000  # a blank page is ~2 KB; this one has content

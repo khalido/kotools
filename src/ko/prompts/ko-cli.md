@@ -31,6 +31,7 @@ image → text, local), `ko yt <url>` (YouTube transcript). Shortcuts: `ko <url>
 **Writing out** — `ko pdf <file.md>` (alias `ko md-to-pdf`): markdown → print-ready A4 PDF,
 prints the path it wrote. Default style is a plain note with a page footer; `--style report`
 adds a letterhead, Contents and numbered sections. The inverse of `ko doc`.
+`docs/pdf-sample.md` in the ko repo shows every element it renders.
 
 **Research** — `ko papers search|get|cites|refs|similar` (cross-publisher via OpenAlex; takes
 DOIs, arxiv ids, or W-ids), `ko arxiv search|fetch`, `ko hf top|search|get` (HF Daily Papers).

@@ -703,7 +703,7 @@ def pdf(
         None,
         "--out",
         "-o",
-        help="output .pdf (default: a sibling pdf/ dir, else docs/pdf/, else beside the input)",
+        help="output .pdf (default: a pdf/ dir beside the input if one exists, else next to it)",
     ),
     style: str = typer.Option(
         None,
@@ -712,18 +712,8 @@ def pdf(
         help="note (default: typography + page footer) | report (+ letterhead, Contents, "
         "numbered sections) | bare (typography only) | any ~/.config/ko/pdf/<name>.css",
     ),
-    toc: bool = typer.Option(
-        None, "--toc/--no-toc", help="force the Contents block on/off (also numbers the sections)"
-    ),
     letterhead: bool = typer.Option(
         None, "--letterhead/--no-letterhead", help="force the page-1 letterhead on/off"
-    ),
-    css: list[Path] = typer.Option(
-        None,
-        "--css",
-        exists=True,
-        dir_okay=False,
-        help="extra stylesheet, appended so it wins (repeatable)",
     ),
     brand: Path = typer.Option(
         None,
@@ -731,9 +721,6 @@ def pdf(
         exists=True,
         dir_okay=False,
         help="brand.yml for the letterhead/footer identity; else $KO_BRAND or `[pdf] brand`",
-    ),
-    archival: bool = typer.Option(
-        False, "--pdf-a", help="PDF/A-3b: self-contained for archiving (bigger file)"
     ),
 ) -> None:
     """Markdown → print-ready PDF (A4, code highlighting, page footer; `--style report`
@@ -743,14 +730,7 @@ def pdf(
 
     try:
         written, used_brand = pdf_mod.render(
-            file,
-            out,
-            style=style,
-            toc=toc,
-            letterhead=letterhead,
-            css=tuple(css or ()),
-            brand_file=brand,
-            archival=archival,
+            file, out, style=style, letterhead=letterhead, brand_file=brand
         )
     except ValueError as e:  # unknown --style: a usage error, not a runtime one
         _die(str(e), code="usage")

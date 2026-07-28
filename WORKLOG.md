@@ -49,6 +49,30 @@ Newest first. Big picture only — git commits have the detail; candidate ideas 
     specifically improved its validity. `--pdf-a` adds PDF/A-3b for archival (~8% bigger).
   - Named `ko pdf` with a visible `ko md-to-pdf` alias, following the house split where
     clarifying aliases (`ko todo`) show in help and terse shortcuts (`ko a`, `ko gd`) hide.
+- **Then cut it back — seven flags to four.** Building the sample fixture was what exposed
+  most of this; the rest was asking "did I add this because it was needed, or because I'd
+  just read about it?"
+  - `--pdf-a` (archival PDF/A-3b) and `--css` **gone**. The first was Quarto-envy for a
+    property no ko document needs. The second was a second answer to "how do I add CSS"
+    now that `~/.config/ko/pdf/<name>.css` exists — and a named style is reusable where a
+    flag isn't. Tagged PDFs stay on: free, no surface.
+  - `--toc/--no-toc` **gone** — wanting a Contents block means wanting the `report` look.
+    `--letterhead/--no-letterhead` stays: rendering `report` *without* the letterhead is
+    exactly how the tmos lab docs are produced, so it's a proven need rather than a
+    symmetry.
+  - Front-matter `brand:` and inline brand-key overrides **gone**. One identity, one
+    brand.yml; `--brand` covers the rest.
+  - `default_out`'s walk up to an enclosing `docs/` **gone**. It could write two levels
+    from the source into a directory it created, and it was never exercised — the lab-doc
+    skill passes `-o`. Now: a `pdf/` dir beside the input if one exists, else beside it.
+  - **`linkify` and `typographer` were dead options** inherited from the ops script —
+    both are silently inert on markdown-it's `commonmark` preset (verified, not assumed).
+    Removed rather than switched on: typographer rewrites `--` to an en dash, and these
+    documents are full of `--flags` in prose.
+- **`docs/pdf-sample.md`** — one fixture exercising every element the renderer claims to
+  handle (marks, nested lists, known + unknown code fences, tables, footnotes, a forced
+  page break), rendered in every style by a parametrized test. A style that breaks on a
+  table now fails there rather than in a document about to be sent.
 
 ## 2026-07-10/11 — money layer, refs, repo agent, memory (post-release arc)
 
