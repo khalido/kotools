@@ -82,6 +82,40 @@ theft" is the worst possible combination. Real registration, real consent.
   on drift, keep a backup copy. Don't market it as safe for actively
   co-edited docs; the Excel path is.
 
+## If the tenant blocks consent: the sync-folder bridge
+
+Context: the UTS account is restricted and probably can't grant app
+consents. The work content is mostly non-proprietary (open-source code,
+robot plans, paper summaries), and the headline use case is "write a summary
+of this paper into this document."
+
+Key reframe first: delegated OAuth **is** the nibbleedge model — the app
+acts as the signed-in user, bounded by what that user can already touch. No
+admin keys, no service principals with standing access. What a locked
+tenant blocks is not the permission model but *consent to an unverified
+app*. So the ladder is:
+
+1. **Run the 1-minute consent test anyway** (above). If UTS allows user
+   consent, everything works and this section is moot.
+2. **Files without any API: OneDrive sync as the bridge.** The OneDrive
+   client already runs with the user's own permissions. Sync the relevant
+   folders (SharePoint libraries too, via "Add shortcut to OneDrive" /
+   Sync); the agent reads and writes **plain local files** — docx via
+   python-docx, xlsx via openpyxl, markdown as markdown — and the sync
+   client ships them up as ordinary user edits from the user's machine. No
+   app registration, no consent screen, no new credential surface. Covers
+   the paper-summary use case completely. Limits: only synced folders;
+   concurrent co-editing produces conflicted copies (no merge); nothing for
+   mail.
+3. **Mail, if it matters**: Graph is the only clean path — file the
+   admin-consent request for `Mail.Read` and wait. Do NOT auto-forward work
+   mail to a personal account to dodge this; that's a policy violation in
+   most orgs and visible.
+4. **Keep the truly agentic workspace where the tooling already works**
+   (personal Google / local repos) and land only the finished artifacts
+   into UTS via the synced folder. For mostly-public research content, the
+   fight for tenant API access may simply not be worth having.
+
 ## Prior art
 
 python-o365 (MSAL-based, decent coverage, own abstraction), msgraph-sdk
