@@ -130,6 +130,101 @@ def llm_cmd(
         _die(str(e))
 
 
+def _sum_gather(inp: str) -> tuple[str, str]:
+    """One input -> (label, text). A local file reads directly (.md/.txt) or via liteparse
+    (PDF/Office/image); anything else goes through fetch's deterministic routing (arxiv,
+    YouTube transcript, reddit mirror, Wayback...). The label feeds the stderr dispatch line
+    so a wrong routing choice is visible."""
+    p = Path(inp).expanduser()
+    if p.is_file():
+        if p.suffix.lower() in {".md", ".txt", ".markdown", ".rst"}:
+            return f"file:{p.name}", p.read_text()
+        from ko import doc as doc_mod
+
+        return f"doc:{p.name}", doc_mod.parse(p)
+    if inp.startswith(("http://", "https://")) or ("." in inp and "/" in inp):
+        from ko import fetch as fetch_mod
+
+        r = fetch_mod.fetch(inp, save=False)
+        return r.source, r.text
+    raise ValueError(f"{inp!r} is neither an existing file nor a URL")
+
+
+@app.command("sum")
+def sum_cmd(
+    inputs: list[str] = typer.Argument(
+        None,
+        help="URLs and/or files — routed like `ko fetch`/`ko doc` (YouTube -> transcript, "
+        "PDF -> text, reddit -> mirror). No inputs = summarize piped stdin.",
+    ),
+    prompt: str = typer.Option(
+        None,
+        "--prompt",
+        "-p",
+        help="replace the default summary prompt: a file path, or a name from `ko prompt` "
+        "(default: the packaged `summarize` brief — override it for good by dropping "
+        "~/.config/ko/prompts/summarize.md)",
+    ),
+    model: str = typer.Option(
+        None,
+        "--model",
+        "-m",
+        help=f"model (default {llm_mod.SUM_MODEL}; or set `[llm] sum`)",
+        autocompletion=llm_mod.available_models,
+    ),
+) -> None:
+    """Fetch + summarize in one move: `ko sum <url>`, `ko sum report.pdf`, `ko hn item 123 | ko sum`.
+
+    Really a shortcut for `ko fetch ... | ko llm <summarize prompt>`: one command owns the
+    prompt/model surface so source commands stay clean primitives. Multiple inputs get one
+    summary each (`# <input>` sections). The summary keeps the author's voice, opinions and
+    facts — the prompt is `ko prompt summarize`."""
+    if prompt:
+        pp = Path(prompt).expanduser()
+        if pp.is_file():
+            sum_prompt = pp.read_text()
+        else:
+            try:
+                sum_prompt = prompt_mod.get_prompt(prompt).body
+            except KeyError:
+                _die(f"--prompt {prompt!r}: not a file, and no `ko prompt` brief matches", code="usage")
+    else:
+        sum_prompt = prompt_mod.get_prompt("summarize").body
+    use_model = model or llm_mod.sum_model()
+
+    def _one(label: str, text: str) -> str:
+        typer.echo(f"[{label} · ~{len(text) // 4:,} tokens → {use_model.split(':')[-1]}]", err=True)
+        try:
+            out = llm_mod.run(sum_prompt, stdin=text, model=use_model)
+        except Exception as e:  # model/key errors fail the run — they'd fail every input
+            _die(str(e))
+        if llm_mod.last_cost:
+            typer.echo(llm_mod.last_cost.note, err=True)
+        return out
+
+    if not inputs:
+        if sys.stdin.isatty():
+            _die("nothing to summarize — pass URLs/files or pipe text in", code="usage")
+        text = sys.stdin.read()
+        if not text.strip():
+            _die("stdin was empty", code="usage")
+        typer.echo(_one("stdin", text))
+        return
+    sections, failed = [], []
+    for inp in inputs:
+        try:
+            label, text = _sum_gather(inp)
+        except Exception as e:  # a dead URL/file skips, the rest still summarize (fetch's contract)
+            typer.echo(f"[failed: {inp} — {e}]", err=True)
+            failed.append(inp)
+            continue
+        summary = _one(label, text)
+        sections.append(summary if len(inputs) == 1 else f"# {inp}\n\n{summary}")
+    if not sections:
+        _die(f"all {len(failed)} input(s) failed")
+    typer.echo("\n\n---\n\n".join(sections))
+
+
 @app.command("models")
 def models_cmd(
     refresh: bool = typer.Option(

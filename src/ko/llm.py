@@ -36,6 +36,19 @@ TIERS = {
 # ($0.60 vs $0.28) — they cross at input ≈ 8× output. basic stays the high-volume default.
 FALLBACK_MODEL = TIERS["basic"]
 
+# `ko sum`'s default. Content summarization wants fast + cheap + long-context, not the
+# smartest tier. Two proven picks (2026-08, both via OpenRouter, either works):
+#   openrouter:google/gemini-3.5-flash-lite       — the default: fast, strong on
+#       content/transcripts (field-tested in koevguide), cheap enough to not think about
+#   openrouter:~deepseek/deepseek-v4-flash-latest — the basic-tier workhorse, ~same price
+# Override per run with -m, or set `[llm] sum` in config.toml.
+SUM_MODEL = "openrouter:google/gemini-3.5-flash-lite"
+
+
+def sum_model() -> str:
+    """`ko sum`'s model: KO_SUM_MODEL -> [llm] sum -> baked SUM_MODEL."""
+    return config.setting("KO_SUM_MODEL", "llm", "sum", SUM_MODEL)
+
 
 def model_for(tier: str) -> str:
     """The model for a tier ('basic'/'medium'/'smart'/'ultra'): config.toml `[llm] <tier>` → baked default."""
