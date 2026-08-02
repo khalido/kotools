@@ -128,8 +128,8 @@ def test_models_cli_warns_when_stale(monkeypatch, tmp_path):
 def fake_run(monkeypatch):
     calls = []
 
-    def _run(prompt, stdin=None, model=None, system=None, schema=None):
-        calls.append({"prompt": prompt, "stdin": stdin})
+    def _run(prompt, stdin=None, model=None, system=None, schema=None, attachments=None):
+        calls.append({"prompt": prompt, "stdin": stdin, "attachments": attachments})
         return "OK"
 
     monkeypatch.setattr(llm, "run", _run)
@@ -153,6 +153,46 @@ def test_llm_file_flag_prepends_content(fake_run, tmp_path):
 def test_llm_file_flag_missing_file_is_fatal(fake_run, tmp_path):
     r = runner.invoke(app, ["llm", "-f", str(tmp_path / "nope.xyz"), "go"])
     assert r.exit_code != 0 and not fake_run  # no model call with half the context missing
+
+
+def test_llm_image_attaches_as_binary(fake_run, tmp_path):
+    from pydantic_ai import BinaryContent
+
+    img = tmp_path / "chart.png"
+    img.write_bytes(b"\x89PNG\r\n\x1a\nfakebytes")
+    txt = tmp_path / "notes.md"
+    txt.write_text("TEXT CONTEXT")
+    r = runner.invoke(app, ["llm", "-f", str(img), "-f", str(txt), "what does this say?"])
+    assert r.exit_code == 0
+    call = fake_run[0]
+    # the image rides as a multimodal part, the .md stays on the text path
+    assert len(call["attachments"]) == 1
+    att = call["attachments"][0]
+    assert isinstance(att, BinaryContent) and att.media_type == "image/png"
+    assert "TEXT CONTEXT" in call["stdin"] and "PNG" not in call["stdin"]
+    assert "image/png:chart.png" in r.stderr  # dispatch line shows what attached, as what
+
+
+def test_llm_missing_image_is_fatal(fake_run, tmp_path):
+    r = runner.invoke(app, ["llm", "-f", str(tmp_path / "nope.png"), "describe"])
+    assert r.exit_code != 0 and not fake_run
+
+
+# --- -x/--extract: first fenced code block only ---
+
+
+def test_extract_first_fence(fake_run, monkeypatch):
+    monkeypatch.setattr(
+        llm, "run", lambda *a, **k: "Sure:\n```python\nprint(1)\n```\nAnd more prose."
+    )
+    r = runner.invoke(app, ["llm", "-x", "write it"])
+    assert r.stdout == "print(1)\n"  # fence body only — pipe-clean
+
+
+def test_extract_no_fence_passes_through(fake_run, monkeypatch):
+    monkeypatch.setattr(llm, "run", lambda *a, **k: "just prose")
+    r = runner.invoke(app, ["llm", "-x", "write it"])
+    assert r.stdout == "just prose\n"
 
 
 # --- --schema: JSON Schema constrained output --------------------------------

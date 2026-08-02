@@ -161,24 +161,28 @@ def run(
     model: str | None = None,
     system: str | None = None,
     schema: dict | None = None,
+    attachments: list | None = None,
 ) -> str:
     """One prompt (plus optional piped input) → one answer. No tools.
 
     With `schema` (a validated JSON-Schema object dict, see load_schema), the model is
     constrained to structured output and the return is compact JSON of the object — no
-    prose. The cost note (last_cost) is set on either path."""
+    prose. `attachments` are pydantic-ai multimodal parts (BinaryContent — images, audio,
+    video) sent alongside the prompt; the model must support the media type, which is its
+    error to raise, not ours to predict. The cost note (last_cost) is set on every path."""
     global last_cost
     if stdin:
         prompt = f"{prompt}\n\n<input>\n{stdin}\n</input>"
+    user_prompt = [prompt, *attachments] if attachments else prompt
     if schema is not None:
         from pydantic_ai import StructuredDict
 
         agent = Agent(instructions=system or SCHEMA_SYSTEM, output_type=StructuredDict(schema))
-        result = agent.run_sync(prompt, model=model or default_model())
+        result = agent.run_sync(user_prompt, model=model or default_model())
         last_cost = run_cost(result.all_messages())
         return json.dumps(result.output, separators=(",", ":"), default=str)
     agent = Agent(instructions=system) if system else _agent
-    result = agent.run_sync(prompt, model=model or default_model())
+    result = agent.run_sync(user_prompt, model=model or default_model())
     last_cost = run_cost(result.all_messages())
     return str(result.output)
 

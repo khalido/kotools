@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import mimetypes
+import re
 import sys
 from dataclasses import asdict
 from pathlib import Path
@@ -83,6 +85,38 @@ app.add_typer(agent_app, name="a", hidden=True)  # shortcut: `ko a research`
 # --- llm commands ---
 
 
+def _media_type(inp: str) -> str | None:
+    """image/audio/video mime type guessed from the filename/URL, else None (text pipeline).
+
+    PDFs/Office deliberately stay on the text path (doc.parse is free and works with
+    non-vision models); only media with no useful local text form attaches as binary."""
+    mt, _ = mimetypes.guess_type(inp.split("?")[0])
+    return mt if mt and mt.startswith(("image/", "audio/", "video/")) else None
+
+
+def _read_media(inp: str, guessed: str) -> tuple[bytes, str, str]:
+    """One media input -> (bytes, media_type, label). Local file or downloaded URL —
+    downloading ourselves (vs pydantic-ai's *Url parts, where the provider fetches)
+    works uniformly across providers and lets the dispatch line show a real size."""
+    p = Path(inp).expanduser()
+    if p.is_file():
+        return p.read_bytes(), guessed, p.name
+    if inp.startswith(("http://", "https://")):
+        import httpx
+
+        r = httpx.get(inp, timeout=30, follow_redirects=True)
+        r.raise_for_status()
+        mt = r.headers.get("content-type", "").split(";")[0].strip() or guessed
+        return r.content, mt, inp.rsplit("/", 1)[-1] or inp
+    raise ValueError(f"{inp!r} is neither an existing file nor a URL")
+
+
+def _first_fence(text: str) -> str:
+    """The first fenced code block's body, or the whole text when there's no fence."""
+    m = re.search(r"```[^\n]*\n(.*?)```", text, re.DOTALL)
+    return m.group(1).rstrip("\n") if m else text
+
+
 @app.command("llm")
 def llm_cmd(
     prompt: str = typer.Argument(
@@ -110,17 +144,26 @@ def llm_cmd(
         None,
         "--file",
         "-f",
-        help="attach a file or URL as input (repeatable; routed like `ko sum` — PDF -> text, "
-        "YouTube -> transcript). Contents go before the prompt in the order given; piped "
-        "stdin is appended after them.",
+        help="attach a file or URL as input (repeatable). Text-extractable inputs route like "
+        "`ko sum` (PDF -> text, YouTube -> transcript); images/audio/video attach natively "
+        "as multimodal input — the model must support the media type (gemini does; the "
+        "basic tier may not). Text goes before the prompt in flag order, piped stdin after.",
+    ),
+    extract: bool = typer.Option(
+        False,
+        "--extract",
+        "-x",
+        help="print only the first fenced code block of the reply (the whole reply if there "
+        "is none) — for piping generated code: `ko llm 'jq filter for X' -x | pbcopy`",
     ),
 ) -> None:
     """One-shot LLM call, no tools: `ko hn item 123 | ko llm "summarize the debate"`.
 
-    `-f report.pdf -f <url>` attaches inputs (same convention as opencode and simonw's llm:
-    repeatable flag, plain paths — the shell does completion and ~). `--schema extract.json`
-    returns structured JSON instead of prose: the file is a JSON Schema for the response
-    (`{"type": "object", ...}`); the object is printed compact to stdout."""
+    `-f report.pdf -f photo.jpg -f <url>` attaches inputs (same convention as opencode and
+    simonw's llm: repeatable flag, plain paths — the shell does completion and ~); one flag
+    for everything, an image is just a file that happens to need a vision model.
+    `--schema extract.json` returns structured JSON instead of prose: the file is a JSON
+    Schema for the response (`{"type": "object", ...}`), printed compact to stdout."""
     llm_mod.refresh_openrouter_models()  # keeps -m autocomplete catalog fresh (once/day)
     schema_obj = None
     if schema is not None:
@@ -128,11 +171,20 @@ def llm_cmd(
             schema_obj = llm_mod.load_schema(schema)
         except ValueError as e:
             _die(str(e), code="usage")
-    parts = []
+    parts, attachments = [], []
     for f in files or []:
         # An explicitly named input that can't be read is fatal — a prompt silently missing
         # half its context is worse than no answer.
         try:
+            mt = _media_type(f)
+            if mt:  # image/audio/video: no useful local text form — attach natively
+                from pydantic_ai import BinaryContent
+
+                data, mt, name = _read_media(f, mt)
+                attachments.append(BinaryContent(data=data, media_type=mt))
+                size = f"{len(data) // 1024:,} KB" if len(data) >= 1024 else f"{len(data)} B"
+                typer.echo(f"[{mt}:{name} · {size}]", err=True)
+                continue
             label, text = _gather(f)
         except ValueError as e:
             _die(str(e), code="usage")
@@ -144,9 +196,15 @@ def llm_cmd(
         parts.append(sys.stdin.read())
     stdin = "\n\n".join(p for p in parts if p.strip()) or None
     try:
-        typer.echo(
-            llm_mod.run(prompt, stdin=stdin, model=model, system=system, schema=schema_obj)
+        out = llm_mod.run(
+            prompt,
+            stdin=stdin,
+            model=model,
+            system=system,
+            schema=schema_obj,
+            attachments=attachments or None,
         )
+        typer.echo(_first_fence(out) if extract else out)
         if llm_mod.last_cost:
             typer.echo(llm_mod.last_cost.note, err=True)
     except Exception as e:
