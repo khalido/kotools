@@ -418,6 +418,106 @@ def test_draft_send_attach_guard(monkeypatch):
     assert r3.exit_code == 2 and "TTY" in r3.output and not sent  # fell through, not the attach guard
 
 
+def test_get_draft_returns_attachment_names(monkeypatch):
+    """`draft show` needs the attached filenames to confirm an --attach stuck — get_draft walks
+    them out of the same fetched payload (no extra API call)."""
+    draft = {
+        "id": "d1",
+        "message": {
+            "id": "m1",
+            "payload": {
+                "headers": [{"name": "To", "value": "a@x.com"}, {"name": "Subject", "value": "Inv"}],
+                "parts": [
+                    {"mimeType": "text/plain", "body": {"data": _b64("see attached")}},
+                    {"filename": "invoice.pdf", "mimeType": "application/pdf",
+                     "body": {"attachmentId": "A1", "size": 10}},
+                    {"filename": "terms.pdf", "mimeType": "application/pdf",
+                     "body": {"attachmentId": "A2", "size": 20}},
+                ],
+            }
+        },
+    }
+
+    class _Svc:
+        def users(self):
+            return self
+
+        def drafts(self):
+            return self
+
+        def get(self, userId, id, format):
+            return self
+
+        def execute(self, num_retries=0):
+            return draft
+
+    monkeypatch.setattr(gmail, "_compose_service", lambda: _Svc())
+    _id, meta, _body, atts = gmail.get_draft("d1")
+    assert _id == "d1" and meta.to == "a@x.com"
+    assert atts == ["invoice.pdf", "terms.pdf"]  # both files, in payload order
+
+    # a draft with no attachments -> empty list (show prints no Attachments line)
+    draft["message"]["payload"]["parts"] = draft["message"]["payload"]["parts"][:1]
+    assert gmail.get_draft("d1")[3] == []
+
+
+def test_search_json_carries_labels(monkeypatch):
+    """Regression for a field report: `search --json` must carry `labels`. The path does a
+    metadata get() per hit (which returns labelIds), so `_message` picks them up — verify it
+    survives all the way to the dataclass the CLI serialises."""
+    listed = {"messages": [{"id": "m1"}]}
+    full = {
+        "id": "m1",
+        "threadId": "t1",
+        "labelIds": ["INBOX", "IMPORTANT"],
+        "snippet": "hi",
+        "payload": {"headers": [{"name": "Subject", "value": "Hello"}]},
+    }
+
+    class _Svc:
+        def users(self):
+            return self
+
+        def messages(self):
+            return self
+
+        def list(self, **kw):
+            self._ret = listed
+            return self
+
+        def get(self, **kw):
+            self._ret = full
+            return self
+
+        def execute(self, num_retries=0):
+            return self._ret
+
+    monkeypatch.setattr(gmail, "get_gmail_service", lambda: _Svc())
+    msgs = gmail.search("is:unread")
+    assert len(msgs) == 1 and msgs[0].labels == ["INBOX", "IMPORTANT"]
+
+
+def test_cli_draft_show_lists_attachments(monkeypatch):
+    """`draft show` prints an `Attachments: … (N)` line when the draft has files, nothing when not."""
+    from typer.testing import CliRunner
+
+    from ko import cli_google
+    from ko.cli import app
+
+    meta = gmail.GmailMessage(
+        id="d1", thread_id="t1", date="", from_="", to="a@x.com", subject="Inv", snippet="", unread=False
+    )
+    monkeypatch.setattr(
+        cli_google.gmail_mod, "get_draft", lambda did: ("d1", meta, "body", ["invoice.pdf", "terms.pdf"])
+    )
+    r = CliRunner().invoke(app, ["gmail", "draft", "show", "d1"])
+    assert r.exit_code == 0 and "Attachments: invoice.pdf, terms.pdf (2)" in r.stdout
+
+    monkeypatch.setattr(cli_google.gmail_mod, "get_draft", lambda did: ("d1", meta, "body", []))
+    r = CliRunner().invoke(app, ["gmail", "draft", "show", "d1"])
+    assert r.exit_code == 0 and "Attachments:" not in r.stdout  # none -> no line
+
+
 def test_md_to_html_renders_gfm_tables():
     """Tables are GFM, not CommonMark — an agent's invoice table must become a styled
     <table> (inline faint borders; Gmail ignores <style> blocks), not literal pipe text."""

@@ -2,6 +2,9 @@
 
 Deterministic routing, no LLM:
 - arxiv.org/abs|pdf links → arxiv2md (LaTeX-source markdown beats any PDF parse — measured)
+- reddit thread → the same path on reddit.synth.download, a third-party public mirror
+  (direct reddit fetching fails every method we tried; the mirror extracts cleanly via
+  trafilatura); if the mirror is dead/empty we recover via Wayback of the ORIGINAL url
 - PDF (by extension or content-type) → download to ~/Downloads (where I'd look
   for it), parse via liteparse; `save=False` parses from temp and discards
 - everything else → trafilatura extraction (best-in-benchmark boilerplate removal)
@@ -50,6 +53,13 @@ _YT_RE = re.compile(
     r"(?:https?://)?(?:www\.)?"
     r"(?:youtube\.com/(?:watch|shorts|live|embed|v/)|youtu\.be/)"
 )
+# Reddit web hosts we rewrite to the mirror. NOT redd.it short links or /s/ share links:
+# both need a redirect resolve against reddit (which is exactly what fails), so they fall
+# through to the normal path instead.
+_REDDIT_HOSTS = frozenset(
+    {"reddit.com", "www.reddit.com", "old.reddit.com", "np.reddit.com", "m.reddit.com"}
+)
+_REDDIT_MIRROR = "reddit.synth.download"
 
 
 @dataclass
@@ -62,6 +72,22 @@ class Fetched:
 def _arxiv_id(url: str) -> str | None:
     m = _ARXIV_RE.search(url)
     return m.group(1) if m else None
+
+
+def _reddit_mirror(url: str) -> str | None:
+    """A reddit thread URL → the same path/query on the public mirror reddit.synth.download,
+    else None (any non-reddit url is returned unchanged by the caller). Straight host swap.
+    Skips redd.it short links (host doesn't match) and /s/ share links, which need reddit's
+    own redirect to resolve — the very thing that fails — so they take the normal path."""
+    try:
+        u = httpx.URL(url)
+    except httpx.InvalidURL:
+        return None
+    if u.host.lower() not in _REDDIT_HOSTS:
+        return None
+    if "s" in u.path.strip("/").split("/"):  # /r/<sub>/s/<code> share link
+        return None
+    return str(u.copy_with(host=_REDDIT_MIRROR))
 
 
 def _pdf_name(url: str) -> str:
@@ -169,9 +195,9 @@ def fetch(
             text = yt_mod.transcript(vid)
         except (yt_mod.YtError, ValueError) as e:  # ValueError: yt-looking URL, no id in it
             raise RuntimeError(str(e)) from None
-        return Fetched(
-            text=text, source="yt", note=f"youtube transcript {vid}  ~{len(text) // 4:,} tokens"
-        )
+        # Token count is left to the CLI banner (_fetch_banner) so every source reports it
+        # the same way — don't duplicate it in the note.
+        return Fetched(text=text, source="yt", note=f"youtube transcript {vid}")
     if arxiv_id := _arxiv_id(url):
         md = arxiv_mod.fetch(arxiv_id)
         if len(md) >= _ARXIV_MIN_CHARS:  # arxiv2md got a real render
@@ -205,6 +231,32 @@ def fetch(
                 return r
             except Exception:
                 pass  # OA copy bot-blocked or dead → fall through to the landing page
+
+    if mirror := _reddit_mirror(url):
+        # Why a mirror (field-verified 2026-08, don't re-test): direct fetch → blocked, .json
+        # API → HTML interstitial, old.reddit + browser UA → "Welcome to Reddit", headless
+        # browser → JS network-security challenge, Exa contents → empty. Exa doesn't index
+        # reddit.com at all (--domains reddit.com finds nothing) — an unfiltered Exa search is
+        # how the mirror surfaced. Durable path if the mirror dies for good: Reddit's OAuth API.
+        try:
+            resp = httpx.get(mirror, headers=UA, timeout=30, follow_redirects=True)
+            resp.raise_for_status()
+            text = _extract(resp.text, mirror)
+        except httpx.HTTPError:
+            text = None
+        if text:
+            return Fetched(text=text, source="reddit-mirror", note=f"reddit → {mirror}")
+        # Mirror dead/empty — someone else's infrastructure, so say so LOUDLY (a silent
+        # zero-word result reads as an empty page) and recover via Wayback of the ORIGINAL url.
+        try:
+            r = _wayback(url, date)
+            r.note = f"reddit mirror returned no content → {r.note or 'wayback'}"
+            return r
+        except Exception as e:
+            raise RuntimeError(
+                f"reddit mirror ({_REDDIT_MIRROR}) returned no content, and Wayback has no "
+                f"capture of {url} — try Reddit's official OAuth API"
+            ) from e
 
     try:
         # ask for markdown — agent-optimized servers (e.g. Cloudflare's markdown-for-agents)

@@ -48,6 +48,15 @@ DEFAULT_SYSTEM = (
     "No preamble, no closing questions — just the answer."
 )
 
+# Used when --schema constrains the output: the markdown instruction above would fight the
+# structured shape, so extraction gets its own neutral frame. Output structure is enforced
+# by the output_type; this only steers the content.
+SCHEMA_SYSTEM = (
+    "You are ko, a one-shot CLI extractor used by humans and AI agents. "
+    "Populate the required structure from the prompt and any input text provided after it. "
+    "Be accurate; leave a field empty (or omit it) only when the input doesn't supply it."
+)
+
 _agent = Agent(instructions=DEFAULT_SYSTEM)
 
 
@@ -107,16 +116,54 @@ def default_model() -> str:
     return config.setting("KO_DEFAULT_MODEL", "llm", "model", model_for("basic"))
 
 
+def load_schema(path: Path) -> dict:
+    """Read a JSON Schema file for `ko llm --schema` and confirm it's usable.
+
+    Raises ValueError (→ the CLI reports it as a usage error) when the file isn't valid
+    JSON, isn't a JSON object, or isn't an *object* schema (pydantic-ai's StructuredDict
+    only constrains `type: object` schemas). Returns the parsed schema dict on success.
+    """
+    try:
+        schema = json.loads(Path(path).read_text())
+    except (OSError, ValueError) as e:
+        raise ValueError(f"--schema {path}: not valid JSON ({e})") from None
+    if not isinstance(schema, dict):
+        # ValueError, not TypeError: the CLI maps ValueError from here to a usage error (exit 2).
+        raise ValueError(  # noqa: TRY004
+            f"--schema {path}: must be a JSON object (a JSON Schema), not {type(schema).__name__}"
+        )
+    from pydantic_ai import StructuredDict
+    from pydantic_ai.exceptions import UserError
+
+    try:
+        StructuredDict(schema)  # validates it's an object schema; raises UserError otherwise
+    except UserError as e:
+        raise ValueError(f"--schema {path}: {e}") from None
+    return schema
+
+
 def run(
     prompt: str,
     stdin: str | None = None,
     model: str | None = None,
     system: str | None = None,
+    schema: dict | None = None,
 ) -> str:
-    """One prompt (plus optional piped input) → one answer. No tools."""
+    """One prompt (plus optional piped input) → one answer. No tools.
+
+    With `schema` (a validated JSON-Schema object dict, see load_schema), the model is
+    constrained to structured output and the return is compact JSON of the object — no
+    prose. The cost note (last_cost) is set on either path."""
     global last_cost
     if stdin:
         prompt = f"{prompt}\n\n<input>\n{stdin}\n</input>"
+    if schema is not None:
+        from pydantic_ai import StructuredDict
+
+        agent = Agent(instructions=system or SCHEMA_SYSTEM, output_type=StructuredDict(schema))
+        result = agent.run_sync(prompt, model=model or default_model())
+        last_cost = run_cost(result.all_messages())
+        return json.dumps(result.output, separators=(",", ":"), default=str)
     agent = Agent(instructions=system) if system else _agent
     result = agent.run_sync(prompt, model=model or default_model())
     last_cost = run_cost(result.all_messages())
@@ -140,12 +187,29 @@ PROVIDER_KEYS = {
 # endpoint (no key) directly and cache it so `-m openrouter:<TAB>` can complete.
 OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
 _OPENROUTER_TTL = 24 * 3600  # re-fetch the catalog at most once a day
+OPENROUTER_STALE = 7 * 24 * 3600  # past this, `ko models` hints to run --refresh (public: cli_ai reads it)
+
+# Did the most recent refresh_openrouter_models() reach the network? True = fetched fresh,
+# False = network failed and we fell back to the existing cache, None = never attempted (no
+# key, or a within-TTL cache served without a fetch). Module-level like last_cost so the
+# return stays a plain list. Lets `ko models --refresh` warn when a *forced* refresh
+# silently served the old cache instead of the fresh catalog it promised — the failure was
+# invisible before, which is how a "refresh didn't help" cache can sit stale.
+last_refresh_hit_network: bool | None = None
 
 
 def _openrouter_cache_file() -> Path:
     from ko.dirs import cache_dir
 
     return cache_dir() / "openrouter_models.json"
+
+
+def openrouter_cache_age() -> float | None:
+    """Age in seconds of the cached OpenRouter catalog, or None if there's no cache file."""
+    try:
+        return time.time() - _openrouter_cache_file().stat().st_mtime
+    except OSError:
+        return None
 
 
 def cached_openrouter_models() -> list[str]:
@@ -164,6 +228,8 @@ def refresh_openrouter_models(ttl: int = _OPENROUTER_TTL, *, force: bool = False
     fall back to the existing cache, so this is safe to call from any command.
     `force=True` ignores the TTL — for grabbing a just-released model now.
     """
+    global last_refresh_hit_network
+    last_refresh_hit_network = None
     if not os.environ.get(PROVIDER_KEYS["openrouter"]):
         return cached_openrouter_models()
     path = _openrouter_cache_file()
@@ -178,11 +244,16 @@ def refresh_openrouter_models(ttl: int = _OPENROUTER_TTL, *, force: bool = False
 
         data = httpx.get(OPENROUTER_MODELS_URL, timeout=10).json()["data"]
     except Exception:
+        # Network/endpoint failure. We keep the old cache (and DON'T touch its mtime, so the
+        # next call retries), but record the miss so a forced --refresh can say so instead of
+        # looking like it worked.
+        last_refresh_hit_network = False
         return cached_openrouter_models()
     models = sorted(f"openrouter:{m['id']}" for m in data)
     tmp = path.with_suffix(".tmp")  # atomic: a crash mid-write must not corrupt the cache
     tmp.write_text(json.dumps({"models": models}))
     os.replace(tmp, path)
+    last_refresh_hit_network = True
     return models
 
 

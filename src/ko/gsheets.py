@@ -15,13 +15,18 @@ have no guard; prefer the shape-aware ones.
 
 from __future__ import annotations
 
+import json
 import math
+import os
 import re
 from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
 
 import httpx
 from googleapiclient.errors import HttpError
 
+from ko.dirs import state_dir
 from ko.google_auth import (
     GoogleError,
     get_credentials,
@@ -54,6 +59,10 @@ class SheetsOverwriteError(SheetsError):
     pass
 
 
+class SheetsAliasError(SheetsError):
+    pass
+
+
 def _handle(e: HttpError, context: str) -> None:
     raise_for_status(
         e,
@@ -75,6 +84,143 @@ def _svc(write: bool = False):
 def sheet_id(value: str) -> str:
     """Accept a Google Sheets URL or a bare spreadsheet ID; return the ID."""
     return id_from_url(value, "spreadsheets")
+
+
+# --- learned sheet aliases ----------------------------------------------
+#
+# No Drive scope exists (ko can't browse Drive), so it can't look a sheet up by name — instead it
+# LEARNS names from use: every read through get_info() upserts the sheet's own title -> id into a
+# small JSON cache, so next time you can say `ko gsheets get Cars` instead of pasting the id. The
+# title is the natural alias and stays current: the id is stable, so each read refreshes it.
+
+_ALIASES_FILE = "gsheets_aliases.json"
+_SHEET_ID_RE = re.compile(r"^[A-Za-z0-9_-]{40,}$")  # real Google file IDs are long (~44 chars)
+
+
+def aliases_path() -> Path:
+    return state_dir() / _ALIASES_FILE
+
+
+def load_aliases() -> dict[str, dict]:
+    """The alias cache {alias: {"id", "title", "last_used"}} — {} if missing or unreadable."""
+    try:
+        return json.loads(aliases_path().read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def save_aliases(data: dict) -> None:
+    # tmp + os.replace: hand-pinned aliases aren't rebuildable, and load_aliases() answers a
+    # corrupt file with {} — a crash mid-write would silently drop every pin.
+    path = aliases_path()
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(data, indent=2, sort_keys=True))
+    os.replace(tmp, path)
+
+
+def alias_key(name: str) -> str:
+    """A name reduced to a comparable key: strip leading non-word chars, casefold — the same
+    normalisation `ko tt` uses for list names, so 'Cars ' and 'cars' match."""
+    return re.sub(r"^\W+", "", name.strip()).casefold()
+
+
+def _now() -> str:
+    return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def remember_sheet(spreadsheet_id: str, title: str) -> None:
+    """Upsert `title` -> id into the alias cache. Best-effort — a read must never fail because the
+    cache couldn't be written."""
+    if not title:
+        return
+    try:
+        data = load_aliases()
+        if data.get(title, {}).get("pinned"):
+            return  # a hand-pinned alias is the human's word — learning never overwrites it
+        data[title] = {"id": spreadsheet_id, "title": title, "last_used": _now()}
+        save_aliases(data)
+    except OSError:
+        pass
+
+
+def looks_like_id(value: str) -> bool:
+    """Does this look like a bare Google Sheet ID (long base64ish token) rather than a name?"""
+    return bool(_SHEET_ID_RE.match(value.strip()))
+
+
+def set_alias(name: str, id_or_url: str) -> str:
+    """Pin a custom alias by hand; returns the resolved spreadsheet id it now points at.
+    Pins outrank learned titles in resolve_sheet and are never overwritten by learning."""
+    if "/spreadsheets/d/" in name or looks_like_id(name):
+        raise SheetsAliasError(f"{name!r} looks like a sheet id/URL — resolve_sheet would never "
+                               "reach it as a name. Pick a human name for the alias.")
+    if "/spreadsheets/d/" not in id_or_url and not looks_like_id(id_or_url):
+        raise SheetsAliasError(f"{id_or_url!r} doesn't look like a sheet id or URL — a typo here "
+                               "would only fail later, at API time")
+    sid = sheet_id(id_or_url)
+    data = load_aliases()
+    data[name] = {"id": sid, "title": name, "last_used": _now(), "pinned": True}
+    save_aliases(data)
+    return sid
+
+
+def resolve_sheet(ref: str) -> str:
+    """A URL, bare ID, or learned name -> spreadsheet id. A URL or long ID passes straight through
+    (via sheet_id); a name is matched against the alias cache — exact match-key first, then a
+    unique substring. Ambiguous or unknown names raise SheetsAliasError (never guess — the `ko tt
+    done` pattern)."""
+    v = ref.strip()
+    if "/spreadsheets/d/" in v or looks_like_id(v):
+        return sheet_id(v)
+    aliases = load_aliases()
+    key = alias_key(v)
+    # ALL exact-key matches, pins first: a hand-pinned "cars" must not be shadowed by a learned
+    # title "Cars" (dict order is sort_keys — capitals sort first). Distinct ids with no pin to
+    # break the tie is ambiguity, not a coin toss — this feeds writes.
+    exact = [(name, rec) for name, rec in aliases.items() if alias_key(name) == key]
+    if exact:
+        pinned = [rec for _, rec in exact if rec.get("pinned")]
+        if pinned:
+            return pinned[0]["id"]
+        ids = {rec["id"] for _, rec in exact}
+        if len(ids) == 1:
+            return exact[0][1]["id"]
+        names = ", ".join(sorted(name for name, _ in exact))
+        raise SheetsAliasError(
+            f"{len(exact)} known sheets match {ref!r} exactly ({names}) but point at different "
+            "spreadsheets — pin one (`ko gsheets alias`) or pass the id/URL"
+        )
+    matches = [(name, rec) for name, rec in aliases.items() if key and key in alias_key(name)]
+    if len(matches) == 1:
+        return matches[0][1]["id"]
+    if len(matches) > 1:
+        names = ", ".join(sorted(name for name, _ in matches))
+        raise SheetsAliasError(
+            f"{len(matches)} known sheets match {ref!r}: {names} — use a more specific name, or the id/URL"
+        )
+    raise SheetsAliasError(
+        f"no sheet named {ref!r} — ko only knows sheets it has already touched. Pass the id or URL "
+        "once (ko learns its title), or pin it: `ko gsheets alias <name> <id-or-url>`"
+    )
+
+
+def quote_tab(title: str) -> str:
+    """A bare tab title -> an A1 range naming that whole tab, single-quoting when the title has
+    spaces or A1-special characters ('New biz props' -> "'New biz props'", an embedded ' doubled).
+    A title that's already a safe bareword (letters/digits/underscore) is passed through. Pure."""
+    if re.fullmatch(r"[A-Za-z0-9_]+", title):
+        return title
+    return "'" + title.replace("'", "''") + "'"
+
+
+def pad_rectangular(rows: list[list]) -> list[list]:
+    """Pad every row out to the width of the widest with '' so the block is a true rectangle. The
+    Sheets API truncates each row at its last non-empty cell, so a read comes back ragged — column
+    7 silently becomes column 5 under `cut -f` or JSON indexing. Pure — no API call."""
+    if not rows:
+        return rows
+    width = max(len(r) for r in rows)
+    return [r + [""] * (width - len(r)) for r in rows]
 
 
 def col_letter(n: int) -> str:
@@ -167,11 +313,22 @@ def get_info(spreadsheet_id: str) -> SheetInfo:
         )
     except HttpError as e:
         _handle(e, spreadsheet_id)
-    return SheetInfo(
+    info = SheetInfo(
         id=spreadsheet_id,
         title=result["properties"]["title"],
         tabs=[s["properties"]["title"] for s in result.get("sheets", [])],
     )
+    remember_sheet(spreadsheet_id, info.title)  # learn this sheet's title -> id for name lookups
+    return info
+
+
+def first_tab(spreadsheet_id: str) -> str:
+    """The first tab's title (one metadata call) — the used range `get` reads when no range is
+    given. Raises SheetsNotFound if the sheet somehow has no tabs."""
+    tabs = get_info(spreadsheet_id).tabs
+    if not tabs:
+        raise SheetsNotFound(f"{spreadsheet_id} has no tabs")
+    return tabs[0]
 
 
 def get_meta(spreadsheet_id: str) -> dict:

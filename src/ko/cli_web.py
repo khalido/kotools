@@ -889,9 +889,24 @@ def x_lists(
 # --- fetch command (root-level) ---
 
 
+def _fetch_banner(r: fetch_mod.Fetched) -> str:
+    """One consistent stderr note per fetched doc: source, ~token estimate, and any detail
+    (saved path, wayback timestamp). ~4 chars/token — the heuristic used across ko — so a
+    caller can decide read-vs-pipe-into-llm on every fetch, not just some."""
+    bits = [r.source, f"~{len(r.text) // 4:,} tokens"]
+    if r.note:
+        bits.append(r.note)
+    return "[" + " · ".join(bits) + "]"
+
+
 @app.command("fetch")
 def fetch_cmd(
-    url: str = typer.Argument(..., help="URL — article, PDF link, or arxiv link"),
+    urls: list[str] = typer.Argument(
+        ...,
+        help="one or more URLs (article, PDF, or arxiv link). With several, each document is "
+        "printed under a `# <url>` header, separated by a `---` rule; a per-URL failure is "
+        "noted on stderr and skipped.",
+    ),
     archive: bool = typer.Option(
         False, "--archive", "-a", help="fetch from the Wayback Machine instead of live"
     ),
@@ -911,22 +926,37 @@ def fetch_cmd(
     ),
 ) -> None:
     """URL → clean markdown. Articles via trafilatura, PDFs download + parse,
-    arxiv links via arxiv2md, paywalls via archive.today, dead links via Wayback.
+    arxiv links via arxiv2md, reddit via a third-party public mirror (reddit.synth.download —
+    if it ever dies, the durable path is Reddit's official OAuth API),
+    paywalls via archive.today, dead links via Wayback.
+    Pass several URLs to fetch them in one go (each under a `# <url>` header, `---`-separated).
     Shortcut: `ko <url>`."""
-    try:
-        r = fetch_mod.fetch(
-            url, archive=archive, archive_is=archive_is, date=date, save=not no_save
-        )
-    except Exception as e:
-        _die(str(e))
-    if r.note:
-        typer.echo(f"[{r.note}]", err=True)
+    # Sequential fetch, mirroring `ko exa get`: per-URL failures go to stderr and are skipped;
+    # exit 0 if any URL succeeded, 1 if all failed.
+    docs: list[tuple[str, fetch_mod.Fetched]] = []
+    for u in urls:
+        try:
+            r = fetch_mod.fetch(
+                u, archive=archive, archive_is=archive_is, date=date, save=not no_save
+            )
+        except Exception as e:
+            typer.echo(f"[failed: {u} — {e}]", err=True)
+            continue
+        docs.append((u, r))
+        typer.echo(_fetch_banner(r), err=True)  # one token banner per document
+    if not docs:  # nothing succeeded → runtime error (no output to give)
+        _die(f"no content returned for any of the {len(urls)} URL(s)")
+    # Single URL stays byte-identical on stdout (it's piped everywhere): raw text, no header.
+    if len(urls) == 1:
+        combined = docs[0][1].text
+    else:
+        combined = "\n\n---\n\n".join(f"# {u}\n\n{r.text}" for u, r in docs)
     if out is None:
-        typer.echo(r.text)
+        typer.echo(combined)
     else:
         out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(r.text)
-        typer.echo(f"Wrote {len(r.text):,} chars to {out}", err=True)
+        out.write_text(combined)
+        typer.echo(f"Wrote {len(combined):,} chars to {out}", err=True)
 
 
 # --- tv command (root-level) ---

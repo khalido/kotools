@@ -98,12 +98,32 @@ def llm_cmd(
     system: str = typer.Option(
         None, "--system", "-s", help="replace the default system prompt"
     ),
+    schema: Path = typer.Option(
+        None,
+        "--schema",
+        exists=True,
+        dir_okay=False,
+        help="a JSON Schema file (object schema) constraining the output — the reply is JSON "
+        "validating against it, compact on stdout, no prose. Works with -m and piped stdin.",
+    ),
 ) -> None:
-    """One-shot LLM call, no tools: `ko hn item 123 | ko llm "summarize the debate"`."""
+    """One-shot LLM call, no tools: `ko hn item 123 | ko llm "summarize the debate"`.
+
+    `--schema extract.json` returns structured JSON instead of prose: the file is a JSON
+    Schema for the response (`{"type": "object", ...}`); the object is printed compact to
+    stdout. Piped stdin is the input text, same as a normal prompt."""
     llm_mod.refresh_openrouter_models()  # keeps -m autocomplete catalog fresh (once/day)
+    schema_obj = None
+    if schema is not None:
+        try:  # bad JSON / not an object schema is a usage error, before we spend a call
+            schema_obj = llm_mod.load_schema(schema)
+        except ValueError as e:
+            _die(str(e), code="usage")
     stdin = None if sys.stdin.isatty() else sys.stdin.read()
     try:
-        typer.echo(llm_mod.run(prompt, stdin=stdin, model=model, system=system))
+        typer.echo(
+            llm_mod.run(prompt, stdin=stdin, model=model, system=system, schema=schema_obj)
+        )
         if llm_mod.last_cost:
             typer.echo(llm_mod.last_cost.note, err=True)
     except Exception as e:
@@ -120,6 +140,19 @@ def models_cmd(
 ) -> None:
     """List model strings usable with -m, one per line — filtered to providers whose key is set."""
     llm_mod.refresh_openrouter_models(force=refresh)
+    if refresh and llm_mod.last_refresh_hit_network is False:
+        # A forced refresh that couldn't reach OpenRouter used to look identical to a
+        # successful one; say so, else the list silently stays stale.
+        typer.echo(
+            "couldn't reach OpenRouter — showing the cached catalog (network error)", err=True
+        )
+    else:
+        age = llm_mod.openrouter_cache_age()
+        if not refresh and age is not None and age > llm_mod.OPENROUTER_STALE:
+            typer.echo(
+                f"catalog cached {int(age // 86400)} days ago — ko models --refresh for the latest",
+                err=True,
+            )
     for name in sorted(llm_mod.available_models()):
         typer.echo(name)
 

@@ -135,6 +135,17 @@ def _google_accounts() -> None:
 
 # --- gsheets helpers ---
 
+_SHEET_HELP = "Google Sheet ID, URL, or a learned name (`ko gsheets alias` lists them)"
+
+
+def _resolve_sid(ref: str, as_json: bool = False) -> str:
+    """A sheet id / URL / learned name -> spreadsheet id, dying cleanly (not with a traceback) on
+    an unknown or ambiguous name."""
+    try:
+        return gsheets_mod.resolve_sheet(ref)
+    except gsheets_mod.SheetsError as e:
+        _die(str(e), as_json=as_json)
+
 
 def _emit_rows(rows: list[list], as_json: bool) -> None:
     if as_json:
@@ -187,16 +198,14 @@ def _gsheets_account(
 
 @gsheets_app.command("info")
 def gsheets_info(
-    spreadsheet_id: str = typer.Argument(
-        ..., help="Google Sheet ID or URL (the part between /d/ and /edit)"
-    ),
+    spreadsheet_id: str = typer.Argument(..., help=_SHEET_HELP),
     as_json: bool = typer.Option(
         False, "--json", help="emit JSON instead of plain text"
     ),
 ) -> None:
     """Show a sheet's title and tab names."""
     with _google_errors(as_json):
-        info = gsheets_mod.get_info(gsheets_mod.sheet_id(spreadsheet_id))
+        info = gsheets_mod.get_info(_resolve_sid(spreadsheet_id, as_json))
     if as_json:
         typer.echo(json.dumps(asdict(info)))
         return
@@ -207,12 +216,12 @@ def gsheets_info(
 
 @gsheets_app.command("tabs")
 def gsheets_tabs(
-    spreadsheet_id: str = typer.Argument(..., help="Google Sheet ID or URL"),
+    spreadsheet_id: str = typer.Argument(..., help=_SHEET_HELP),
     as_json: bool = typer.Option(False, "--json", help="emit a JSON array of tab names"),
 ) -> None:
     """List tab names, one per line (machine-friendly)."""
     with _google_errors(as_json):
-        info = gsheets_mod.get_info(gsheets_mod.sheet_id(spreadsheet_id))
+        info = gsheets_mod.get_info(_resolve_sid(spreadsheet_id, as_json))
     if as_json:
         typer.echo(json.dumps(info.tabs))
         return
@@ -222,9 +231,11 @@ def gsheets_tabs(
 
 @gsheets_app.command("get")
 def gsheets_get(
-    spreadsheet_id: str = typer.Argument(..., help="Google Sheet ID or URL"),
+    spreadsheet_id: str = typer.Argument(..., help=_SHEET_HELP),
     range_name: str = typer.Argument(
-        ..., help="A1 range, e.g. 'Jobs!A4:T10' or \"'New biz props'!A4:S100\""
+        None,
+        help="A1 range ('Jobs!A4:T10'), a bare tab name ('Cars' = that tab's whole used range), or "
+        "omit entirely for the first tab's used range",
     ),
     as_json: bool = typer.Option(
         False, "--json", help="emit JSON (2D array) instead of TSV"
@@ -236,21 +247,28 @@ def gsheets_get(
         False, "--formula", help="return formulas instead of values"
     ),
 ) -> None:
-    """Fetch a range. TSV by default; use --json for structured output."""
+    """Fetch an A1 range, a whole tab (bare tab name), or — with no range — the first tab's used
+    range. TSV by default; --json for a 2D array. Rows are padded to a rectangle, so a short row
+    never shifts columns under `cut -f` / JSON indexing."""
     if raw and formula:
         typer.echo("--raw and --formula are mutually exclusive", err=True)
         raise typer.Exit(2)
     render = "UNFORMATTED_VALUE" if raw else "FORMULA" if formula else "FORMATTED_VALUE"
     with _google_errors(as_json):
-        rows = gsheets_mod.get_range(
-            gsheets_mod.sheet_id(spreadsheet_id), range_name, value_render=render
-        )
-    _emit_rows(rows, as_json)
+        sid = _resolve_sid(spreadsheet_id, as_json)
+        if range_name is None:  # no range -> the first tab's used range (one metadata call)
+            api_range = gsheets_mod.quote_tab(gsheets_mod.first_tab(sid))
+        elif "!" in range_name:  # a full 'Tab!A1:Z9' — the caller owns any quoting
+            api_range = range_name
+        else:  # a bare tab name -> that tab's used range, quoted if it needs it
+            api_range = gsheets_mod.quote_tab(range_name)
+        rows = gsheets_mod.get_range(sid, api_range, value_render=render)
+    _emit_rows(gsheets_mod.pad_rectangular(rows), as_json)
 
 
 @gsheets_app.command("set")
 def gsheets_set(
-    spreadsheet_id: str = typer.Argument(..., help="Google Sheet ID or URL"),
+    spreadsheet_id: str = typer.Argument(..., help=_SHEET_HELP),
     range_name: str = typer.Argument(..., help="target anchor, e.g. 'Tab!A2' (top-left cell)"),
     data: str = typer.Argument(
         None, help="value, TSV, or JSON 2D array (omit to read stdin)"
@@ -266,7 +284,7 @@ def gsheets_set(
     anchor = range_name.split(":")[0]
     try:
         n = gsheets_mod.write_values(
-            gsheets_mod.sheet_id(spreadsheet_id),
+            _resolve_sid(spreadsheet_id),
             anchor,
             _parse_cells(text),
             raw=raw,
@@ -283,7 +301,7 @@ def gsheets_set(
 
 @gsheets_app.command("put")
 def gsheets_put(
-    spreadsheet_id: str = typer.Argument(..., help="Google Sheet ID or URL"),
+    spreadsheet_id: str = typer.Argument(..., help=_SHEET_HELP),
     json_file: Path = typer.Argument(
         None, help="JSON {anchor: value} file (omit to read stdin)"
     ),
@@ -302,7 +320,7 @@ def gsheets_put(
             raise ValueError('`put` expects a JSON object: {"anchor": value, ...}')  # noqa: TRY004 — user input, caught with the JSON errors
         data = [(anchor, _norm_block(val)) for anchor, val in obj.items()]
         n = gsheets_mod.write_ranges(
-            gsheets_mod.sheet_id(spreadsheet_id), data, raw=raw, overwrite=overwrite
+            _resolve_sid(spreadsheet_id), data, raw=raw, overwrite=overwrite
         )
     except (gsheets_mod.SheetsError, ValueError, json.JSONDecodeError) as e:
         typer.echo(str(e), err=True)
@@ -315,7 +333,7 @@ def gsheets_put(
 
 @gsheets_app.command("find")
 def gsheets_find(
-    spreadsheet_id: str = typer.Argument(..., help="Google Sheet ID or URL"),
+    spreadsheet_id: str = typer.Argument(..., help=_SHEET_HELP),
     text: str = typer.Argument(..., help="case-insensitive substring to find"),
     formula: bool = typer.Option(
         False, "--formula", help="search formulas, not displayed values"
@@ -326,7 +344,7 @@ def gsheets_find(
     """Search every cell of every tab. TSV: tab, A1 ref, cell."""
     try:
         hits = gsheets_mod.find_cells(
-            gsheets_mod.sheet_id(spreadsheet_id), text, formula=formula, tabs=tab or None
+            _resolve_sid(spreadsheet_id, as_json), text, formula=formula, tabs=tab or None
         )
     except gsheets_mod.SheetsError as e:
         _die(str(e), as_json=as_json)
@@ -341,9 +359,49 @@ def gsheets_find(
         typer.echo(f"{t}\t{ref}\t{_tsv_cell(cell)}")
 
 
+@gsheets_app.command("alias")
+def gsheets_alias(
+    name: str = typer.Argument(None, help="alias to set (omit both args to list known aliases)"),
+    target: str = typer.Argument(None, help="sheet id or URL the alias points at"),
+    as_json: bool = typer.Option(False, "--json", help="emit JSON (list mode)"),
+) -> None:
+    """List learned sheet aliases, or pin one by hand.
+
+    No Drive scope means ko can't browse Drive by name — so it LEARNS a sheet's own title -> id
+    whenever a command fetches sheet metadata (`info`, `tabs`, or a `get` without an explicit
+    range). Then `ko gsheets get Cars` works instead of pasting the id. Bare `alias` lists what
+    ko knows (TSV: alias, id, last_used, newest first); `alias <name> <id-or-url>` pins a custom
+    name — pins outrank learned titles and learning never overwrites them."""
+    if name and target:
+        try:
+            sid = gsheets_mod.set_alias(name, target)
+        except gsheets_mod.SheetsAliasError as e:
+            _die(str(e), as_json=as_json, code="usage")
+        typer.echo(f"{name} -> {sid}", err=True)
+        return
+    if name and not target:
+        _die("`alias <name> <id-or-url>` needs both, or pass neither to list", code="usage")
+    aliases = gsheets_mod.load_aliases()
+    if not aliases:
+        _no_results(
+            "no aliases yet — ko learns a sheet's title from `info`/`tabs` or a range-less `get`",
+            as_json,
+        )
+    rows = sorted(aliases.items(), key=lambda kv: kv[1].get("last_used", ""), reverse=True)
+    if as_json:
+        typer.echo(
+            json.dumps(
+                [{"alias": a, "id": r["id"], "last_used": r.get("last_used", "")} for a, r in rows]
+            )
+        )
+        return
+    for a, r in rows:
+        typer.echo(f"{a}\t{r['id']}\t{r.get('last_used', '')}")
+
+
 @gsheets_app.command("header")
 def gsheets_header(
-    spreadsheet_id: str = typer.Argument(..., help="Google Sheet ID or URL"),
+    spreadsheet_id: str = typer.Argument(..., help=_SHEET_HELP),
     range_name: str = typer.Argument(..., help="header range, e.g. 'Tab!A3:T3'"),
     no_bold: bool = typer.Option(False, "--no-bold", help="don't bold"),
     no_fill: bool = typer.Option(False, "--no-fill", help="don't add a background fill"),
@@ -354,7 +412,7 @@ def gsheets_header(
     """Format a row as a header: bold + fill, optionally frozen."""
     try:
         gsheets_mod.format_header(
-            gsheets_mod.sheet_id(spreadsheet_id),
+            _resolve_sid(spreadsheet_id),
             range_name,
             bold=not no_bold,
             bg=None if no_fill else gsheets_mod.DEFAULT_HEADER_BG,
@@ -371,12 +429,12 @@ def gsheets_header(
 
 @gsheets_app.command("add-tab")
 def gsheets_add_tab(
-    spreadsheet_id: str = typer.Argument(..., help="Google Sheet ID or URL"),
+    spreadsheet_id: str = typer.Argument(..., help=_SHEET_HELP),
     title: str = typer.Argument(..., help="new tab name"),
 ) -> None:
     """Add a tab; prints its sheetId (gid)."""
     try:
-        gid = gsheets_mod.add_tab(gsheets_mod.sheet_id(spreadsheet_id), title)
+        gid = gsheets_mod.add_tab(_resolve_sid(spreadsheet_id), title)
     except gsheets_mod.SheetsError as e:
         typer.echo(str(e), err=True)
         raise typer.Exit(1) from None
@@ -388,7 +446,7 @@ def gsheets_add_tab(
 
 @gsheets_app.command("dup-tab")
 def gsheets_dup_tab(
-    spreadsheet_id: str = typer.Argument(..., help="Google Sheet ID or URL"),
+    spreadsheet_id: str = typer.Argument(..., help=_SHEET_HELP),
     source: str = typer.Argument(..., help="tab to duplicate (by name)"),
     new_name: str = typer.Argument(
         None, help="name for the copy (default: 'Copy of <tab>'); must not already exist"
@@ -398,7 +456,7 @@ def gsheets_dup_tab(
 
     The invoice move: dup last month's tab, then `set`/`replace` the values."""
     try:
-        gid = gsheets_mod.duplicate_tab(gsheets_mod.sheet_id(spreadsheet_id), source, new_name)
+        gid = gsheets_mod.duplicate_tab(_resolve_sid(spreadsheet_id), source, new_name)
     except gsheets_mod.SheetsError as e:
         typer.echo(str(e), err=True)
         raise typer.Exit(1) from None
@@ -411,14 +469,14 @@ def gsheets_dup_tab(
 
 @gsheets_app.command("delete-tab")
 def gsheets_delete_tab(
-    spreadsheet_id: str = typer.Argument(..., help="Google Sheet ID or URL"),
+    spreadsheet_id: str = typer.Argument(..., help=_SHEET_HELP),
     title: str = typer.Argument(..., help="tab to delete (by name)"),
     yes: bool = typer.Option(
         False, "--yes", "-y", help="skip the confirm (required when not a TTY)"
     ),
 ) -> None:
     """Delete a tab by name. Destructive — checks the tab exists, then confirms first."""
-    sid = gsheets_mod.sheet_id(spreadsheet_id)
+    sid = _resolve_sid(spreadsheet_id)
     try:
         info = gsheets_mod.get_info(sid)
     except gsheets_mod.SheetsError as e:
@@ -448,7 +506,7 @@ def gsheets_delete_tab(
 
 @gsheets_app.command("pdf")
 def gsheets_pdf(
-    spreadsheet_id: str = typer.Argument(..., help="Google Sheet ID or URL"),
+    spreadsheet_id: str = typer.Argument(..., help=_SHEET_HELP),
     tab: str = typer.Argument(None, help="tab to export (default: the whole spreadsheet)"),
     out: Path = typer.Option(
         None, "-o", "--out", help="output file (default: <tab or sheet title>.pdf in cwd)"
@@ -461,7 +519,7 @@ def gsheets_pdf(
 
     The invoice move: `ko gsheets pdf <sheet> kodev-008` → kodev-008.pdf, ready to send.
     Prints the saved path (stdout)."""
-    sid = gsheets_mod.sheet_id(spreadsheet_id)
+    sid = _resolve_sid(spreadsheet_id)
     try:
         pdf = gsheets_mod.export_pdf(
             sid, tab, size=size, landscape=landscape, gridlines=gridlines
@@ -481,7 +539,7 @@ def gsheets_pdf(
 
 @gsheets_app.command("insert-rows")
 def gsheets_insert_rows(
-    spreadsheet_id: str = typer.Argument(..., help="Google Sheet ID or URL"),
+    spreadsheet_id: str = typer.Argument(..., help=_SHEET_HELP),
     tab: str = typer.Argument(..., help="tab to insert into (by name)"),
     row: int = typer.Argument(..., help="1-based row number to insert before (as shown in the sheet)"),
     n: int = typer.Option(1, "--n", "-n", help="how many rows to insert"),
@@ -496,7 +554,7 @@ def gsheets_insert_rows(
         _die("row is 1-based — the first row is 1", code="usage")
     try:
         gsheets_mod.insert_dimension(
-            gsheets_mod.sheet_id(spreadsheet_id),
+            _resolve_sid(spreadsheet_id),
             tab,
             dimension="ROWS",
             start_index=row - 1,
@@ -514,7 +572,7 @@ def gsheets_insert_rows(
 
 @gsheets_app.command("insert-cols")
 def gsheets_insert_cols(
-    spreadsheet_id: str = typer.Argument(..., help="Google Sheet ID or URL"),
+    spreadsheet_id: str = typer.Argument(..., help=_SHEET_HELP),
     tab: str = typer.Argument(..., help="tab to insert into (by name)"),
     col: str = typer.Argument(..., help="column letter (or 1-based number) to insert before"),
     n: int = typer.Option(1, "--n", "-n", help="how many columns to insert"),
@@ -533,7 +591,7 @@ def gsheets_insert_cols(
         _die("column is 1-based — the first column is 1 (A)", code="usage")
     try:
         gsheets_mod.insert_dimension(
-            gsheets_mod.sheet_id(spreadsheet_id),
+            _resolve_sid(spreadsheet_id),
             tab,
             dimension="COLUMNS",
             start_index=col_n - 1,
@@ -551,7 +609,7 @@ def gsheets_insert_cols(
 
 @gsheets_app.command("replace")
 def gsheets_replace(
-    spreadsheet_id: str = typer.Argument(..., help="Google Sheet ID or URL"),
+    spreadsheet_id: str = typer.Argument(..., help=_SHEET_HELP),
     find: str = typer.Argument(..., help="text to find (substring within a cell)"),
     replacement: str = typer.Argument(..., help="replacement text"),
     tab: str = typer.Option(None, "--tab", "-t", help="limit to one tab (by name)"),
@@ -570,7 +628,7 @@ def gsheets_replace(
         _die("pick a --tab, or pass --all-tabs to touch the whole spreadsheet", code="usage")
     try:
         n = gsheets_mod.find_replace(
-            gsheets_mod.sheet_id(spreadsheet_id),
+            _resolve_sid(spreadsheet_id),
             find,
             replacement,
             tab=tab,
@@ -605,12 +663,12 @@ def gsheets_new(
 
 @gsheets_app.command("clear")
 def gsheets_clear(
-    spreadsheet_id: str = typer.Argument(..., help="Google Sheet ID or URL"),
+    spreadsheet_id: str = typer.Argument(..., help=_SHEET_HELP),
     range_name: str = typer.Argument(..., help="range to clear (values only; formatting survives)"),
 ) -> None:
     """Clear the values in a range. Formatting, notes, and validation survive."""
     try:
-        cleared = gsheets_mod.clear_range(gsheets_mod.sheet_id(spreadsheet_id), range_name)
+        cleared = gsheets_mod.clear_range(_resolve_sid(spreadsheet_id), range_name)
     except gsheets_mod.SheetsError as e:
         typer.echo(str(e), err=True)
         raise typer.Exit(1) from None
@@ -1447,15 +1505,19 @@ def gmail_draft_list(
 def gmail_draft_show(
     draft_id: str = typer.Argument(..., help="draft id (from `ko gmail draft list`)"),
 ) -> None:
-    """Show a draft: headers + plain-text body."""
+    """Show a draft: headers + plain-text body. Lists attached files (so you can confirm an
+    `--attach` stuck) when the draft has any."""
     with _google_errors():
-        _id, meta, body = gmail_mod.get_draft(draft_id)
+        _id, meta, body, atts = gmail_mod.get_draft(draft_id)
     typer.echo(f"To:      {meta.to}")
     if meta.cc:
         typer.echo(f"Cc:      {meta.cc}")
     if meta.bcc:
         typer.echo(f"Bcc:     {meta.bcc}")
-    typer.echo(f"Subject: {meta.subject}\n")
+    typer.echo(f"Subject: {meta.subject}")
+    if atts:
+        typer.echo(f"Attachments: {', '.join(atts)} ({len(atts)})")
+    typer.echo("")
     typer.echo(body)
 
 

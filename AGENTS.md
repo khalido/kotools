@@ -16,7 +16,8 @@ they're present. If a command fails with an auth/key error, `ko doctor` tells yo
   and "no results" messages go to stderr. You can pipe stdout into `jq`/`cut`/`awk`
   without it being polluted by status text.
 - **Default format is plain text / TSV** — `cut -f N` safe. `ko gsheets get` and other
-  tabular commands emit TSV.
+  tabular commands emit TSV, with rows padded to a true rectangle (a short row never
+  shifts your column index).
 - **`--json` for structured output.** Most read commands take `--json`. The shape is a
   **JSON array of objects** unless the command's `--help` says otherwise (a few return a
   single object — e.g. `ko tv --json` is `{top, matches}`, `ko hn item --json` is

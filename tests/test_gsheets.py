@@ -263,6 +263,131 @@ def test_cli_parse_cells_and_norm_block():
     assert _norm_block([[1], [2]]) == [[1], [2]]  # 2D as-is
 
 
+def test_quote_tab():
+    assert gsheets.quote_tab("Cars") == "Cars"  # safe bareword, untouched
+    assert gsheets.quote_tab("Sheet_1") == "Sheet_1"
+    assert gsheets.quote_tab("New biz props") == "'New biz props'"  # space -> quoted
+    assert gsheets.quote_tab("A!B") == "'A!B'"  # A1-special char -> quoted
+    assert gsheets.quote_tab("Bob's tab") == "'Bob''s tab'"  # embedded ' doubled
+
+
+def test_pad_rectangular():
+    # ragged rows (API truncates at last non-empty cell) -> a true rectangle
+    ragged = [["a", "b", "c"], ["d"], ["e", "f"]]
+    assert gsheets.pad_rectangular(ragged) == [["a", "b", "c"], ["d", "", ""], ["e", "f", ""]]
+    assert gsheets.pad_rectangular([]) == []  # empty is fine
+    assert gsheets.pad_rectangular([[1, 2], [3, 4]]) == [[1, 2], [3, 4]]  # already square
+
+
+def test_first_tab(monkeypatch):
+    monkeypatch.setattr(gsheets, "get_info", lambda sid: gsheets.SheetInfo(sid, "T", ["Cars", "Vans"]))
+    assert gsheets.first_tab("sheet1") == "Cars"
+    monkeypatch.setattr(gsheets, "get_info", lambda sid: gsheets.SheetInfo(sid, "T", []))
+    with pytest.raises(gsheets.SheetsNotFound):
+        gsheets.first_tab("sheet1")
+
+
+# --- learned aliases ----------------------------------------------------
+
+
+def test_alias_key_matches_tt_normalisation():
+    assert gsheets.alias_key("Cars ") == "cars"
+    assert gsheets.alias_key("  🚗 Cars") == "cars"  # leading non-word chars stripped
+    assert gsheets.alias_key("New Biz") == "new biz"
+
+
+def test_looks_like_id():
+    assert gsheets.looks_like_id("1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms")  # real-length id
+    assert not gsheets.looks_like_id("Cars")  # a name
+    assert not gsheets.looks_like_id("1AbC_def-123")  # too short to be a real sheet id
+    assert not gsheets.looks_like_id("https://docs.google.com/spreadsheets/d/x/edit")
+
+
+def test_alias_cache_roundtrip_and_remember(monkeypatch, tmp_path):
+    monkeypatch.setenv("KO_STATE_DIR", str(tmp_path))
+    assert gsheets.load_aliases() == {}  # nothing yet
+    gsheets.remember_sheet("ID_CARS", "Cars")
+    gsheets.remember_sheet("ID_VANS", "Vans")
+    cache = gsheets.load_aliases()
+    assert cache["Cars"]["id"] == "ID_CARS" and "last_used" in cache["Cars"]
+    assert cache["Vans"]["id"] == "ID_VANS"
+    gsheets.remember_sheet("ID_CARS", "")  # empty title is a no-op
+    assert set(gsheets.load_aliases()) == {"Cars", "Vans"}
+
+
+def test_set_alias(monkeypatch, tmp_path):
+    monkeypatch.setenv("KO_STATE_DIR", str(tmp_path))
+    sid = gsheets.set_alias("budget", "https://docs.google.com/spreadsheets/d/BUDGET_ID/edit#gid=0")
+    assert sid == "BUDGET_ID"
+    assert gsheets.load_aliases()["budget"]["id"] == "BUDGET_ID"
+
+
+def test_resolve_sheet_url_and_id_passthrough(monkeypatch, tmp_path):
+    monkeypatch.setenv("KO_STATE_DIR", str(tmp_path))
+    url = "https://docs.google.com/spreadsheets/d/1AbC_def-123/edit"
+    assert gsheets.resolve_sheet(url) == "1AbC_def-123"  # URL -> id, no cache needed
+    long_id = "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms"
+    assert gsheets.resolve_sheet(long_id) == long_id  # bare long id passes through
+
+
+def test_resolve_sheet_by_name(monkeypatch, tmp_path):
+    monkeypatch.setenv("KO_STATE_DIR", str(tmp_path))
+    gsheets.remember_sheet("ID_CARS", "Cars")
+    gsheets.remember_sheet("ID_NEWBIZ", "New biz props")
+    assert gsheets.resolve_sheet("cars") == "ID_CARS"  # exact match-key (casefold)
+    assert gsheets.resolve_sheet("new biz") == "ID_NEWBIZ"  # unique substring
+
+
+def test_pin_outranks_learned_title(monkeypatch, tmp_path):
+    """A hand-pinned alias must not be shadowed by a learned title with the same match key
+    (sort_keys puts 'Cars' before 'cars' — the pin lost the exact-match loop before the fix),
+    and learning must never overwrite an existing pin."""
+    monkeypatch.setenv("KO_STATE_DIR", str(tmp_path))
+    long_id = "1PinnedPinnedPinnedPinnedPinnedPinnedPinne"  # 40+ chars, passes looks_like_id
+    gsheets.set_alias("cars", long_id)
+    gsheets.remember_sheet("ID_LEARNED", "Cars")  # different sheet, colliding key
+    assert gsheets.resolve_sheet("cars") == long_id  # the pin wins
+    assert gsheets.resolve_sheet("CARS") == long_id
+    gsheets.remember_sheet("ID_OTHER", "cars")  # same dict key as the pin: must not clobber it
+    assert gsheets.load_aliases()["cars"]["id"] == long_id
+
+
+def test_learned_exact_collision_is_ambiguous(monkeypatch, tmp_path):
+    monkeypatch.setenv("KO_STATE_DIR", str(tmp_path))
+    gsheets.remember_sheet("ID_A", "Cars")
+    gsheets.remember_sheet("ID_B", "cars ")  # same match key, different sheet, no pin to break it
+    with pytest.raises(gsheets.SheetsAliasError, match="different"):
+        gsheets.resolve_sheet("cars")
+
+
+def test_set_alias_rejects_garbage(monkeypatch, tmp_path):
+    monkeypatch.setenv("KO_STATE_DIR", str(tmp_path))
+    with pytest.raises(gsheets.SheetsAliasError, match="doesn't look like"):
+        gsheets.set_alias("budget", "Buget-typo")  # target must be an id or URL
+    long_id = "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms"
+    with pytest.raises(gsheets.SheetsAliasError, match="looks like a sheet id"):
+        gsheets.set_alias(long_id, long_id)  # an id-shaped NAME would be unreachable
+
+
+def test_resolve_sheet_ambiguous_and_unknown(monkeypatch, tmp_path):
+    monkeypatch.setenv("KO_STATE_DIR", str(tmp_path))
+    gsheets.remember_sheet("ID1", "Budget 2025")
+    gsheets.remember_sheet("ID2", "Budget 2026")
+    with pytest.raises(gsheets.SheetsAliasError, match="2 known sheets match"):
+        gsheets.resolve_sheet("budget")  # >1 substring match -> never guess
+    with pytest.raises(gsheets.SheetsAliasError, match="only knows sheets"):
+        gsheets.resolve_sheet("nonesuch")
+
+
+def test_get_info_remembers_title(monkeypatch, tmp_path):
+    monkeypatch.setenv("KO_STATE_DIR", str(tmp_path))
+    meta = {"properties": {"title": "Fleet"}, "sheets": [{"properties": {"title": "Cars"}}]}
+    monkeypatch.setattr(gsheets, "_svc", lambda write=False: _FakeService(meta))
+    info = gsheets.get_info("FLEET_ID")
+    assert info.title == "Fleet"
+    assert gsheets.load_aliases()["Fleet"]["id"] == "FLEET_ID"  # learned on read
+
+
 def test_multi_account_paths(monkeypatch, tmp_path):
     monkeypatch.setattr(google_auth.config, "get", lambda *a, **k: None)
     monkeypatch.setattr(google_auth, "config_dir", lambda: tmp_path)
@@ -286,6 +411,84 @@ def test_multi_account_paths(monkeypatch, tmp_path):
     # env beats config; KO_GOOGLE_CLIENT_FILE beats everything
     monkeypatch.setenv("KO_GOOGLE_CLIENT_FILE", str(tmp_path / "custom.json"))
     assert google_auth.client_file().name == "custom.json"
+
+
+# --- CLI: get (bare tab / no range / padding) + alias ------------------
+
+
+def test_cli_get_no_range_reads_first_tab_and_pads(monkeypatch):
+    from typer.testing import CliRunner
+
+    from ko import cli_google
+    from ko.cli import app
+
+    seen = {}
+
+    def fake_get_range(sid, api_range, value_render):
+        seen["sid"], seen["range"] = sid, api_range
+        return [["a", "b", "c"], ["d"]]  # ragged — get should rectangularise it
+
+    monkeypatch.setattr(cli_google.gsheets_mod, "resolve_sheet", lambda ref: "SID")
+    monkeypatch.setattr(cli_google.gsheets_mod, "first_tab", lambda sid: "New biz props")
+    monkeypatch.setattr(cli_google.gsheets_mod, "get_range", fake_get_range)
+
+    r = CliRunner().invoke(app, ["gsheets", "get", "fleet"])
+    assert r.exit_code == 0
+    assert seen["range"] == "'New biz props'"  # first tab, quoted (has spaces)
+    # ragged row padded to the widest -> a full TSV rectangle, cut -f safe
+    assert r.stdout.splitlines() == ["a\tb\tc", "d\t\t"]
+
+
+def test_cli_get_bare_tab_vs_full_range(monkeypatch):
+    from typer.testing import CliRunner
+
+    from ko import cli_google
+    from ko.cli import app
+
+    seen = {}
+    monkeypatch.setattr(cli_google.gsheets_mod, "resolve_sheet", lambda ref: "SID")
+    monkeypatch.setattr(
+        cli_google.gsheets_mod,
+        "get_range",
+        lambda sid, api_range, value_render: seen.update(range=api_range) or [["x"]],
+    )
+    CliRunner().invoke(app, ["gsheets", "get", "fleet", "Cars"])
+    assert seen["range"] == "Cars"  # bare tab name -> that tab
+    CliRunner().invoke(app, ["gsheets", "get", "fleet", "Jobs!A1:B2"])
+    assert seen["range"] == "Jobs!A1:B2"  # full range passes through untouched
+
+
+def test_cli_alias_list_and_set(monkeypatch, tmp_path):
+    from typer.testing import CliRunner
+
+    from ko.cli import app
+
+    monkeypatch.setenv("KO_STATE_DIR", str(tmp_path))
+    runner = CliRunner()
+
+    # empty -> a note on stderr, exit 0
+    r = runner.invoke(app, ["gsheets", "alias"])
+    assert r.exit_code == 0 and "no aliases yet" in r.stderr
+
+    # set a custom alias, then it lists (target must look like a real id — 40+ chars)
+    r = runner.invoke(app, ["gsheets", "alias", "budget", "BUDGET_ID_" + "x" * 34])
+    assert r.exit_code == 0
+    r = runner.invoke(app, ["gsheets", "alias"])
+    assert ("budget\tBUDGET_ID_" + "x" * 34 + "\t") in r.stdout
+
+    # one arg only is a usage error
+    r = runner.invoke(app, ["gsheets", "alias", "budget"])
+    assert r.exit_code == 2
+
+
+def test_cli_get_unknown_name_dies_cleanly(monkeypatch, tmp_path):
+    from typer.testing import CliRunner
+
+    from ko.cli import app
+
+    monkeypatch.setenv("KO_STATE_DIR", str(tmp_path))  # empty cache -> unknown name
+    r = CliRunner().invoke(app, ["gsheets", "get", "nonesuch"])
+    assert r.exit_code == 1 and "only knows sheets" in r.stderr
 
 
 @pytest.mark.skipif(

@@ -565,8 +565,9 @@ def list_drafts(n: int = 10) -> list[DraftInfo]:
         raise  # unreachable
 
 
-def get_draft(draft_id: str) -> tuple[str, GmailMessage, str]:
-    """A draft as (draft_id, metadata, plain-text body)."""
+def get_draft(draft_id: str) -> tuple[str, GmailMessage, str, list[str]]:
+    """A draft as (draft_id, metadata, plain-text body, attachment filenames). The filenames let
+    `show` confirm what's attached — after `--attach` there's otherwise no way to verify it stuck."""
     svc = _compose_service()
     try:
         d = svc.users().drafts().get(userId="me", id=draft_id, format="full").execute(num_retries=3)
@@ -574,7 +575,8 @@ def get_draft(draft_id: str) -> tuple[str, GmailMessage, str]:
         _handle(e, draft_id)
         raise  # unreachable
     m = d.get("message", {})
-    return d["id"], _message(m), _message_body(m)
+    names = [name for name, _mime, _size, _att_id in _walk_attachments(m.get("payload", {}))]
+    return d["id"], _message(m), _message_body(m), names
 
 
 _ATTACH_RE = re.compile(r"attach", re.IGNORECASE)
