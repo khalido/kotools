@@ -22,15 +22,18 @@ from pydantic_ai.messages import ModelResponse
 from ko import config
 
 # Model tiers — pick by task stakes, not habit. Money matters for a personal tool:
-# cheap Chinese models carry basic/medium; smart is capable-but-affordable; ultra is
+# basic/medium are the cheap workhorses; smart is capable-but-affordable; ultra is
 # the only expensive one, reserved for calls where being wrong costs more than tokens.
-# Override per-tier in config.toml `[llm]`. Prices $/M in+out, checked 2026-07-10:
+# Override per-tier in config.toml `[llm]`. Prices $/M in+out, checked 2026-07-31.
+# Re-check them when you touch this — the 2026-07-10 figures had drifted up to 82%.
 TIERS = {
-    "basic": "openrouter:deepseek/deepseek-v4-flash",  # $0.09/$0.18 (v4-pro $0.43/$0.87 if flash quality disappoints)
-    "medium": "openrouter:z-ai/glm-5.2",             # $0.53/$1.67
+    "basic": "openrouter:deepseek/deepseek-v4-flash",  # $0.14/$0.28 (v4-pro $0.43/$0.87 if flash quality disappoints)
+    "medium": "openrouter:openai/gpt-5.6-luna",      # $0.10/$0.60 — replaced glm-5.2 ($0.97/$3.04), cheaper on both axes
     "smart": "openrouter:~x-ai/grok-latest",         # $2/$6 — alias, tracks the newest grok
     "ultra": "openrouter:openai/gpt-5.6-sol",        # $5/$30 — high-stakes only
 }
+# Note: medium's input is cheaper than basic's ($0.10 vs $0.14) while its output is dearer
+# ($0.60 vs $0.28) — they cross at input ≈ 8× output. basic stays the high-volume default.
 FALLBACK_MODEL = TIERS["basic"]
 
 

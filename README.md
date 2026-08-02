@@ -85,7 +85,7 @@ Keys live in environment variables (shell profile or `.env`) or in `~/.config/ko
 | Env var | Used by | Paid? | Notes |
 |---|---|---|---|
 | `EXA_API_KEY` | `ko exa`, agents | 💰 | Search $7/1k requests (contents for 10 results included); standalone contents $1/1k pages. [exa.ai](https://exa.ai) |
-| `OPENROUTER_API_KEY` | `ko llm`, `ko ai`, agents, `ko brief` — the default for everything | 💰 | One prepaid pool, any model. Baked model tiers ride on it: basic = deepseek-v4-flash (llm/brief/summarize), medium = glm-5.2 (`ko ai`), smart = grok-latest (research). Override per-tier in `[llm]`; `-m` per run. `ko billing`/doctor show $ left; every call prints its actual cost to stderr. |
+| `OPENROUTER_API_KEY` | `ko llm`, `ko ai`, agents, `ko brief` — the default for everything | 💰 | One prepaid pool, any model. Baked model tiers ride on it: basic = deepseek-v4-flash (llm/brief/summarize), medium = gpt-5.6-luna (`ko ai`), smart = grok-latest (research). Override per-tier in `[llm]`; `-m` per run. `ko billing`/doctor show $ left; every call prints its actual cost to stderr. |
 | `GEMINI_API_KEY` | `-m google:…` escape hatch | 💰 | Direct Gemini (`-m google:gemini-3.5-flash`), or for Gemini-only features later. |
 | `X_BEARER_TOKEN` | `ko x` | 💰 | X API v2 Bearer Token. Pay-per-use since 2026 (prepaid credits, ~$0.005/post read). [developer.x.com](https://developer.x.com) |
 | `TMDB_READ_ACCESS_TOKEN` | `ko tv` | free | v4 Read Access Token from [TMDB settings](https://www.themoviedb.org/settings/api). |
