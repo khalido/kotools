@@ -106,12 +106,21 @@ def llm_cmd(
         help="a JSON Schema file (object schema) constraining the output — the reply is JSON "
         "validating against it, compact on stdout, no prose. Works with -m and piped stdin.",
     ),
+    files: list[str] = typer.Option(
+        None,
+        "--file",
+        "-f",
+        help="attach a file or URL as input (repeatable; routed like `ko sum` — PDF -> text, "
+        "YouTube -> transcript). Contents go before the prompt in the order given; piped "
+        "stdin is appended after them.",
+    ),
 ) -> None:
     """One-shot LLM call, no tools: `ko hn item 123 | ko llm "summarize the debate"`.
 
-    `--schema extract.json` returns structured JSON instead of prose: the file is a JSON
-    Schema for the response (`{"type": "object", ...}`); the object is printed compact to
-    stdout. Piped stdin is the input text, same as a normal prompt."""
+    `-f report.pdf -f <url>` attaches inputs (same convention as opencode and simonw's llm:
+    repeatable flag, plain paths — the shell does completion and ~). `--schema extract.json`
+    returns structured JSON instead of prose: the file is a JSON Schema for the response
+    (`{"type": "object", ...}`); the object is printed compact to stdout."""
     llm_mod.refresh_openrouter_models()  # keeps -m autocomplete catalog fresh (once/day)
     schema_obj = None
     if schema is not None:
@@ -119,7 +128,21 @@ def llm_cmd(
             schema_obj = llm_mod.load_schema(schema)
         except ValueError as e:
             _die(str(e), code="usage")
-    stdin = None if sys.stdin.isatty() else sys.stdin.read()
+    parts = []
+    for f in files or []:
+        # An explicitly named input that can't be read is fatal — a prompt silently missing
+        # half its context is worse than no answer.
+        try:
+            label, text = _gather(f)
+        except ValueError as e:
+            _die(str(e), code="usage")
+        except Exception as e:
+            _die(f"{f}: {e}")
+        typer.echo(f"[{label} · ~{len(text) // 4:,} tokens]", err=True)
+        parts.append(text)
+    if not sys.stdin.isatty():
+        parts.append(sys.stdin.read())
+    stdin = "\n\n".join(p for p in parts if p.strip()) or None
     try:
         typer.echo(
             llm_mod.run(prompt, stdin=stdin, model=model, system=system, schema=schema_obj)
@@ -130,7 +153,7 @@ def llm_cmd(
         _die(str(e))
 
 
-def _sum_gather(inp: str) -> tuple[str, str]:
+def _gather(inp: str) -> tuple[str, str]:
     """One input -> (label, text). A local file reads directly (.md/.txt) or via liteparse
     (PDF/Office/image); anything else goes through fetch's deterministic routing (arxiv,
     YouTube transcript, reddit mirror, Wayback...). The label feeds the stderr dispatch line
@@ -213,7 +236,7 @@ def sum_cmd(
     sections, failed = [], []
     for inp in inputs:
         try:
-            label, text = _sum_gather(inp)
+            label, text = _gather(inp)
         except Exception as e:  # a dead URL/file skips, the rest still summarize (fetch's contract)
             typer.echo(f"[failed: {inp} — {e}]", err=True)
             failed.append(inp)

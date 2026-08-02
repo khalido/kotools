@@ -121,6 +121,40 @@ def test_models_cli_warns_when_stale(monkeypatch, tmp_path):
     assert "ko models --refresh" in r.stderr
 
 
+# --- -f/--file: attach files/URLs as input (the opencode/simonw-llm convention) ---
+
+
+@pytest.fixture
+def fake_run(monkeypatch):
+    calls = []
+
+    def _run(prompt, stdin=None, model=None, system=None, schema=None):
+        calls.append({"prompt": prompt, "stdin": stdin})
+        return "OK"
+
+    monkeypatch.setattr(llm, "run", _run)
+    monkeypatch.setattr(llm, "last_cost", None)
+    return calls
+
+
+def test_llm_file_flag_prepends_content(fake_run, tmp_path):
+    a = tmp_path / "a.md"
+    a.write_text("ALPHA CONTENT")
+    b = tmp_path / "b.md"
+    b.write_text("BETA CONTENT")
+    r = runner.invoke(app, ["llm", "-f", str(a), "-f", str(b), "compare"], input="PIPED")
+    assert r.exit_code == 0
+    stdin = fake_run[0]["stdin"]
+    # fragments in flag order, piped stdin last — long inputs first, question last
+    assert stdin.index("ALPHA") < stdin.index("BETA") < stdin.index("PIPED")
+    assert f"file:{a.name}" in r.stderr  # dispatch line per attachment
+
+
+def test_llm_file_flag_missing_file_is_fatal(fake_run, tmp_path):
+    r = runner.invoke(app, ["llm", "-f", str(tmp_path / "nope.xyz"), "go"])
+    assert r.exit_code != 0 and not fake_run  # no model call with half the context missing
+
+
 # --- --schema: JSON Schema constrained output --------------------------------
 
 
