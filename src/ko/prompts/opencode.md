@@ -1,61 +1,121 @@
 ---
 name: opencode
-description: How to drive OpenCode from the CLI programmatically (second opinions) + pick a model tier
+description: OpenCode headless for a second opinion — read-only lock, model tiers, follow-up sessions
 ---
 # OpenCode, programmatically — kickoff
 
-`opencode` is a coding agent CLI I keep around for **second opinions** — a different model's take
-on a design, a review, a hard bug. Run it non-interactively (`opencode run`), pick the right model
-tier for the stakes, and read its answer back. Docs: https://opencode.ai/docs/cli/ · models:
-https://opencode.ai/docs/zen/. (There's also a `/opencode` Claude Code skill that wraps this.)
+Paste this into an agent (or read it yourself) when you want a **second opinion** from a
+different model family — a fresh take on a design, a review, a hard bug, or a plan worth
+double-checking. The value is the *difference*, not the extra compute.
 
-## The one-shot call
+Assumes `opencode` is installed and an OpenRouter key is configured
+(`opencode auth login`). Docs: https://opencode.ai/docs/cli/.
+(There's also a `/opencode` Claude Code skill that wraps this.)
+
+## The call
 
 ```bash
-opencode run "MESSAGE" -m provider/model -f FILE1 -f FILE2
+OPENCODE_PERMISSION='{"*":"deny","read":"allow","grep":"allow","glob":"allow"}' \
+  opencode run "MESSAGE" -m provider/model -f FILE1 -f FILE2
 ```
 
-**Message comes FIRST** as a quoted positional arg; flags (`-m`, `-f`) come *after*. There is no
-`--prompt`. Attach the files that matter with repeated `-f` (always include `CLAUDE.md` + 2–5 relevant
-source files — the model has no repo context otherwise). Give it a 2–3 sentence context summary, then
-the question. Pipe it: `... | opencode run "review this diff" -m opencode/glm-5.1`.
+**Message comes FIRST** as a quoted positional arg; flags come after. There is no
+`--prompt`. Attach what matters with repeated `-f` — OpenCode has no repo context beyond
+what you attach. Lead with a 2–3 sentence context summary, then the question. Pipes work:
+`ko fetch <url> | opencode run "what's the strongest counterargument?" -m openrouter/~x-ai/grok-latest`.
 
-Useful flags:
+### Run it read-only — the permission prefix is not optional
+
+OpenCode's default `build` agent runs with `"*": "allow"`. It can edit files and call
+every configured MCP server without asking, and **without** `--auto`. The env var above
+is the reliable lock: denied tools are removed from the model's tool list entirely, so
+they can't be called. Verified — the allowlist leaves exactly `glob, grep, read`, and a
+shell redirect attempt comes back "unavailable tool".
+
+**If you've run `ko setup opencode`**, prefer named agents instead — `opencode run "..."
+--agent consult` carries the same lock plus a pre-baked brief, with no env prefix. The
+env var above is the portable fallback for a machine without them. Either way, a repo's
+own `.opencode/agents/` overrides global definitions and can restore full permissions,
+so check for it before running against a repo you don't control.
+
+- **Never `--auto`** (auto-approves everything not explicitly denied).
+- `--pure` is not a substitute — it drops plugins but leaves MCP tools attached.
+- Need more? Open one door deliberately (e.g. add `"webfetch":"allow"`), don't drop the
+  default-deny.
+
+Other useful flags:
+- `-c` / `--continue`, `-s <id>` / `--session <id>` — resume a session (see below).
 - `--format json` — raw JSON events for parsing (default is formatted text).
-- `-c` / `--continue`, `-s <id>` / `--session <id>` — resume a prior session.
-- `--agent <name>` — pick a configured agent (e.g. a review-tuned one).
-- `--auto` — auto-approve non-denied permissions (headless; use carefully).
-- `opencode models [provider]` / `opencode models --refresh` — list/refresh available model IDs.
+- `--variant high|max` — provider-side reasoning effort; often a better lever than
+  paying for a bigger model.
+- `opencode models` / `opencode models --verbose` — current IDs; verbose is JSON with
+  live cost and context limits, so a tier table can be regenerated rather than guessed.
 
-**Avoid cold-boot latency** for repeated calls: `opencode serve` in one terminal, then
+**Avoid cold-boot latency** on repeated calls: `opencode serve` in one terminal, then
 `opencode run --attach http://localhost:4096 "..."` in another.
 
-## Picking a model tier (match cost to stakes)
+## Model tiers (match cost to stakes)
 
-Model IDs drift — run `opencode models` for the current list. As of writing, the tiers I use:
+| Tier | Model | $/1M in/out | When |
+|---|---|---|---|
+| **Budget** | `openrouter/z-ai/glm-5.2` | 0.74 / 2.32 | everyday "what am I missing", quick sanity checks, high volume |
+| **Default** | `openrouter/~x-ai/grok-latest` | 2 / 6 | most second opinions — different family, good bang for buck |
+| **High-stakes** | `openrouter/~moonshotai/kimi-latest` | 3 / 15 | design thinking, architecture calls, subtle bugs |
 
-| Tier | Model | When |
-|------|-------|------|
-| **Cheap / fast** | `opencode/minimax-m2.5-free` (free) · `opencode/kimi-k2.6` (cheap, strong agentic) | everyday "what am I missing", quick sanity checks, high-volume |
-| **Medium** | `opencode/glm-5.1` (reviews, comparisons) · `opencode/gpt-5.3-codex-spark` (code-focused) | a real review or design comparison worth a few cents |
-| **Hard / expensive** | `opencode/gpt-5.4` (architecture calls) · `opencode/gpt-5.4-pro` (flagship reasoning) | genuinely high-stakes: a critical review, a subtle bug, an architecture decision |
+A leading `~` marks an alias that auto-tracks the latest of that family — set and forget.
+Prices drift, so check `opencode models --verbose` rather than trusting this table.
 
-Rule of thumb: **default to cheap/free**, step up only when the answer's value justifies it.
-`gpt-5.4-pro` is ~12× the price of `gpt-5.4` — reserve it for the calls where being wrong is expensive.
-Paid prices are per 1M tokens (input/output); a single review is usually cents, but a `--auto` loop on
-a pro model is not — mind runaway usage.
+OpenRouter over OpenCode Zen: cheaper on open-weight models, and new ones land there
+first — worth swapping in something newer when it ships.
+
+Rule of thumb: **default to the cheap tier**, step up when being wrong is expensive. For
+a genuinely important call, ask two tiers and compare: where they agree, move; where they
+split is where the real question lives.
+
+## How to ask
+
+The better models here (Kimi, Grok) are close to frontier and reward judgment the same
+way — so prompt them like you'd prompt a strong model, not like a form:
+
+- **Give context and the goal, not a checklist.** "Poke holes in this design" beats
+  "check these eight things" — a rigid rubric suppresses the independent read you're
+  paying for.
+- **Attach the artifact, don't describe it.** Real code, the actual diff, the failing
+  output. A description of code always underperforms the code.
+- **Don't lead the witness.** State the problem and constraints; don't reveal which
+  option you favour. A model that agrees with a premise you smuggled in has told you
+  nothing — that's how two blind spots become false consensus.
+- **Say it once.** Repeating an instruction in the context blurb *and* the question
+  doesn't strengthen it.
+- **Long inputs first, question last** — attach the files/docs, then ask.
+
+## Follow-ups — don't re-explain, continue
+
+Sessions persist, so push back instead of starting over:
+
+```bash
+OPENCODE_PERMISSION='{"*":"deny","read":"allow","grep":"allow","glob":"allow"}' \
+  opencode run "You said X — but what about Y?" -c -m <same model>
+```
+
+`-c` continues the last session (no ID needed); `-s <id>` targets a specific one. Worth
+doing when the first answer is interesting but incomplete, or to see whether it holds its
+position under pressure. Keep the same `-m` — switching models mid-session defeats the
+purpose.
+
+## Evaluate, don't relay
+
+A second opinion is only worth the tokens if it's weighed. Report its take, then say
+where you agree, where you disagree, and which you'd follow and why. Check its claims
+against the actual code first — other models are confidently wrong sometimes, and they're
+reasoning from a handful of attached files, not the whole repo.
 
 ## When to reach for it
 
-- **Second opinion on my own work** — before committing a non-trivial design/change, ask a *different*
-  model to poke holes. Fresh context catches what I've gone blind to (same reason I use subagents).
-- **A hard bug or perf question** — give it the failing code + symptoms on a medium/hard model.
-- **Architecture comparison** — "approach A vs B for X, given these constraints" on a hard model.
+- **Before committing to a non-trivial design** — ask a different model to poke holes.
+- **A hard bug or perf question** — failing code plus symptoms, default or high tier.
+- **Architecture comparison** — "A vs B given these constraints", high tier.
+- **An adversarial read** — "argue against this plan" beats "review this plan".
 
-Not for: routine edits (just do them), or anything needing my repo's full live context (opencode only
-sees the files you `-f`). It's a consult, not a co-worker.
-
-## Composing with ko
-
-`ko` gathers, `opencode` opines: `ko papers get <doi> | opencode run "does this method hold up?" -m opencode/glm-5.1`,
-or `ko fetch <url> | opencode run "summarize the disagreement" -m opencode/kimi-k2.6`.
+Not for: routine edits (just do them), or anything needing live repo context. It's a
+consult, not a co-worker.

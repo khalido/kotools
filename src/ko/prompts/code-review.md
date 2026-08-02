@@ -1,6 +1,6 @@
 ---
 name: code-review
-description: Paste-into-any-agent review brief — conventions, simplicity, push-back, verify-before-reporting
+description: Review brief — conventions, simplicity, push back, verify before reporting
 ---
 # Review this code the way I'd review it
 

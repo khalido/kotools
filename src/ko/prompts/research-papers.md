@@ -1,6 +1,6 @@
 ---
 name: research-papers
-description: How I research scientific papers with ko — snowball the citation graph, ML/AI lens
+description: Papers with ko — snowball the citation graph, ML/AI lens
 ---
 # Researching papers with ko — kickoff
 

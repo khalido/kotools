@@ -1,6 +1,6 @@
 ---
 name: python-cli
-description: How I build an opinionated Python/Typer CLI — layout, output contract, config, the parts that bite
+description: Opinionated Python/Typer CLI — layout, output contract, config, the parts that bite
 ---
 # Python CLI — kickoff
 

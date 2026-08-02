@@ -1,6 +1,6 @@
 ---
 name: sveltekit-embedded-ai
-description: How I embed an AI agent in a SvelteKit app — Vercel AI SDK v6, ToolLoopAgent, skills, scripts, croner jobs
+description: AI agent inside a SvelteKit app — Vercel AI SDK v6, ToolLoopAgent, skills, croner jobs
 ---
 # SvelteKit embedded AI — kickoff
 

@@ -1,6 +1,6 @@
 ---
 name: local-first-python-app
-description: How I build a local-first privacy-first Python pipeline app — FastAPI + vendored htmx + LanceDB
+description: Local-first, privacy-first Python pipeline app — FastAPI + vendored htmx + LanceDB
 ---
 # Local-first Python pipeline app — kickoff
 

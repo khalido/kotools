@@ -1,6 +1,6 @@
 ---
 name: pydantic-ai-agent
-description: How I build pydantic-ai v2 agents — toolsets, structured output, sessions, sandbox
+description: pydantic-ai v2 agents — toolsets, structured output, sessions, sandbox
 ---
 # pydantic-ai v2 agent — kickoff
 
@@ -25,7 +25,7 @@ via `model=` at call time — NOT into the `Agent()` constructor — so the `-m`
 
 ```python
 # research.py
-_MODEL = os.environ.get("KO_AGENT_MODEL", "openrouter:z-ai/glm-5.2")   # capable model
+_MODEL = os.environ.get("KO_AGENT_MODEL", "openrouter:openai/gpt-5.6-luna")  # capable model
 agent = Agent(_MODEL, instructions=..., toolsets=[web, papers, news])
 
 def run(prompt, model=None, resume=None):

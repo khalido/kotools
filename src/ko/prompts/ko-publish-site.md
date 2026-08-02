@@ -1,6 +1,6 @@
 ---
 name: ko-publish-site
-description: How I build a static site published with ko publish — Hono + CDN, no build
+description: Static site on ko publish — Hono + CDN, no build step
 ---
 # ko-publish static site — kickoff
 

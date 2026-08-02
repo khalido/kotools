@@ -1,6 +1,6 @@
 ---
 name: exa
-description: When to reach for `ko exa` (semantic search) vs fetch/papers, plus the agent defaults
+description: When to reach for semantic search vs fetch/papers, plus the agent defaults
 ---
 # Searching the web with `ko exa`
 

@@ -1,6 +1,6 @@
 ---
 name: ko-cli
-description: Hand this to an agent so it can drive the `ko` CLI — the contract, the command map, the gotchas
+description: Drive the `ko` CLI — the contract, the command map, the gotchas
 ---
 # Driving the `ko` CLI
 

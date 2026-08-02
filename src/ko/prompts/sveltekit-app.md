@@ -1,6 +1,6 @@
 ---
 name: sveltekit-app
-description: How I build a SvelteKit app — stack, structure, and the parts that bite
+description: SvelteKit app — stack, structure, and the parts that bite
 ---
 # SvelteKit app — kickoff
 
