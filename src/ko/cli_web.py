@@ -946,8 +946,8 @@ def tv(
 ) -> None:
     """Movie/TV quick check: rating, overview, and where to watch (AU by default)."""
     if tv and movie:
-        typer.echo("--tv and --movie are mutually exclusive", err=True)
-        raise typer.Exit(2)
+        # via _die so --json gets the {error, code} object AGENTS.md promises
+        _die("--tv and --movie are mutually exclusive", as_json=as_json, code="usage")
     kind = "tv" if tv else "movie" if movie else None
     try:
         top, rest = tmdb_mod.lookup(query, kind=kind, year=year, country=country)

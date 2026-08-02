@@ -52,7 +52,8 @@ they're present. If a command fails with an auth/key error, `ko doctor` tells yo
 - `ko <file>` → `ko doc <file>` (PDF/Office/image → text), when the arg is an existing file
 - `ko x <name>` → `ko x list <name>` (anything after `x` that isn't an x subcommand is a list name)
 - `ko tt` (alias `ko todo`) → `ko tt lists`; `ko tt <name>` → `ko tt items <name>` (anything that isn't a tt subcommand — `lists`/`items`/`add`/`done`/`search` — is a list name)
-- `ko <anything> help` → `ko <anything> --help` (trailing `help` prints help at any level: `ko help`, `ko exa help`, `ko exa search help`)
+- `ko <group> help` → `ko <group> --help` (trailing `help` prints help at **group** level, nested groups included: `ko help`, `ko exa help`, `ko gmail draft help`). After a leaf command it's an ordinary argument, so `ko hn search help` searches for the word "help" — use `--help`, which works at every level, to get help there.
+- `-h` is a synonym for `--help` everywhere.
 - `ko md-to-pdf` ≡ `ko pdf` (same command, spelled out — markdown *in*, PDF *out*; `ko doc` runs the other direction)
 
 ## Auth

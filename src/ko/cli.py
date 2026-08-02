@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from functools import lru_cache
 from pathlib import Path
 
 import typer
@@ -16,6 +17,7 @@ from ._cli_shared import (  # noqa: F401 — re-exported for tests
     _die,
     _fmt_day,
     _no_results,
+    _reject_group_flags,
     _tsv_cell,
     app,
 )
@@ -403,6 +405,7 @@ def refs_main(
 ) -> None:
     """Bare `ko refs` = pull all reference repos (same as `ko refs pull`)."""
     if ctx.invoked_subcommand:
+        _reject_group_flags(ctx, yes="--yes", jobs="--jobs")
         return
     _refs_pull(yes, jobs)
 
@@ -554,22 +557,49 @@ def _cmd_label(args: list[str]) -> str:
     return head
 
 
+@lru_cache(maxsize=1)
+def _group_paths() -> frozenset[tuple[str, ...]]:
+    """Every arg path that names a Typer *group* rather than a leaf command, nested groups
+    included: ('exa',), ('gmail',), ('gmail','draft'), ('agent','sessions')… plus the empty
+    path for the root, so bare `ko help` resolves too."""
+    paths: set[tuple[str, ...]] = {()}
+
+    def walk(t: typer.Typer, prefix: tuple[str, ...]) -> None:
+        for g in t.registered_groups:
+            path = (*prefix, g.name)
+            paths.add(path)
+            walk(g.typer_instance, path)
+
+    walk(app, ())
+    return frozenset(paths)
+
+
 def _route(args: list[str]) -> list[str]:
     """Deterministic bare-argument routing (explicit command names always win). Pure:
     takes the args after the program name, returns the rewritten list. Shortcuts:
-    `help` trailing == `--help` at any level; `ko <url>` -> `fetch <url>`; `ko <file>` ->
-    `doc <file>`; `ko x <name>` -> `x list <name>`; `ko tt <name>` -> `tt items <name>`;
-    `ko publish [dir]` -> `publish up [dir]`."""
+    trailing `help` == `--help` at group level only; `ko <url>` -> `fetch <url>`;
+    `ko <file>` -> `doc <file>`; `ko x <name>` -> `x list <name>`; `ko tt <name>` ->
+    `tt items <name>`; `ko publish [dir]` -> `publish up [dir]`."""
     args = list(args)
-    # `help` as a trailing word == --help (`ko help`, `ko exa search help`). To *search* the
-    # literal word "help", use the flag form instead — `ko exa search --help` is help.
-    if args and args[-1] == "help" and "--help" not in args and "-h" not in args:
+    groups = {g.name for g in app.registered_groups}
+    # `help` as a trailing word == --help, but only at *group* level (`ko help`, `ko exa
+    # help`, `ko gmail draft help`). After a leaf command it stays an ordinary argument, so
+    # `ko hn search help` searches for the word "help" — previously that was unreachable at
+    # any spelling, since the rewrite happened before Typer ever saw the query. `--help`
+    # still works everywhere. Matching the *whole* prefix against real group paths (not just
+    # `args[-2]` against top-level names) is what keeps nested groups working and stops
+    # `ko hn search agent help` from being swallowed because "agent" happens to be a group.
+    if (
+        args
+        and args[-1] == "help"
+        and "--help" not in args
+        and "-h" not in args
+        and tuple(args[:-1]) in _group_paths()
+    ):
         args[-1] = "--help"
     if not args or args[0].startswith("-"):
         return args
-    known = {g.name for g in app.registered_groups} | {
-        c.name for c in app.registered_commands
-    }
+    known = groups | {c.name for c in app.registered_commands}
     if args[0].startswith(("http://", "https://")):
         args.insert(0, "fetch")
     elif args[0] not in known and Path(args[0]).is_file():

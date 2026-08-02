@@ -22,6 +22,10 @@ app = typer.Typer(
     # Typer's default colorized multi-frame traceback box is not. We catch expected errors
     # in each command and emit them via _die(); this kills the pretty-traceback fallback.
     pretty_exceptions_enable=False,
+    # `_route` treats `-h` as "help was already asked for"; without this Typer never
+    # registers it, so `ko -h` died with "Try 'ko --help'" while the router thought it
+    # was a help flag. Register it for real, everywhere.
+    context_settings={"help_option_names": ["-h", "--help"]},
 )
 
 
@@ -47,6 +51,48 @@ def _die(
     if exit_code is None:
         exit_code = 2 if code == "usage" else 1
     raise typer.Exit(exit_code)
+
+
+def _reject_group_flags(ctx: typer.Context, **flags: str) -> None:
+    """Refuse bare-group flags that were passed *before* a subcommand.
+
+    Typer binds them to the group callback, which then returns early once a subcommand
+    runs — so `ko gmail --json search foo` used to accept `--json`, ignore it, print plain
+    text and exit 0. An agent asking for JSON got unparseable output with no signal; loud
+    beats wrong. Pass `param_name="--flag"` for each flag that only applies to the bare
+    group. `--json` among them still gets a JSON error object, since that's what was asked
+    for. Group-wide options (e.g. `--account`) are not passed here — they apply to both.
+
+    Compares the source by *name*: Typer vendors its own click, so the enum member handed
+    back is `typer._click.core.ParameterSource.COMMANDLINE`, which `==` against the one
+    imported from `click.core` is silently always False (no error, just a dead check).
+    Same reason for the `is None` raise: click returns None for a name it doesn't know, so
+    a typo'd or renamed param would quietly restore the accept-and-ignore behaviour."""
+    # command_path, not command.name: nested groups need the full path, or `ko agent
+    # sessions --json summarize` advises you about a `ko sessions` that doesn't exist.
+    group = ctx.command_path
+    stray = []
+    for name, label in flags.items():
+        src = ctx.get_parameter_source(name)
+        if src is None:
+            raise RuntimeError(
+                f"_reject_group_flags: `{group}` has no parameter {name!r} "
+                "— the guard would never fire"
+            )
+        if getattr(src, "name", None) == "COMMANDLINE":
+            stray.append(label)
+    if not stray:
+        return
+    shown = ", ".join(sorted(stray))
+    verb = "applies" if len(stray) == 1 else "apply"
+    # Deliberately no fabricated command line: the subcommand may not accept these flags
+    # at all (`ko cal day` has no --days), and echoing them back reads as a promise it does.
+    _die(
+        f"{shown} {verb} to bare `{group}` only, not `{group} {ctx.invoked_subcommand}` "
+        f"(see: {group} {ctx.invoked_subcommand} --help)",
+        as_json="--json" in stray,
+        code="usage",
+    )
 
 
 def _no_results(note: str, as_json: bool) -> NoReturn:

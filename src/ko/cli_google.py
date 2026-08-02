@@ -19,7 +19,7 @@ from . import gdrive as gdrive_mod
 from . import gmail as gmail_mod
 from . import google_auth
 from . import gsheets as gsheets_mod
-from ._cli_shared import _die, _no_results, _tsv_cell, app
+from ._cli_shared import _die, _no_results, _reject_group_flags, _tsv_cell, app
 
 
 def _http_error_msg(e: HttpError) -> str:
@@ -1065,6 +1065,9 @@ def _cal_main(
     inclusive `end` (a single-day event has end == start)."""
     _set_account(account)
     if ctx.invoked_subcommand is not None:
+        _reject_group_flags(
+            ctx, days="--days", today="--today", calendar="--calendar", as_json="--json"
+        )
         return
     from datetime import datetime as _dt
     n = 1 if today else days
@@ -1249,6 +1252,7 @@ def _gmail_main(
     mail) per message — newsletter-vs-human triage data. The plain-text list is unchanged."""
     _set_account(account)
     if ctx.invoked_subcommand is not None:
+        _reject_group_flags(ctx, n="-n", unread="--unread", as_json="--json")
         return
     with _google_errors(as_json):
         msgs = gmail_mod.recent(n=n, unread=unread)

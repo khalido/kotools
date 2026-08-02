@@ -46,12 +46,93 @@ def test_tsv_cell_sanitizes_tabs_and_newlines():
 
 def test_route_trailing_help_becomes_flag():
     assert cli._route(["help"]) == ["--help"]
-    assert cli._route(["exa", "search", "help"]) == ["exa", "search", "--help"]
+    assert cli._route(["exa", "help"]) == ["exa", "--help"]  # group level
+    # nested groups too — matching only args[-2] against top-level names missed these
+    assert cli._route(["gmail", "draft", "help"]) == ["gmail", "draft", "--help"]
+    assert cli._route(["agent", "sessions", "help"]) == ["agent", "sessions", "--help"]
     assert cli._route(["exa", "search", "--help"]) == [
         "exa",
         "search",
         "--help",
     ]  # already a flag
+
+
+def test_route_trailing_help_after_leaf_stays_literal():
+    """After a leaf command `help` is an ordinary argument, so it can be searched for.
+    The rewrite used to fire at any depth, which made the word unreachable at every
+    spelling — quoting didn't help, since _route sees the same argv either way."""
+    assert cli._route(["hn", "search", "help"]) == ["hn", "search", "help"]
+    assert cli._route(["exa", "search", "help"]) == ["exa", "search", "help"]
+    # a query word that happens to name a group must not resurrect the rewrite: the
+    # check matches the whole prefix against real group paths, not just the last token
+    assert cli._route(["hn", "search", "agent", "help"]) == [
+        "hn",
+        "search",
+        "agent",
+        "help",
+    ]
+
+
+def test_group_paths_covers_nested_and_root():
+    paths = cli._group_paths()
+    assert () in paths  # bare `ko help`
+    assert ("gmail",) in paths and ("gmail", "draft") in paths
+    assert ("agent", "sessions") in paths
+    assert ("doctor",) not in paths  # a leaf command, not a group
+
+
+def test_reject_group_flags_is_live(capsys):
+    """A bare-group flag passed before a subcommand must be a loud usage error.
+
+    Guards the *mechanism*, not just the policy: the first version of this check compared
+    `ctx.get_parameter_source(...)` against `click.core.ParameterSource.COMMANDLINE`, but
+    Typer vendors its own click, so that enum member is a different class object and `==`
+    was silently always False — a dead check that read as correct. Comparing by name is
+    what makes it fire, and this test fails if anyone reverts to identity comparison.
+    """
+
+    class _Ctx:
+        command_path = "ko gmail"
+        invoked_subcommand = "search"
+
+        def get_parameter_source(self, name):
+            # mimics typer._click's enum: right name, foreign class
+            return type("ParameterSource", (), {"name": "COMMANDLINE"})()
+
+    with pytest.raises(typer.Exit) as exc:
+        _cli_shared._reject_group_flags(_Ctx(), as_json="--json")
+    assert exc.value.exit_code == 2  # usage
+    err = capsys.readouterr().err
+    assert json.loads(err)["code"] == "usage"  # --json asked for -> JSON error object
+
+
+def test_reject_group_flags_raises_on_unknown_param():
+    """A typo'd/renamed param name must be loud, not a silently dead guard: click's
+    get_parameter_source returns None for a name it doesn't know, which would otherwise
+    read as 'not passed on the command line' and restore the accept-and-ignore bug."""
+
+    class _Ctx:
+        command_path = "ko gmail"
+        invoked_subcommand = "search"
+
+        def get_parameter_source(self, name):
+            return None  # click doesn't know this parameter
+
+    with pytest.raises(RuntimeError, match="no parameter"):
+        _cli_shared._reject_group_flags(_Ctx(), typoed="--json")
+
+
+def test_reject_group_flags_allows_defaults():
+    """Flags left at their default must pass through untouched."""
+
+    class _Ctx:
+        command_path = "ko cal"
+        invoked_subcommand = "find"
+
+        def get_parameter_source(self, name):
+            return type("ParameterSource", (), {"name": "DEFAULT"})()
+
+    _cli_shared._reject_group_flags(_Ctx(), as_json="--json", days="--days")  # no raise
 
 
 def test_route_url_to_fetch():

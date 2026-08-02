@@ -16,7 +16,14 @@ from . import mcp_client as mcp_client_mod
 from . import prompt as prompt_mod
 from . import publish as publish_mod
 from . import ticktick as ticktick_mod
-from ._cli_shared import _die, _emit_json, _no_results, _tsv_cell, app
+from ._cli_shared import (
+    _die,
+    _emit_json,
+    _no_results,
+    _reject_group_flags,
+    _tsv_cell,
+    app,
+)
 from .agents import (
     ai_repl,
     ai_run,
@@ -269,6 +276,7 @@ def agent_sessions(
     Use --tag or --search to filter after summarizing.
     """
     if ctx.invoked_subcommand:
+        _reject_group_flags(ctx, as_json="--json", tag="--tag", search="--search")
         return
     from ko import sessions
 
@@ -887,7 +895,7 @@ def prompt_cmd(
 ) -> None:
     """Kickoff briefs — my opinionated 'how I build X' notes to load into an agent.
 
-    Bare `ko prompt` lists them (TSV: name, description); `ko prompt <name>` prints one.
+    Bare `ko prompt` lists them (a table on a TTY, TSV when piped); `ko prompt <name>` prints one.
     Add your own in ~/.config/ko/prompts/*.md — a file there overrides a packaged brief of
     the same name. `--copy` puts the brief on the clipboard; `--json` for structured output.
     """
@@ -909,8 +917,34 @@ def prompt_cmd(
                 )
             )
             return
+        if not sys.stdout.isatty():  # piped: keep the TSV contract
+            for p in prompts:
+                typer.echo(f"{p.name}\t{p.description}")
+            return
+        from rich.console import Console
+        from rich.table import Table
+        from rich.text import Text
+
+        table = Table(box=None, show_header=False, pad_edge=False, padding=(0, 2, 0, 0))
+        table.add_column(style="bold cyan", no_wrap=True)
+        table.add_column(overflow="fold")
         for p in prompts:
-            typer.echo(f"{p.name}\t{p.description}")
+            # Text(), not a markup string: descriptions are prose (and user briefs in
+            # ~/.config/ko/prompts/ are arbitrary), so `[llm] model` would be parsed as a
+            # style tag and silently render as "  model".
+            cell = Text(p.description)
+            if p.source == "user":
+                cell.append(" (user)", style="dim")
+            table.add_row(p.name, cell)
+        console = Console(highlight=False)
+        console.print(
+            "[bold]Briefs to paste into a coding agent[/bold] "
+            "[dim]— my stack, my defaults, the parts that bite.[/dim]\n"
+        )
+        console.print(table)
+        console.print(
+            "[dim]ko prompt <name> to print one · --copy puts it on the clipboard[/dim]"
+        )
         return
     try:
         p = prompt_mod.get_prompt(name)
@@ -1071,19 +1105,23 @@ def mcp_overview(
         None,
         "--model",
         "-m",
-        help="agent model (default: KO_AGENT_MODEL or openrouter:z-ai/glm-5.2)",
+        help="agent model (default: KO_AGENT_MODEL, [agents] model, else the medium tier)",
     ),
 ) -> None:
     """An LLM agent connects to an MCP server, explores it, and summarizes what it's for and what's
     most useful — great for sizing up a server (incl. your own dev server). Makes a (cheap) model call.
     """
-    import os
+    from . import config
 
     try:
         headers = mcp_client_mod.parse_headers(header)
     except mcp_client_mod.MCPTestError as e:
         _die(str(e), code="usage")
-    mdl = model or os.environ.get("KO_AGENT_MODEL") or "openrouter:z-ai/glm-5.2"
+    # via the tier table + the documented env → config.toml chain; a hardcoded model
+    # string here silently drifted from TIERS once already.
+    mdl = model or config.setting(
+        "KO_AGENT_MODEL", "agents", "model", llm_mod.model_for("medium")
+    )
     try:
         spec = mcp_client_mod.resolve(server, headers)
         out = mcp_client_mod.overview(spec, mdl)
