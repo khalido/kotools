@@ -83,6 +83,54 @@ def test_reddit_mirror_dead_falls_back_to_wayback_of_original(monkeypatch):
     assert seen["url"] == "https://www.reddit.com/r/Python/comments/abc/title/"  # original
 
 
+def test_wikipedia_route_uses_extract_api(monkeypatch):
+    # the api.php call, not the article HTML page — routing must never hit /wiki/ directly
+    def fake_get(url, **kw):
+        assert url == "https://en.wikipedia.org/w/api.php"
+        assert kw["params"]["titles"] == "BYD Auto"  # underscore -> space, decoded from URL
+        assert kw["params"]["explaintext"] == 1
+        body = {"query": {"pages": {"123": {"extract": "BYD Auto is a car company.\n\n== History ==\nText."}}}}
+        return httpx.Response(200, json=body, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(fetch.httpx, "get", fake_get)
+    r = fetch.fetch("https://en.wikipedia.org/wiki/BYD_Auto")
+    assert r.source == "live" and "wikipedia extract" in r.note
+    assert "== History ==" in r.text and "BYD Auto is a car company" in r.text
+
+
+def test_wikipedia_namespace_pages_fall_through(monkeypatch):
+    # Talk:/Category:/etc. aren't articles — must never reach the extract API
+    calls = []
+
+    def fake_get(url, **kw):
+        calls.append(url)
+        assert "api.php" not in url  # would mean we wrongly tried the extract API
+        html = "<html><body><article><p>talk page content here, long enough.</p></article></body></html>"
+        return httpx.Response(200, html=html, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(fetch.httpx, "get", fake_get)
+    fetch.fetch("https://en.wikipedia.org/wiki/Talk:BYD_Auto")
+    assert calls  # the generic path ran instead
+
+
+def test_wikipedia_missing_extract_falls_through_to_generic(monkeypatch):
+    # extract API says the page doesn't exist -> generic path still gets a shot, not an error
+    calls = []
+
+    def fake_get(url, **kw):
+        calls.append(url)
+        if "api.php" in url:
+            body = {"query": {"pages": {"-1": {"missing": True}}}}
+            return httpx.Response(200, json=body, request=httpx.Request("GET", url))
+        html = "<html><body><article><p>fallback page content, long enough to keep.</p></article></body></html>"
+        return httpx.Response(200, html=html, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(fetch.httpx, "get", fake_get)
+    r = fetch.fetch("https://en.wikipedia.org/wiki/Some_Missing_Page")
+    assert len(calls) == 2  # tried the extract API, then fell through
+    assert r.source == "live" and "wikipedia extract" not in r.note
+
+
 def test_pdf_name_sanitized():
     assert (
         fetch._pdf_name("https://x.com/a/My Paper (final).pdf")

@@ -5,6 +5,11 @@ Deterministic routing, no LLM:
 - reddit thread → the same path on reddit.synth.download, a third-party public mirror
   (direct reddit fetching fails every method we tried; the mirror extracts cleanly via
   trafilatura); if the mirror is dead/empty we recover via Wayback of the ORIGINAL url
+- wikipedia.org/wiki/<Title> → MediaWiki's own plaintext extract API, not trafilatura:
+  the generic HTML path round-trips every wikilink as a full markdown link, ~4x the
+  tokens for the same read (measured: BYD Auto, 81k vs 20k); the extract API returns
+  clean prose with `== Section ==` headers and no inline link markup — the tradeoff is
+  losing the infobox table, usually fine, the facts are almost always in the prose too
 - PDF (by extension or content-type) → download to ~/Downloads (where I'd look
   for it), parse via liteparse; `save=False` parses from temp and discards
 - everything else → trafilatura extraction (best-in-benchmark boilerplate removal)
@@ -24,6 +29,7 @@ import re
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import unquote
 
 import httpx
 import trafilatura
@@ -60,6 +66,13 @@ _REDDIT_HOSTS = frozenset(
     {"reddit.com", "www.reddit.com", "old.reddit.com", "np.reddit.com", "m.reddit.com"}
 )
 _REDDIT_MIRROR = "reddit.synth.download"
+# Article pages only (/wiki/Title, no colon-namespace prefix) — Talk:/File:/Category: etc.
+# aren't "an article", so they fall through to the generic trafilatura path unchanged.
+_WIKIPEDIA_RE = re.compile(r"(?:https?://)?([a-z]{2,3})\.wikipedia\.org/wiki/([^?#]+)")
+_WIKIPEDIA_NAMESPACES = (
+    "File:", "Category:", "Talk:", "User:", "Wikipedia:",
+    "Template:", "Portal:", "Help:", "Draft:", "Module:", "Special:",
+)
 
 
 @dataclass
@@ -88,6 +101,31 @@ def _reddit_mirror(url: str) -> str | None:
     if "s" in u.path.strip("/").split("/"):  # /r/<sub>/s/<code> share link
         return None
     return str(u.copy_with(host=_REDDIT_MIRROR))
+
+
+def _wikipedia_extract(lang: str, title: str) -> str | None:
+    """MediaWiki's plaintext extract for one article title, or None on a missing/empty page
+    (redirects resolve server-side via `redirects=1`) — either way the caller falls through
+    to the generic path rather than erroring, since the URL was a real webpage regardless."""
+    try:
+        resp = httpx.get(
+            f"https://{lang}.wikipedia.org/w/api.php",
+            params={
+                "action": "query",
+                "prop": "extracts",
+                "explaintext": 1,
+                "redirects": 1,
+                "titles": title,
+                "format": "json",
+            },
+            headers=UA,
+            timeout=30,
+        )
+        resp.raise_for_status()
+        page = next(iter(resp.json()["query"]["pages"].values()))
+    except (httpx.HTTPError, KeyError, ValueError, StopIteration):
+        return None
+    return page.get("extract") or None
 
 
 def _pdf_name(url: str) -> str:
@@ -257,6 +295,15 @@ def fetch(
                 f"reddit mirror ({_REDDIT_MIRROR}) returned no content, and Wayback has no "
                 f"capture of {url} — try Reddit's official OAuth API"
             ) from e
+
+    if wiki_m := _WIKIPEDIA_RE.search(url):
+        lang, raw_title = wiki_m.groups()
+        title = unquote(raw_title).replace("_", " ")
+        if not title.startswith(_WIKIPEDIA_NAMESPACES):
+            text = _wikipedia_extract(lang, title)
+            if text:
+                return Fetched(text=text, source="live", note=f"wikipedia extract ({lang})")
+            # missing/empty extract (rare) — fall through, the generic path still works
 
     try:
         # ask for markdown — agent-optimized servers (e.g. Cloudflare's markdown-for-agents)
