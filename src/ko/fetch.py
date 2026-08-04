@@ -8,8 +8,10 @@ Deterministic routing, no LLM:
 - wikipedia.org/wiki/<Title> → MediaWiki's own plaintext extract API, not trafilatura:
   the generic HTML path round-trips every wikilink as a full markdown link, ~4x the
   tokens for the same read (measured: BYD Auto, 81k vs 20k); the extract API returns
-  clean prose with `== Section ==` headers and no inline link markup — the tradeoff is
-  losing the infobox table, usually fine, the facts are almost always in the prose too
+  clean prose with `== Section ==` headers but NO links at all (confirmed empty on
+  Cobra) and no infobox table — a real trade for anything that follows links or wants
+  the infobox's structured facts; the old link-preserving markdown is still one call
+  away, unrouted (`_extract(httpx.get(url).text, url)`), just not the wiki default
 - PDF (by extension or content-type) → download to ~/Downloads (where I'd look
   for it), parse via liteparse; `save=False` parses from temp and discards
 - everything else → trafilatura extraction (best-in-benchmark boilerplate removal)
