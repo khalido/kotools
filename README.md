@@ -110,8 +110,9 @@ prints all three, plus every effective setting and where it resolved from
 
 ## Google Sheets setup (one-off) — read & write
 
-`ko gsheets` runs as *you* against *your* Google account (OAuth user flow, no service account). One
-token grants read **and** write; reads use the narrower read-only scope under the hood.
+`ko gsheets` runs as *you* against *your* Google account (OAuth user flow). One token grants read
+**and** write; reads use the narrower read-only scope under the hood. Service accounts are supported
+too, as the deliberate exception for automation — see below.
 
 Each step below links straight to the right console page. They all take a `?project=<project-id>`
 query param — paste your project's ID (from step 1) into the links, or just keep the project selected
@@ -157,10 +158,22 @@ point `KO_STATE_DIR` at it) to reuse the auth with no re-consent.
 shape-aware writers **refuse to overwrite non-empty cells** (the error lists exactly which) unless you
 pass `--overwrite` — including formulas that currently display blank.
 
-**Why OAuth, not a service account?** A service account needs every sheet explicitly shared with its
-email — fine for bots, tedious for a personal read/write-anywhere CLI. OAuth gives access to anything
-the signed-in account can see. **Scope to one folder?** No — OAuth scopes are per-API, not per-resource;
-use a service account with individual share grants if you need tighter control.
+**Why OAuth by default?** A service account needs every sheet explicitly shared with its email — fine
+for bots, tedious for a personal read/write-anywhere CLI. OAuth gives access to anything the signed-in
+account can see. **Scope to one folder?** No — OAuth scopes are per-API, not per-resource; a service
+account with individual share grants is the way to get tighter control.
+
+**When you do want one** — automation, or a doc none of your own accounts can reach:
+
+```bash
+ko gsheets -a sfl-app auth --service-account ~/Downloads/key.json
+```
+
+That copies the key to `~/.local/state/ko/google_sa_sfl-app.json` (owner-only; state, not the
+dotfile-synced config dir — an SA key authenticates by itself on any machine) and prints its
+`client_email`. Share the Sheets/Docs/Drive files you want it to reach with that address, then use
+`-a sfl-app` on any command. No browser, no token. `auth --logout` unregisters it. Caveat: Gmail and
+personal Calendars need domain-wide delegation — sharing alone won't let an SA read them.
 
 ### Markdown ↔ Google Docs + comments (`ko gdocs push/get/comments`)
 

@@ -142,6 +142,11 @@ def _parse_domains(value: str | None) -> list[str] | None:
 
 
 @exa_app.command("search")
+# Top-level alias under the name the whole ecosystem uses for this capability (Claude Code's
+# WebSearch, the Anthropic API's web_search, every MCP server's web_search). `exa` names the
+# vendor — right for the group, wrong as the only spelling of "search the web". Spelled out,
+# so visible, like `ko md-to-pdf`. Paired with `ko webfetch`.
+@app.command("websearch")
 def exa_search(
     query: str = typer.Argument(..., help="semantic search query"),
     n: int = typer.Option(exa_mod.DEFAULT_MAX_RESULTS, "--n", "-n", help="max results"),
@@ -199,7 +204,8 @@ def exa_search(
 ) -> None:
     """Semantic search. Each hit shows a query-relevant summary by default (--highlights for
     key sentences, --long for full text). For labs/faculty use --domains .edu or
-    --category 'research paper'; for uni pages use --domains <uni>."""
+    --category 'research paper'; for uni pages use --domains <uni>.
+    `ko exa search` and `ko websearch` are the same command."""
     if search_type is not None and search_type not in exa_mod.SEARCH_TYPES:
         _die(
             f"invalid --type {search_type!r}; choose one of: {', '.join(exa_mod.SEARCH_TYPES)}",
@@ -715,12 +721,11 @@ def pdf(
     letterhead: bool = typer.Option(
         None, "--letterhead/--no-letterhead", help="force the page-1 letterhead on/off"
     ),
-    brand: Path = typer.Option(
+    brand: str = typer.Option(
         None,
         "--brand",
-        exists=True,
-        dir_okay=False,
-        help="brand.yml for the letterhead/footer identity; else $KO_BRAND or `[pdf] brand`",
+        help="which identity to send as: a name in ~/.config/ko/brands/ (or a path to a "
+        "brand.yml); else $KO_BRAND or `[pdf] brand`",
     ),
 ) -> None:
     """Markdown → print-ready PDF (A4, code highlighting, page footer; `--style report`
@@ -732,7 +737,7 @@ def pdf(
         written, used_brand = pdf_mod.render(
             file, out, style=style, letterhead=letterhead, brand_file=brand
         )
-    except ValueError as e:  # unknown --style: a usage error, not a runtime one
+    except ValueError as e:  # unknown --style / --brand: a usage error, not a runtime one
         _die(str(e), code="usage")
     except FileNotFoundError as e:
         _die(f"{e.filename}: no such file")
@@ -740,10 +745,11 @@ def pdf(
         _die(str(e))
     # The ops script's recurring bug: forgetting --brand shipped a PDF footed
     # "yourbrand.dev". Only worth saying when the document actually shows the brand.
-    if pdf_mod.is_placeholder(used_brand) and pdf_mod.resolve_style(style).shows_brand:
+    # `--brand ""` is an explicit "render unbranded" — warning about a choice you just made is noise.
+    if brand != "" and pdf_mod.is_placeholder(used_brand) and pdf_mod.resolve_style(style).shows_brand:
         typer.echo(
             f"note: no brand.yml found, so this reads '{pdf_mod.BRAND['name']}' — "
-            f"set `[pdf] brand` in config.toml",
+            f"drop one in {pdf_mod.brand_dir()}/ or set `[pdf] brand` in config.toml",
             err=True,
         )
     typer.echo(written)
@@ -900,6 +906,8 @@ def _fetch_banner(r: fetch_mod.Fetched) -> str:
 
 
 @app.command("fetch")
+# The WebFetch/web_fetch spelling, for the same reason as `ko websearch`.
+@app.command("webfetch")
 def fetch_cmd(
     urls: list[str] = typer.Argument(
         ...,
@@ -930,7 +938,7 @@ def fetch_cmd(
     if it ever dies, the durable path is Reddit's official OAuth API),
     paywalls via archive.today, dead links via Wayback.
     Pass several URLs to fetch them in one go (each under a `# <url>` header, `---`-separated).
-    Shortcut: `ko <url>`."""
+    Shortcut: `ko <url>`; `ko webfetch` is the same command."""
     # Sequential fetch, mirroring `ko exa get`: per-URL failures go to stderr and are skipped;
     # exit 0 if any URL succeeded, 1 if all failed.
     docs: list[tuple[str, fetch_mod.Fetched]] = []

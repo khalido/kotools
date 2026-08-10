@@ -110,13 +110,38 @@ def _set_account(account: str | None) -> None:
         os.environ["KO_GOOGLE_ACCOUNT"] = account
 
 
-def _google_auth(out: bool, readonly: bool) -> None:
+def _google_auth(out: bool, readonly: bool, sa_key: Path | None = None) -> None:
     acct = google_auth.active_account()
-    if out:
+    if out:  # checked BEFORE sa_key: `auth --logout --service-account k.json` must log out
         removed = google_auth.logout()
-        typer.echo(f"Signed out of '{acct}'." if removed else f"No cached token for '{acct}'.")
+        typer.echo(f"Signed out of '{acct}'." if removed else f"'{acct}' wasn't authenticated.")
         return
-    google_auth.get_credentials(readonly=readonly)
+    if sa_key is not None:
+        shadowed = google_auth.token_file(acct).exists()
+        with _google_errors():
+            email = google_auth.register_service_account(sa_key, acct)
+        if shadowed:
+            typer.echo(
+                f"note: '{acct}' also has an OAuth token; the service account now takes "
+                f"precedence for it. `auth --logout` clears both.",
+                err=True,
+            )
+        typer.echo(
+            f"Registered service account for '{acct}': {email}\n"
+            f"Share the Sheets/Docs/Drive files you want it to reach with that address, then "
+            f"use `-a {acct}`. (Gmail and personal Calendars need domain-wide delegation — an "
+            f"SA can't read them by being shared.)\n"
+            f"Key copied to {google_auth.sa_file(acct)} — delete your downloaded copy."
+        )
+        return
+    if google_auth.sa_file(acct).exists():
+        typer.echo(
+            f"'{acct}' is a service-account profile — no browser auth needed. "
+            f"`auth --logout` unregisters it."
+        )
+        return
+    with _google_errors():
+        google_auth.get_credentials(readonly=readonly)
     scope = "read-only" if readonly else "read+write"
     typer.echo(
         f"Signed in as '{acct}' ({scope}). One token covers Sheets + Docs + Calendar. "
@@ -129,8 +154,25 @@ def _google_accounts() -> None:
     authed = google_auth.list_accounts()
     for name in sorted(set(authed) | {active}):
         mark = "*" if name == active else " "
-        note = "" if name in authed else f"  (no token — `ko gsheets -a {name} auth`)"
+        if google_auth.sa_file(name).exists():
+            note = "  (service account)"
+        elif name in authed:
+            note = ""
+        else:
+            note = f"  (no token — `ko gsheets -a {name} auth`)"
         typer.echo(f"{mark} {name}{note}")
+
+
+# One option definition shared by the four auth commands — a key registers an SA profile.
+_SA_KEY_OPT = typer.Option(
+    None,
+    "--service-account",
+    exists=True,
+    dir_okay=False,
+    help="register a service-account key JSON for this account (automation: no browser; "
+    "share Sheets/Docs/Drive files with the key's client_email, shown on success). "
+    "`--logout` unregisters it",
+)
 
 
 # --- gsheets helpers ---
@@ -686,11 +728,13 @@ def gsheets_auth(
     readonly: bool = typer.Option(
         False, "--readonly", help="grant read-only scope (default grants read+write)"
     ),
+    service_account: Path = _SA_KEY_OPT,
 ) -> None:
     """Trigger or reset Google OAuth for the active account (`-a <name>` to pick). Opens a
     browser on first run. Default grants read+write (covers Sheets, Docs, and Calendar) so every
-    command works. Authed read-only or a narrower scope before? `--logout` then re-run to upgrade."""
-    _google_auth(out, readonly)
+    command works. Authed read-only or a narrower scope before? `--logout` then re-run to upgrade.
+    `--service-account <key.json>` registers the account as a service-account profile instead."""
+    _google_auth(out, readonly, service_account)
 
 
 @gsheets_app.command("accounts")
@@ -1043,9 +1087,10 @@ def gdocs_shade_table(
 def gdocs_auth(
     out: bool = typer.Option(False, "--logout", help="remove the cached token and exit"),
     readonly: bool = typer.Option(False, "--readonly", help="grant read-only scope"),
+    service_account: Path = _SA_KEY_OPT,
 ) -> None:
     """Google OAuth (shared token with gsheets/cal). Default grants read+write."""
-    _google_auth(out, readonly)
+    _google_auth(out, readonly, service_account)
 
 
 @gdocs_app.command("accounts")
@@ -1236,9 +1281,10 @@ def cal_cals(as_json: bool = typer.Option(False, "--json", help="emit JSON")) ->
 def cal_auth(
     out: bool = typer.Option(False, "--logout", help="remove the cached token and exit"),
     readonly: bool = typer.Option(False, "--readonly", help="grant read-only scope"),
+    service_account: Path = _SA_KEY_OPT,
 ) -> None:
     """Google OAuth (shared token with gsheets/gdocs). Default grants read+write."""
-    _google_auth(out, readonly)
+    _google_auth(out, readonly, service_account)
 
 
 @cal_app.command("accounts")
@@ -1595,9 +1641,10 @@ def gmail_draft_send(
 def gmail_auth(
     out: bool = typer.Option(False, "--logout", help="remove the cached token and exit"),
     readonly: bool = typer.Option(False, "--readonly", help="grant read-only scope"),
+    service_account: Path = _SA_KEY_OPT,
 ) -> None:
     """Google OAuth (shared token with gsheets/gdocs/cal). Default grants read+write."""
-    _google_auth(out, readonly)
+    _google_auth(out, readonly, service_account)
 
 
 @gmail_app.command("accounts")

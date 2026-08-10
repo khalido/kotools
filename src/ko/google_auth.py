@@ -1,7 +1,12 @@
 """Google OAuth for a personal CLI — multi-account.
 
 First run opens a browser for consent; refresh tokens cache locally, one file per
-account. No service accounts — this tool runs as *you*, against *your* Google account(s).
+account. This tool normally runs as *you*, against *your* Google account(s); a
+**service-account profile** is the deliberate exception, for automation and docs your
+own accounts can't reach: register a key with `ko gsheets -a <name> auth
+--service-account <key.json>` and that account authenticates as the SA (no browser, no
+cached token — the key is the credential). Share the doc/sheet with the SA's
+client_email and drive it with `-a <name>`.
 
 **Accounts.** Pick the active one with `--account`/`-a` (on any `ko gsheets` command),
 the `KO_GOOGLE_ACCOUNT` env var, or `[google] account` in config.toml; the default is
@@ -21,6 +26,7 @@ scope means one re-consent (`ko gsheets auth` again). README.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from functools import lru_cache
@@ -28,6 +34,7 @@ from pathlib import Path
 from typing import NoReturn
 
 from google.auth.transport.requests import Request
+from google.oauth2 import service_account
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import Resource, build
@@ -62,14 +69,23 @@ class AuthError(RuntimeError):
     pass
 
 
+def _write_secret(path: Path, text: str) -> None:
+    """Write a credential file that is owner-only FROM CREATION. A write-then-chmod leaves it
+    world-readable under a default umask for the length of the write; os.open with mode 0o600
+    closes that window. Falls back to plain write where POSIX perms don't apply."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    except (OSError, AttributeError):
+        path.write_text(text)
+        return
+    with os.fdopen(fd, "w") as fh:
+        fh.write(text)
+
+
 def _write_token(tf: Path, creds: Credentials) -> None:
     """Persist a credentials JSON with owner-only perms — it holds a refresh token."""
-    tf.parent.mkdir(parents=True, exist_ok=True)
-    tf.write_text(creds.to_json())
-    try:
-        tf.chmod(0o600)
-    except OSError:
-        pass  # e.g. a filesystem without POSIX perms — best-effort
+    _write_secret(tf, creds.to_json())
 
 
 # --- shared API helpers (errors, HTTP handling, id extraction) ---
@@ -142,8 +158,46 @@ def token_file(account: str | None = None) -> Path:
     return state_file(name)
 
 
+def sa_file(account: str | None = None) -> Path:
+    """Service-account key path for an account — its presence makes the account an SA profile.
+
+    STATE, not config: config is the dotfile-synced dir, and unlike `google_client.json` (a
+    Desktop OAuth client, useless without a human consent flow) an SA key is a standalone
+    bearer credential — it authenticates by itself on any machine. That's the same class as
+    `google_token_<name>.json`, which already lives here. Still portable on purpose: copy the
+    file or share a `KO_STATE_DIR`, like the OAuth token."""
+    return state_file(f"google_sa_{account or active_account()}.json")
+
+
+def _clear_service_caches() -> None:
+    for fn in (
+        get_credentials, get_sheets_service, get_docs_service,
+        get_calendar_service, get_gmail_service, get_drive_service,
+    ):
+        fn.cache_clear()
+
+
+def register_service_account(key_path: Path, account: str | None = None) -> str:
+    """Copy a service-account key JSON in as the account's `google_sa_<name>.json` (owner-only)
+    and return its client_email — the identity to share docs/sheets with. Never returns or logs
+    key material."""
+    try:
+        info = json.loads(Path(key_path).read_text())
+    except (OSError, ValueError) as e:
+        raise AuthError(f"can't read service-account key {key_path}: {e}") from e
+    if info.get("type") != "service_account" or not info.get("client_email"):
+        raise AuthError(
+            f"{key_path} is not a service-account key JSON "
+            "(want type='service_account' with a client_email) — download one from the "
+            "service account's Keys tab in the Cloud console."
+        )
+    _write_secret(sa_file(account), json.dumps(info))
+    _clear_service_caches()
+    return info["client_email"]
+
+
 def list_accounts() -> list[str]:
-    """Account names that have a cached token, sorted."""
+    """Account names that have a cached token or a registered service-account key, sorted."""
     out: list[str] = []
     for p in state_dir().glob("google_token*.json"):
         stem = p.stem
@@ -151,7 +205,9 @@ def list_accounts() -> list[str]:
             out.append(DEFAULT_ACCOUNT)
         elif stem.startswith("google_token_"):
             out.append(stem[len("google_token_") :])
-    return sorted(out)
+    for p in state_dir().glob("google_sa_*.json"):
+        out.append(p.stem[len("google_sa_") :])
+    return sorted(set(out))
 
 
 def _scopes(readonly: bool) -> list[str]:
@@ -208,8 +264,17 @@ def _run_flow(readonly: bool, account: str) -> Credentials:
 
 
 @lru_cache
-def get_credentials(readonly: bool = True, account: str | None = None) -> Credentials:
+def get_credentials(
+    readonly: bool = True, account: str | None = None
+) -> Credentials | service_account.Credentials:
     account = account or active_account()
+    sa = sa_file(account)
+    if sa.exists():
+        # An SA profile: the key is the credential — no browser flow, no token cache. Same
+        # scope sets as OAuth; what it can reach is whatever's shared with its client_email.
+        return service_account.Credentials.from_service_account_file(
+            str(sa), scopes=_scopes(readonly)
+        )
     creds = _load_cached(readonly, account)
     if creds is not None:
         return creds
@@ -254,15 +319,14 @@ def get_drive_service(readonly: bool = True, account: str | None = None) -> Reso
 
 
 def logout(account: str | None = None) -> bool:
-    """Remove an account's cached token (default: the active account). Returns True if removed."""
-    tf = token_file(account)
-    if tf.exists():
-        tf.unlink()
-        get_credentials.cache_clear()
-        get_sheets_service.cache_clear()
-        get_docs_service.cache_clear()
-        get_calendar_service.cache_clear()
-        get_gmail_service.cache_clear()
-        get_drive_service.cache_clear()
-        return True
-    return False
+    """De-authenticate an account (default: the active one): remove its cached OAuth token AND
+    any registered service-account key — leaving the key behind would report "signed out" on an
+    account that still authenticates. Returns True if anything was removed."""
+    removed = False
+    for path in (token_file(account), sa_file(account)):
+        if path.exists():
+            path.unlink()
+            removed = True
+    if removed:
+        _clear_service_caches()
+    return removed

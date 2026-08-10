@@ -199,6 +199,19 @@ def test_brand_path_prefers_env_over_config(monkeypatch, tmp_path):
     assert pdf.brand_path() is None
 
 
+def test_a_bare_brand_name_is_an_identity_in_the_brands_dir(monkeypatch, tmp_path):
+    """`--brand syntech` picks which identity to send as, without a path in the command."""
+    monkeypatch.setenv("KO_CONFIG_DIR", str(tmp_path))
+    assert pdf.brand_path("syntech") == tmp_path / "brands" / "syntech.yml"
+
+
+def test_a_brand_ref_that_looks_like_a_path_stays_one(monkeypatch, tmp_path):
+    """The escape hatch: a brand.yml living outside the config dir is still addressable."""
+    monkeypatch.setenv("KO_CONFIG_DIR", str(tmp_path))
+    assert pdf.brand_path(tmp_path / "one-off.yml") == tmp_path / "one-off.yml"
+    assert pdf.brand_path("~/b.yml") == Path.home() / "b.yml"
+
+
 # --- output paths + environment ---
 
 
@@ -260,3 +273,17 @@ def test_sample_document_renders_in_every_style(style, tmp_path):
         pytest.skip(f"WeasyPrint native libs unavailable: {e}")
     assert out.read_bytes().startswith(b"%PDF-")
     assert out.stat().st_size > 10_000  # a blank page is ~2 KB; this one has content
+
+
+def test_unknown_brand_name_errors_listing_available(monkeypatch, tmp_path):
+    """The --style contract's twin: a typo'd brand must be distinguishable from 'no brand'."""
+    monkeypatch.setenv("KO_CONFIG_DIR", str(tmp_path))
+    (tmp_path / "brands").mkdir()
+    (tmp_path / "brands" / "syntech.yml").write_text("name: Syntech")
+    with pytest.raises(ValueError, match="syntech"):
+        pdf.load_brand("syntch")
+
+
+def test_empty_brand_ref_means_unbranded_not_config_fallback(monkeypatch, tmp_path):
+    monkeypatch.setenv("KO_BRAND", str(tmp_path / "b.yml"))
+    assert pdf.brand_path("") is None  # --brand "" = render unbranded, ignore the config chain

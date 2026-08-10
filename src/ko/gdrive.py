@@ -15,6 +15,11 @@ Markdown↔Doc proposal workflow:
 and `list_comments` work on docs **`ko` pushed** (or that you explicitly opened by ID through it),
 not on arbitrary pre-existing docs someone else made — those return 404. That's the deliberate
 price of not granting a broad Drive scope. See `google_auth.py`.
+
+**Shared drives:** every `files.*` call passes `supportsAllDrives` (and `list` also
+`includeItemsFromAllDrives`) so files living on a shared drive resolve instead of 404ing.
+`export`/`comments`/`replies` have no such flag in the Drive API — they address the file
+directly and need none.
 """
 
 from __future__ import annotations
@@ -121,7 +126,9 @@ def push_markdown(
     if update_id:
         did = _doc_id(update_id)
         try:
-            svc.files().update(fileId=did, media_body=media, fields="id").execute(num_retries=3)
+            svc.files().update(
+                fileId=did, media_body=media, fields="id", supportsAllDrives=True
+            ).execute(num_retries=3)
         except HttpError as e:
             _handle(e, did)
         return did
@@ -129,7 +136,11 @@ def push_markdown(
     if folder_id:
         body["parents"] = [_folder_id(folder_id)]
     try:
-        created = svc.files().create(body=body, media_body=media, fields="id").execute(num_retries=3)
+        created = (
+            svc.files()
+            .create(body=body, media_body=media, fields="id", supportsAllDrives=True)
+            .execute(num_retries=3)
+        )
     except HttpError as e:
         _handle(e, f"create doc '{title}'")
     return created["id"]
@@ -232,7 +243,14 @@ def ensure_folder(name: str, parent_id: str | None = None) -> str:
     try:
         found = (
             svc.files()
-            .list(q=q, spaces="drive", fields="files(id,name)", pageSize=1)
+            .list(
+                q=q,
+                spaces="drive",
+                fields="files(id,name)",
+                pageSize=1,
+                supportsAllDrives=True,
+                includeItemsFromAllDrives=True,
+            )
             .execute(num_retries=3)
         )
         files = found.get("files", [])
@@ -241,7 +259,9 @@ def ensure_folder(name: str, parent_id: str | None = None) -> str:
         body: dict = {"name": name, "mimeType": FOLDER_MIME}
         if parent:
             body["parents"] = [parent]
-        created = svc.files().create(body=body, fields="id").execute(num_retries=3)
+        created = (
+            svc.files().create(body=body, fields="id", supportsAllDrives=True).execute(num_retries=3)
+        )
     except HttpError as e:
         _handle(e, f"folder '{name}'")
     return created["id"]

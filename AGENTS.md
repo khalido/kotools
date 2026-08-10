@@ -56,6 +56,7 @@ they're present. If a command fails with an auth/key error, `ko doctor` tells yo
 - `ko <group> help` → `ko <group> --help` (trailing `help` prints help at **group** level, nested groups included: `ko help`, `ko exa help`, `ko gmail draft help`). After a leaf command it's an ordinary argument, so `ko hn search help` searches for the word "help" — use `--help`, which works at every level, to get help there.
 - `-h` is a synonym for `--help` everywhere.
 - `ko md-to-pdf` ≡ `ko pdf` (same command, spelled out — markdown *in*, PDF *out*; `ko doc` runs the other direction)
+- `ko websearch` ≡ `ko exa search`, `ko webfetch` ≡ `ko fetch` — the `WebSearch`/`WebFetch` spelling you already know, so you don't have to learn that the web search here is called `exa`. Same flags, same output; the `exa` group still holds `get` and the search guide (`ko prompt exa`).
 
 ## Auth
 

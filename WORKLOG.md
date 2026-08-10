@@ -2,6 +2,46 @@
 
 Newest first. Big picture only — git commits have the detail; candidate ideas and decisions live in `docs/ideas.md`.
 
+## 2026-08-06 — Google service-account profiles + review-sweep fixes
+
+- **SA profiles** — the deliberate exception to google_auth's "runs as you": `ko gsheets -a
+  <name> auth --service-account <key.json>` copies the key to
+  `~/.local/state/ko/google_sa_<name>.json` (0600, echoes only the client_email);
+  `get_credentials` short-circuits to it, no browser/token. For automation and docs a human
+  account can't hold — share the doc with the client_email. **State, not config**, though the
+  first cut put it in config: config is the dotfile-synced dir, and unlike `google_client.json`
+  (inert without a consent flow) an SA key is a standalone bearer credential — same class as the
+  OAuth tokens already living in state. Written via `os.open(..., 0o600)`, since write-then-chmod
+  leaves a secret world-readable for the length of the write.
+  Drive calls now pass `supportsAllDrives` — but only on `files.*`: the discovery doc shows
+  `export`/`comments`/`replies` have no such param, and googleapiclient rejects unknown kwargs.
+- **Review sweep** (two fresh-context Opus reviewers over the recent llm/sum/fetch batch +
+  pending pdf work): wikipedia routing is now host-parsed — the old `[a-z]{2,3}` regex captured
+  the *tail* of long subdomains (`nds-nl` → the Dutch article, silently) and, unanchored,
+  hijacked URLs merely containing a wikipedia link; mobile `en.m.` now routes. `ko sum`/`-f`'s
+  URL heuristic requires a hostname shape, so a typo'd local path fails instantly instead of
+  costing fetch+Wayback. `-f` content now really goes *before* the prompt (the docs said it,
+  the code didn't). Smaller: decode errors exit 1 not 2, media URLs answering text/html fail
+  loud, `-x` on an unclosed fence drops the opener, sum flushes each summary as computed,
+  doctor shows `[llm] sum`, brand typos exit 2 listing `~/.config/ko/brands/`, and the pdf
+  font scale is finished (code/TOC/lh-tag at 9pt under the 9.5pt body — output is no longer
+  byte-identical with the ops script, which the 2026-07-28 entry claimed).
+- **`ko websearch` / `ko webfetch`** — aliases (stacked `@app.command()`, one callback) for
+  `ko exa search` / `ko fetch`. The whole ecosystem spells this capability WebSearch/web_search,
+  and an agent arrives knowing that name; `exa` is right for the group, wrong as the only
+  spelling. Aliases, not renames — the vendor name still tells you which index and whose bill.
+- **The review round caught a bug I'd just added**: routing `.svg` off the multimodal path sent
+  it to liteparse, which returns `''` for SVG — and an empty part is filtered out, so
+  `ko llm -f diagram.svg` became a *paid call with the input silently missing*, the exact thing
+  the fatal-on-unreadable rule exists to prevent. SVG now reads as text (it is text).
+- **tests/conftest.py, first one in the repo** — chasing a hang found the suite could reach real
+  Google OAuth, where `run_local_server()` blocks on a localhost socket forever: no failure, no
+  name, just a dead run. Now `_run_flow` is stubbed to raise, which turned the hang into a named
+  assertion in one run. It exposed the actual leak: `-a <name>` sets `KO_GOOGLE_ACCOUNT` in
+  `os.environ` directly (right for a one-shot CLI), so one CliRunner invoke re-pointed every
+  later test — including a live one — at the test account. Both that and the credential
+  lru_caches are now isolated per test.
+
 ## 2026-07-28 — `ko pdf` (markdown → PDF), ported from ops
 
 - **`ko pdf <file.md>`** — WeasyPrint renderer lifted from `ops/scripts/md_to_pdf.py`,

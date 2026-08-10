@@ -318,3 +318,21 @@ def test_bare_tt_and_todo_alias_dispatch_to_lists():
     assert cli._route(["todo", "Shopping"]) == ["todo", "items", "Shopping"]
     assert cli._route(["tt", "lists"]) == ["tt", "lists"]  # explicit subcommand untouched
     assert cli._route(["tt", "--help"]) == ["tt", "--help"]
+
+
+def test_web_convention_aliases_share_one_callback():
+    """`ko websearch`/`ko webfetch` are the ecosystem spelling (Claude Code's WebSearch/
+    WebFetch, the API's web_search/web_fetch) for commands whose primary names are
+    vendor/verb-first. Aliases, not copies — one implementation, two spellings."""
+    by_name = {c.name: c.callback for c in cli.app.registered_commands}
+    assert by_name["websearch"] is not None
+    assert by_name["webfetch"] is by_name["fetch"]
+    # exa search stays the primary spelling inside the group, sharing websearch's callback
+    exa_search = {c.name: c.callback for c in cli.cli_web.exa_app.registered_commands}["search"]
+    assert by_name["websearch"] is exa_search
+
+
+def test_route_leaves_the_web_aliases_alone(tmp_path):
+    """A file named `webfetch` in cwd must not shadow the command (known names win)."""
+    assert cli._route(["webfetch", "https://x.com"]) == ["webfetch", "https://x.com"]
+    assert cli._route(["websearch", "some query"]) == ["websearch", "some query"]

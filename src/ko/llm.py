@@ -172,7 +172,10 @@ def run(
     error to raise, not ours to predict. The cost note (last_cost) is set on every path."""
     global last_cost
     if stdin:
-        prompt = f"{prompt}\n\n<input>\n{stdin}\n</input>"
+        # Input BEFORE the prompt — simonw-llm's fragment convention (and what the -f help
+        # promises): the stable prefix (documents) ahead of the variable suffix (the question)
+        # is also the shape provider prompt-caching rewards.
+        prompt = f"<input>\n{stdin}\n</input>\n\n{prompt}"
     user_prompt = [prompt, *attachments] if attachments else prompt
     if schema is not None:
         from pydantic_ai import StructuredDict

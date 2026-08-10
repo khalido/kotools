@@ -260,6 +260,7 @@ def doctor(
             (f"{tier} tier", _llm.model_for(tier), "config" if config.get("llm", tier) else "default")
             for tier in ("basic", "medium", "smart", "ultra")
         ),
+        ("sum model", _llm.sum_model(), config.setting_source("KO_SUM_MODEL", "llm", "sum")),
         ("cal timezone", gcal.tz_name(), "config" if config.get("cal", "timezone") else "default"),
         ("x handle", _default_handle(), config.setting_source("KO_X_HANDLE", "x", "handle")),
         ("google account", active_account(), config.setting_source("KO_GOOGLE_ACCOUNT", "google", "account")),

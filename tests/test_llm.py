@@ -242,3 +242,79 @@ def test_cli_schema_live_smoke(tmp_path):
     assert r.exit_code == 0
     obj = json.loads(r.stdout)  # stdout is valid JSON matching the schema
     assert "answer" in obj and isinstance(obj["answer"], str)
+
+
+def test_extract_unclosed_fence_drops_the_opener(fake_run, monkeypatch):
+    # A truncated reply leaves the fence unclosed — -x must not pipe the ```python opener.
+    monkeypatch.setattr(llm, "run", lambda *a, **k: "Sure:\n```python\nprint(1)\n")
+    r = runner.invoke(app, ["llm", "-x", "write it"])
+    assert r.stdout == "print(1)\n"
+
+
+def test_media_type_ignores_query_and_fragment_and_routes_svg_to_text():
+    from ko.cli_ai import _media_type
+
+    assert _media_type("photo.png#frag") == "image/png"
+    assert _media_type("https://x.com/a.jpg?w=200") == "image/jpeg"
+    assert _media_type("diagram.svg") is None  # SVG is text — the free text path takes it
+    assert _media_type("report.pdf") is None  # PDFs deliberately stay on the text path
+
+
+def test_llm_non_utf8_text_file_is_runtime_error_not_usage(fake_run, tmp_path):
+    bad = tmp_path / "latin1.txt"
+    bad.write_bytes("café".encode("latin-1"))
+    r = runner.invoke(app, ["llm", "-f", str(bad), "go"])
+    assert r.exit_code == 1 and not fake_run  # a read failure is 1; 2 is for usage errors
+    assert "latin1.txt" in r.stderr  # the codec message alone doesn't name the file
+
+
+def test_input_goes_before_the_prompt(monkeypatch):
+    """simonw-llm's fragment convention, and what the -f help promises: documents first
+    (stable prefix, cache-friendly), question last. This was documented-but-wrong once."""
+    seen = {}
+
+    def _run_sync(user_prompt, **kw):
+        seen["prompt"] = user_prompt
+        raise SystemExit  # stop before any provider work
+
+    class _Agent:
+        def __init__(self, *a, **k):
+            pass
+
+        run_sync = staticmethod(_run_sync)
+
+    monkeypatch.setattr(llm, "Agent", _Agent)
+    monkeypatch.setattr(llm, "_agent", _Agent())
+    with pytest.raises(SystemExit):
+        llm.run("MY QUESTION", stdin="DOC TEXT")
+    assert seen["prompt"].index("DOC TEXT") < seen["prompt"].index("MY QUESTION")
+    assert seen["prompt"].startswith("<input>")
+
+
+def test_llm_svg_reaches_the_model_as_text(fake_run, tmp_path):
+    """Regression: routing .svg off the multimodal path must not drop it — liteparse returns
+    '' for SVG, and an empty part is filtered out, so it would vanish before the call."""
+    svg = tmp_path / "diagram.svg"
+    svg.write_text('<svg xmlns="http://www.w3.org/2000/svg"><text>HELLO SVG</text></svg>')
+    r = runner.invoke(app, ["llm", "-f", str(svg), "explain"])
+    assert r.exit_code == 0
+    call = fake_run[0]
+    assert not call["attachments"] and "HELLO SVG" in call["stdin"]
+
+
+def test_llm_media_url_serving_html_fails_loud(fake_run, monkeypatch):
+    """A .png URL behind a login wall returns text/html — attaching that as an image sends
+    the model garbage, so it must be an error, not a silent bad attachment."""
+    import httpx
+
+    class _Resp:
+        headers = {"content-type": "text/html; charset=utf-8"}
+        content = b"<html>login</html>"
+
+        def raise_for_status(self):
+            pass
+
+    monkeypatch.setattr(httpx, "get", lambda *a, **k: _Resp())
+    r = runner.invoke(app, ["llm", "-f", "https://x.com/chart.png", "describe"])
+    assert r.exit_code != 0 and not fake_run
+    assert "text/html" in r.stderr

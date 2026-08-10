@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from ko import google_auth as g
@@ -62,6 +64,62 @@ def test_only_narrow_drive_scope_is_requested():
         assert drive == ["https://www.googleapis.com/auth/drive.file"], drive
 
 
+def _sa_key(tmp_path, email="bot@proj.iam.gserviceaccount.com"):
+    p = tmp_path / "key.json"
+    p.write_text(json.dumps({"type": "service_account", "client_email": email, "private_key": "PEM"}))
+    return p
+
+
+def test_register_service_account_copies_key_and_returns_email(monkeypatch, tmp_path):
+    monkeypatch.setenv("KO_STATE_DIR", str(tmp_path / "state"))
+    email = g.register_service_account(_sa_key(tmp_path), "sfl-app")
+    assert email == "bot@proj.iam.gserviceaccount.com"
+    dest = tmp_path / "state" / "google_sa_sfl-app.json"
+    # State, NOT the dotfile-synced config dir: an SA key authenticates by itself anywhere.
+    assert dest.exists() and not (tmp_path / "cfg" / "google_sa_sfl-app.json").exists()
+    assert (dest.stat().st_mode & 0o777) == 0o600  # owner-only from creation, no chmod window
+    assert g.list_accounts() == ["sfl-app"]
+
+
+def test_register_service_account_rejects_non_sa_json(monkeypatch, tmp_path):
+    monkeypatch.setenv("KO_STATE_DIR", str(tmp_path / "state"))
+    bad = tmp_path / "oauth_client.json"  # the classic mixup: an OAuth *client* file
+    bad.write_text(json.dumps({"installed": {"client_id": "x"}}))
+    with pytest.raises(g.AuthError):
+        g.register_service_account(bad, "x")
+    assert not (tmp_path / "state" / "google_sa_x.json").exists()
+
+
+def test_logout_removes_the_sa_key_too(monkeypatch, tmp_path):
+    """Leaving the key behind would report 'signed out' on an account that still authenticates."""
+    monkeypatch.setenv("KO_STATE_DIR", str(tmp_path / "state"))
+    g.register_service_account(_sa_key(tmp_path), "bot")
+    assert g.logout("bot") is True
+    assert not g.sa_file("bot").exists()
+    assert g.logout("bot") is False  # nothing left to remove
+
+
+def test_get_credentials_prefers_sa_profile(monkeypatch, tmp_path):
+    """A registered key wins over the OAuth token path — no browser, scopes still per-mode."""
+    monkeypatch.setenv("KO_STATE_DIR", str(tmp_path / "state"))
+    g.register_service_account(_sa_key(tmp_path), "bot")
+    seen = {}
+
+    def fake_from_file(path, scopes=None):
+        seen["path"], seen["scopes"] = path, scopes
+        return _FakeCreds(scopes)
+
+    monkeypatch.setattr(g.service_account.Credentials, "from_service_account_file", fake_from_file)
+    g.get_credentials.cache_clear()
+    g.get_credentials(readonly=True, account="bot")
+    assert seen["path"].endswith("google_sa_bot.json")
+    assert seen["scopes"] == g.SCOPES_READONLY
+    g.get_credentials.cache_clear()
+    g.get_credentials(readonly=False, account="bot")
+    assert seen["scopes"] == g.SCOPES_READWRITE
+    g.get_credentials.cache_clear()
+
+
 def test_raise_for_status_maps_status():
     nf, pd = g.GoogleNotFound, g.GooglePermissionDenied
     with pytest.raises(pd):
@@ -76,3 +134,28 @@ def test_error_hierarchy():
     assert issubclass(g.GoogleNotFound, g.GoogleError)
     assert issubclass(g.GooglePermissionDenied, g.GoogleError)
     assert issubclass(g.GoogleError, RuntimeError)
+
+
+def test_cli_registers_and_unregisters_a_service_account(monkeypatch, tmp_path):
+    """End-to-end through the CLI: register, appear in `accounts`, unregister via --logout."""
+    from typer.testing import CliRunner
+
+    from ko.cli import app
+
+    monkeypatch.setenv("KO_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("KO_CONFIG_DIR", str(tmp_path / "cfg"))
+    runner = CliRunner()
+    key = _sa_key(tmp_path)
+
+    r = runner.invoke(app, ["gsheets", "-a", "bot", "auth", "--service-account", str(key)])
+    assert r.exit_code == 0
+    assert "bot@proj.iam.gserviceaccount.com" in r.stdout
+    assert "PEM" not in r.stdout  # never echo key material
+
+    r = runner.invoke(app, ["gsheets", "-a", "bot", "accounts"])
+    assert "bot" in r.stdout and "service account" in r.stdout
+
+    # --logout wins over a --service-account passed in the same breath, and clears the key
+    r = runner.invoke(app, ["gsheets", "-a", "bot", "auth", "--logout", "--service-account", str(key)])
+    assert r.exit_code == 0 and "Signed out" in r.stdout
+    assert not (tmp_path / "state" / "google_sa_bot.json").exists()

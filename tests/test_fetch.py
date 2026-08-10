@@ -227,3 +227,26 @@ def test_cli_multi_url_all_fail_exit_1(monkeypatch):
     r = runner.invoke(app, ["fetch", "http://x", "http://y"])
     assert r.exit_code == 1
     assert "no content returned for any" in r.stderr
+
+
+def test_wikipedia_ref_parses_the_host_strictly():
+    """Host-parsed routing: the old regex captured the TAIL of long subdomains (nds-nl → nl,
+    the wrong article) and matched wikipedia URLs embedded inside another URL."""
+    assert fetch._wikipedia_ref("https://en.wikipedia.org/wiki/Dog") == ("en", "Dog")
+    assert fetch._wikipedia_ref("en.wikipedia.org/wiki/Dog") == ("en", "Dog")  # scheme-less
+    assert fetch._wikipedia_ref("https://en.m.wikipedia.org/wiki/Dog") == ("en", "Dog")  # mobile share URL
+    assert fetch._wikipedia_ref("https://nds-nl.wikipedia.org/wiki/Grunn") == ("nds-nl", "Grunn")
+    assert fetch._wikipedia_ref("https://simple.wikipedia.org/wiki/Dog") == ("simple", "Dog")
+    assert fetch._wikipedia_ref("https://zh-min-nan.wikipedia.org/wiki/X") == ("zh-min-nan", "X")
+    # subpage titles keep their slashes; query/fragment never leak into the title
+    assert fetch._wikipedia_ref("https://en.wikipedia.org/wiki/A/B?x=1#s") == ("en", "A/B")
+
+
+def test_wikipedia_ref_rejects_non_article_hosts_and_paths():
+    # an embedded wikipedia URL must NOT hijack the outer fetch
+    assert fetch._wikipedia_ref("https://example.com/r?u=en.wikipedia.org/wiki/Dog") is None
+    assert fetch._wikipedia_ref("https://www.wikipedia.org/wiki/Dog") is None  # www is not a language
+    assert fetch._wikipedia_ref("https://wikipedia.org/wiki/Dog") is None  # no lang subdomain
+    assert fetch._wikipedia_ref("https://en.wikipedia.org/w/index.php?title=Dog") is None  # not /wiki/
+    assert fetch._wikipedia_ref("https://en.wikipedia.org/wiki/") is None  # empty title
+    assert fetch._wikipedia_ref("https://en.wikipedia.beevil.org/wiki/Dog") is None  # lookalike host

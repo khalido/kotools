@@ -45,8 +45,8 @@ from ko import config, dirs
 # --- Brand -------------------------------------------------------------------------
 
 # Deliberately impersonal: ko is public. Real identity lives in a private brand.yml
-# (https://posit-dev.github.io/brand-yml/) pointed at by `[pdf] brand`. This flat dict is
-# the runtime shape; brand.yml is flattened into it.
+# (https://posit-dev.github.io/brand-yml/) under `<config>/brands/`, named by `[pdf] brand`
+# or `--brand`. This flat dict is the runtime shape; brand.yml is flattened into it.
 BRAND = {
     "name": "yourbrand.dev",
     "tagline": "",
@@ -87,21 +87,46 @@ def _flatten_brand(byml: dict) -> dict:
     return {k: v for k, v in out.items() if v is not None}
 
 
-def brand_path() -> Path | None:
-    """Where the brand.yml lives: KO_BRAND env > `[pdf] brand` in config.toml > nowhere."""
-    raw = config.setting("KO_BRAND", "pdf", "brand")
-    return Path(raw).expanduser() if raw else None
+def brand_dir() -> Path:
+    """`~/.config/ko/brands/` — drop `<name>.yml` in here and it becomes `--brand <name>`."""
+    return dirs.config_dir() / "brands"
 
 
-def load_brand(path: Path | None = None) -> dict:
-    """Generic defaults merged with a brand.yml. `path` (the --brand flag) wins over the
-    configured one. Raises FileNotFoundError if a path was given but doesn't exist — the
-    ops script ignored a bad path and shipped a placeholder letterhead instead."""
+def brand_names() -> list[str]:
+    """Registered identities, for the unknown-brand error (the style_names twin)."""
+    return sorted(p.stem for p in brand_dir().glob("*.yml")) if brand_dir().is_dir() else []
+
+
+def brand_path(ref: str | Path | None = None) -> Path | None:
+    """Resolve a brand reference to a file. A bare name — `syntech` — means
+    `<config>/brands/syntech.yml`: identity is per-sender, not per-repo, so one document
+    can be sent as any of them without a path in the command. Anything containing a
+    separator or ending .yml/.yaml is used as a path, so an out-of-tree brand still works.
+    `--brand ""` explicitly renders unbranded. With no ref: KO_BRAND env > `[pdf] brand`
+    in config.toml > nowhere."""
+    raw = str(ref) if ref is not None else config.setting("KO_BRAND", "pdf", "brand")
+    if not raw:
+        return None
+    if "/" in raw or raw.endswith((".yml", ".yaml")):
+        return Path(raw).expanduser()
+    return brand_dir() / f"{raw}.yml"
+
+
+def load_brand(ref: str | Path | None = None) -> dict:
+    """Generic defaults merged with a brand.yml. `ref` (the --brand flag) wins over the
+    configured one. An unresolvable ref raises ValueError (a usage error, like an unknown
+    --style) naming what IS available — the ops script ignored a bad path and shipped a
+    placeholder letterhead instead."""
     import yaml
 
     brand = dict(BRAND)
-    src = path or brand_path()
+    src = brand_path(ref)
     if src:
+        if not src.is_file():
+            if src.parent != brand_dir():  # came in as a path — point at the path, not the registry
+                raise ValueError(f"brand file not found: {src}")
+            known = ", ".join(brand_names()) or f"none yet — drop a brand.yml in {brand_dir()}"
+            raise ValueError(f"unknown brand {str(ref or src.stem)!r} — available: {known}")
         brand.update(_flatten_brand(yaml.safe_load(src.read_text()) or {}))
     return brand
 
@@ -186,7 +211,7 @@ PAGE_CSS_NO_FOOTER = "@page { size: A4; margin: 2cm; }\n"
 BASE_CSS = """
 body {
     font-family: -apple-system, "Helvetica Neue", "Segoe UI", Arial, sans-serif;
-    font-size: 10pt;
+    font-size: 9.5pt;
     line-height: 1.42;
     color: #1a1a1a;
     margin: 0;
@@ -226,7 +251,7 @@ a { color: #1a5490; text-decoration: none; word-break: break-word; }
 
 code {
     font-family: "SF Mono", Menlo, Consolas, monospace;
-    font-size: 9.5pt;
+    font-size: 9pt;  /* one notch below body — mono reads larger than serif at equal pt */
     background: #f4f4f4;
     padding: 0.1em 0.35em;
     border-radius: 3px;
@@ -250,7 +275,7 @@ table {
     width: 100%;
     border-collapse: collapse;
     margin: 1em 0;
-    font-size: 9pt;
+    font-size: 8.5pt;
     page-break-inside: avoid;
 }
 th, td {
@@ -308,7 +333,7 @@ LETTERHEAD_CSS = """
     color: #2f7fc0;
     letter-spacing: -0.01em;
 }
-.letterhead .lh-tag { font-size: 9.5pt; color: #444; margin-top: 0.15em; }
+.letterhead .lh-tag { font-size: 9pt; color: #444; margin-top: 0.15em; }
 .letterhead .lh-contact { font-size: 8.5pt; color: #8a8a8a; margin-top: 0.2em; }
 """
 
@@ -348,7 +373,7 @@ nav.toc ol {
     margin: 0;
     padding-left: 0;
     list-style: none;
-    font-size: 9.5pt;
+    font-size: 9pt;  /* one notch below body — the Contents reads as secondary */
     line-height: 1.6;
     column-count: 2;
     column-gap: 2.8em;
@@ -622,7 +647,7 @@ def render(
     *,
     style: str | None = None,
     letterhead: bool | None = None,
-    brand_file: Path | None = None,
+    brand_file: str | Path | None = None,
 ) -> tuple[Path, dict]:
     """Render a markdown file to PDF. Returns (path written, the brand actually used) —
     the caller needs the brand to warn when it never resolved past the placeholder."""

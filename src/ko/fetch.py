@@ -7,7 +7,7 @@ Deterministic routing, no LLM:
   trafilatura); if the mirror is dead/empty we recover via Wayback of the ORIGINAL url
 - wikipedia.org/wiki/<Title> → MediaWiki's own plaintext extract API, not trafilatura:
   the generic HTML path round-trips every wikilink as a full markdown link, ~4x the
-  tokens for the same read (measured: BYD Auto, 81k vs 20k); the extract API returns
+  tokens for the same read (measured: BYD Auto, 81k vs 24k); the extract API returns
   clean prose with `== Section ==` headers but NO links at all (confirmed empty on
   Cobra) and no infobox table — a real trade for anything that follows links or wants
   the infobox's structured facts; the old link-preserving markdown is still one call
@@ -68,13 +68,39 @@ _REDDIT_HOSTS = frozenset(
     {"reddit.com", "www.reddit.com", "old.reddit.com", "np.reddit.com", "m.reddit.com"}
 )
 _REDDIT_MIRROR = "reddit.synth.download"
-# Article pages only (/wiki/Title, no colon-namespace prefix) — Talk:/File:/Category: etc.
-# aren't "an article", so they fall through to the generic trafilatura path unchanged.
-_WIKIPEDIA_RE = re.compile(r"(?:https?://)?([a-z]{2,3})\.wikipedia\.org/wiki/([^?#]+)")
+# The common ENGLISH namespaces only — "X talk:" variants and non-English prefixes
+# (Discussion:, Diskussion:) slip through to the extract API, where extracts still work,
+# just with the links-stripped trade. An exhaustive guard needs a per-language table.
 _WIKIPEDIA_NAMESPACES = (
     "File:", "Category:", "Talk:", "User:", "Wikipedia:",
     "Template:", "Portal:", "Help:", "Draft:", "Module:", "Special:",
 )
+# Language subdomains run 2-12 chars with hyphens: en, simple, nds-nl, zh-min-nan.
+_WIKIPEDIA_LANG_RE = re.compile(r"[a-z][a-z-]{0,10}[a-z]")
+
+
+def _wikipedia_ref(url: str) -> tuple[str, str] | None:
+    """(lang, raw_title) when the URL's HOST is a wikipedia article host — `<lang>.wikipedia.org`
+    or mobile `<lang>.m.wikipedia.org` — and the path is /wiki/<Title>; else None. Host-parsed,
+    not regexed over the whole URL: the old `[a-z]{2,3}` regex captured the TAIL of longer
+    subdomains (nds-nl → the Dutch article, silently wrong) and, unanchored, hijacked any URL
+    merely *containing* a wikipedia URL (example.com/r?u=en.wikipedia.org/wiki/Dog)."""
+    try:
+        u = httpx.URL(url if "://" in url else f"https://{url}")
+    except httpx.InvalidURL:
+        return None
+    labels = u.host.lower().split(".")
+    if labels[-2:] != ["wikipedia", "org"]:
+        return None
+    labels = labels[:-2]
+    if labels and labels[-1] == "m":  # mobile share URLs: en.m.wikipedia.org
+        labels = labels[:-1]
+    if len(labels) != 1 or labels[0] == "www" or not _WIKIPEDIA_LANG_RE.fullmatch(labels[0]):
+        return None
+    if not u.path.startswith("/wiki/"):
+        return None
+    title = u.path[len("/wiki/") :]
+    return (labels[0], title) if title else None
 
 
 @dataclass
@@ -298,8 +324,8 @@ def fetch(
                 f"capture of {url} — try Reddit's official OAuth API"
             ) from e
 
-    if wiki_m := _WIKIPEDIA_RE.search(url):
-        lang, raw_title = wiki_m.groups()
+    if wiki_ref := _wikipedia_ref(url):
+        lang, raw_title = wiki_ref
         title = unquote(raw_title).replace("_", " ")
         if not title.startswith(_WIKIPEDIA_NAMESPACES):
             text = _wikipedia_extract(lang, title)

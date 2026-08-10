@@ -87,3 +87,30 @@ def test_sum_live_smoke():
     """One tiny live call on the real default model — cents, and proves the model string."""
     r = runner.invoke(app, ["sum"], input="Pelicans are large water birds with big bills.")
     assert r.exit_code == 0 and r.stdout.strip()
+
+
+def test_urlish_heuristic_keeps_local_paths_local():
+    """A mistyped path must fail fast, not spend two network round-trips (fetch + Wayback)."""
+    from ko.cli_ai import _URLISH_RE
+
+    for path in ("./notes.md", "/abs/path/x.md", "docs/x.md", "notes.md"):
+        assert not _URLISH_RE.match(path), path
+    for url in ("nyt.com/2026/x.html", "example.com:8080/page", "sub.domain.co/x"):
+        assert _URLISH_RE.match(url), url
+
+
+def test_sum_typod_relative_path_fails_fast(fake_llm):
+    r = runner.invoke(app, ["sum", "./definitely-not-here.md"])
+    assert r.exit_code == 1 and not fake_llm
+    assert "neither an existing file nor a URL" in r.stderr
+
+
+def test_sum_multi_input_separator_shape(fake_llm, tmp_path):
+    """The flush refactor changed the emission path — pin the `# a … --- … # b` shape."""
+    a, b = tmp_path / "a.md", tmp_path / "b.md"
+    a.write_text("aaa")
+    b.write_text("bbb")
+    r = runner.invoke(app, ["sum", str(a), str(b)])
+    assert r.exit_code == 0
+    assert r.stdout.count("\n---\n") == 1  # exactly one rule between two sections
+    assert r.stdout.index(f"# {a}") < r.stdout.index("\n---\n") < r.stdout.index(f"# {b}")

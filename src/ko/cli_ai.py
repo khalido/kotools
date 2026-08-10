@@ -90,7 +90,9 @@ def _media_type(inp: str) -> str | None:
 
     PDFs/Office deliberately stay on the text path (doc.parse is free and works with
     non-vision models); only media with no useful local text form attaches as binary."""
-    mt, _ = mimetypes.guess_type(inp.split("?")[0])
+    mt, _ = mimetypes.guess_type(inp.split("?", 1)[0].split("#", 1)[0])
+    if mt == "image/svg+xml":
+        return None  # SVG is text — _gather reads it directly; vision models mostly reject it
     return mt if mt and mt.startswith(("image/", "audio/", "video/")) else None
 
 
@@ -106,14 +108,24 @@ def _read_media(inp: str, guessed: str) -> tuple[bytes, str, str]:
 
         r = httpx.get(inp, timeout=30, follow_redirects=True)
         r.raise_for_status()
-        mt = r.headers.get("content-type", "").split(";")[0].strip() or guessed
+        ct = r.headers.get("content-type", "").split(";")[0].strip()
+        if ct.startswith(("image/", "audio/", "video/")):
+            mt = ct  # the server knows better than the extension guess
+        elif ct in ("", "application/octet-stream", "binary/octet-stream"):
+            mt = guessed  # server said nothing useful — the extension guess stands
+        else:
+            # A .png URL answering text/html is a login wall or error page — attaching it as
+            # an "image" sends garbage to the model; fail loud instead.
+            raise RuntimeError(f"expected {guessed} but the server sent {ct or 'no content-type'}")
         return r.content, mt, inp.rsplit("/", 1)[-1] or inp
     raise ValueError(f"{inp!r} is neither an existing file nor a URL")
 
 
 def _first_fence(text: str) -> str:
-    """The first fenced code block's body, or the whole text when there's no fence."""
-    m = re.search(r"```[^\n]*\n(.*?)```", text, re.DOTALL)
+    """The first fenced code block's body, or the whole text when there's no fence.
+    An UNCLOSED fence (truncated reply) yields everything after the opener line — piping
+    the ```py opener itself into pbcopy is never what -x meant."""
+    m = re.search(r"```[^\n]*\n(.*?)(?:```|\Z)", text, re.DOTALL)
     return m.group(1).rstrip("\n") if m else text
 
 
@@ -186,6 +198,8 @@ def llm_cmd(
                 typer.echo(f"[{mt}:{name} · {size}]", err=True)
                 continue
             label, text = _gather(f)
+        except UnicodeDecodeError as e:
+            _die(f"{f}: {e}")  # a runtime read failure (exit 1), NOT a usage error — it subclasses ValueError
         except ValueError as e:
             _die(str(e), code="usage")
         except Exception as e:
@@ -211,23 +225,36 @@ def llm_cmd(
         _die(str(e))
 
 
+# Scheme-less inputs that are still a URL: hostname labels, then a mandatory path
+# (`nyt.com/x`). Requiring the path keeps bare `notes.md` a file-not-found, and the
+# hostname shape keeps `./notes.md` and `docs/x.md` from becoming two network round-trips
+# (fetch + Wayback) just to report a typo'd local path.
+_URLISH_RE = re.compile(r"^[a-z0-9-]+(\.[a-z0-9-]{2,})+(?::\d+)?/", re.IGNORECASE)
+
+
 def _gather(inp: str) -> tuple[str, str]:
     """One input -> (label, text). A local file reads directly (.md/.txt) or via liteparse
-    (PDF/Office/image); anything else goes through fetch's deterministic routing (arxiv,
-    YouTube transcript, reddit mirror, Wayback...). The label feeds the stderr dispatch line
-    so a wrong routing choice is visible."""
+    (PDF/Office/image); anything URL-shaped goes through fetch's deterministic routing (arxiv,
+    YouTube transcript, reddit mirror, Wayback...); anything else is an immediate error, no
+    network. The label feeds the stderr dispatch line so a wrong routing choice is visible."""
     p = Path(inp).expanduser()
     if p.is_file():
-        if p.suffix.lower() in {".md", ".txt", ".markdown", ".rst"}:
+        # .svg is here because it IS text: liteparse returns '' for it, and an empty part is
+        # dropped downstream — which would make `-f diagram.svg` a paid call with the input
+        # silently missing, the exact failure the fatal-on-unreadable rule exists to prevent.
+        if p.suffix.lower() in {".md", ".txt", ".markdown", ".rst", ".svg"}:
             return f"file:{p.name}", p.read_text()
         from ko import doc as doc_mod
 
         return f"doc:{p.name}", doc_mod.parse(p)
-    if inp.startswith(("http://", "https://")) or ("." in inp and "/" in inp):
+    if inp.startswith(("http://", "https://")) or _URLISH_RE.match(inp):
         from ko import fetch as fetch_mod
 
-        r = fetch_mod.fetch(inp, save=False)
-        return r.source, r.text
+        url = inp if inp.startswith(("http://", "https://")) else f"https://{inp}"
+        r = fetch_mod.fetch(url, save=False)
+        # source alone ("live") makes several URL attachments indistinguishable — add the ref
+        ref = re.sub(r"^https?://(www\.)?", "", inp)
+        return f"{r.source}:{ref if len(ref) <= 48 else ref[:47] + '…'}", r.text
     raise ValueError(f"{inp!r} is neither an existing file nor a URL")
 
 
@@ -291,7 +318,9 @@ def sum_cmd(
             _die("stdin was empty", code="usage")
         typer.echo(_one("stdin", text))
         return
-    sections, failed = [], []
+    # Each summary flushes as soon as it's computed — a model error on input 3 must not
+    # discard the (already paid-for) summaries of inputs 1 and 2.
+    done, failed = 0, []
     for inp in inputs:
         try:
             label, text = _gather(inp)
@@ -300,10 +329,12 @@ def sum_cmd(
             failed.append(inp)
             continue
         summary = _one(label, text)
-        sections.append(summary if len(inputs) == 1 else f"# {inp}\n\n{summary}")
-    if not sections:
+        if done:
+            typer.echo("\n---\n")
+        typer.echo(summary if len(inputs) == 1 else f"# {inp}\n\n{summary}")
+        done += 1
+    if not done:
         _die(f"all {len(failed)} input(s) failed")
-    typer.echo("\n\n---\n\n".join(sections))
 
 
 @app.command("models")
