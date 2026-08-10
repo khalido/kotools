@@ -48,14 +48,12 @@ app.add_typer(mcp_app, name="mcp")
 
 tt_app = typer.Typer(
     help=(
-        "TickTick lists/tasks over the Open API (TICKTICK_API_KEY: avatar → Settings → Account "
-        "→ API Token). Read: `lists`, `items <list>`, `search <query>`. Write: `add`, `done`. "
-        "Bare `ko tt` lists your lists; `ko tt <list>` opens one. `ko todo` is an alias. "
-        "No delete/un-complete — do those in TickTick itself."
+        "TickTick lists/tasks (TICKTICK_API_KEY). Read: `lists`, `items <list>`, `search`; "
+        "write: `add`, `done`. Bare `ko tt` lists your lists. Alias: `ko todo`."
     ),
 )
 app.add_typer(tt_app, name="tt")
-app.add_typer(tt_app, name="todo")  # `ko todo` — same subapp, the name I reach for
+app.add_typer(tt_app, name="todo", hidden=True)  # the name I reach for; `tt` carries the help
 
 publish_app = typer.Typer(
     help=(

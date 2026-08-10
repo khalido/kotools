@@ -2,6 +2,26 @@
 
 Newest first. Big picture only — git commits have the detail; candidate ideas and decisions live in `docs/ideas.md`.
 
+## 2026-08-10 — `--help` on a budget: one function, one line
+
+- **The old principle caused the verbosity it was meant to prevent.** "Assume humans and
+  agents skim `--help` and nothing else" reads as license to put *everything* in help, and
+  `ko --help` had grown to 136 lines — past the point anyone skims it. Replaced the adjective
+  with a budget, because a number is enforceable and "concise" isn't: a command docstring is
+  one sentence plus one example, a flag is one line, and rationale/warts/measurements go to
+  WORKLOG or `ko prompt` instead.
+- **Visible aliases printed twice.** Stacked `@app.command()` registers one callback under
+  two names, so the group listing rendered the whole docstring for each — `pdf`/`md-to-pdf`
+  and `fetch`/`webfetch` burned ~14 lines carrying zero information, and `tt`/`todo` another
+  five. Now the alias registers `hidden=True` and the primary's docstring names it
+  (`Alias: \`ko webfetch\``); the alias still works when typed, it just stops competing for
+  listing space. This walks back the 2026-07-28 "visible alias" call for `md-to-pdf` — the
+  point was that an agent can *find* the ecosystem spelling, and one line saying so does that
+  as well as a duplicate entry does. 136 → 103 lines.
+- Same treatment on the `ko pdf` CLAUDE.md bullet (2,771 chars — the file's longest line),
+  cutting the rationale that the 2026-07-28 entry below already records. CLAUDE.md loads into
+  every session; the journal doesn't have to ride along.
+
 ## 2026-08-06 — Google service-account profiles + review-sweep fixes
 
 - **SA profiles** — the deliberate exception to google_auth's "runs as you": `ko gsheets -a

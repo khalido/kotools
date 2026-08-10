@@ -144,8 +144,8 @@ def _parse_domains(value: str | None) -> list[str] | None:
 @exa_app.command("search")
 # Top-level alias under the name the whole ecosystem uses for this capability (Claude Code's
 # WebSearch, the Anthropic API's web_search, every MCP server's web_search). `exa` names the
-# vendor — right for the group, wrong as the only spelling of "search the web". Spelled out,
-# so visible, like `ko md-to-pdf`. Paired with `ko webfetch`.
+# vendor — right for the group, wrong as the only spelling of "search the web". Visible here
+# because it lands in a different listing than `ko exa search`, not a duplicate of it.
 @app.command("websearch")
 def exa_search(
     query: str = typer.Argument(..., help="semantic search query"),
@@ -202,10 +202,8 @@ def exa_search(
     long: bool = typer.Option(False, "--long", "-l", help="fetch the full page text excerpt, not just the summary"),
     as_json: bool = typer.Option(False, "--json", help="emit JSON instead of text"),
 ) -> None:
-    """Semantic search. Each hit shows a query-relevant summary by default (--highlights for
-    key sentences, --long for full text). For labs/faculty use --domains .edu or
-    --category 'research paper'; for uni pages use --domains <uni>.
-    `ko exa search` and `ko websearch` are the same command."""
+    """Semantic web search; each hit shows a query-relevant summary by default (--highlights
+    for key sentences, --long for full text). Alias: `ko exa search`."""
     if search_type is not None and search_type not in exa_mod.SEARCH_TYPES:
         _die(
             f"invalid --type {search_type!r}; choose one of: {', '.join(exa_mod.SEARCH_TYPES)}",
@@ -698,9 +696,9 @@ def doc(
 
 
 @app.command("pdf")
-# Spelled-out alias, visible like `ko todo` — ko hides terse shortcuts (`ko a`, `ko gd`)
-# but shows the ones that make a terse name obvious.
-@app.command("md-to-pdf")
+# Spelled-out alias for when `pdf` alone reads ambiguous. Hidden from the listing so one
+# function prints one line — the name still works, and the docstring names it.
+@app.command("md-to-pdf", hidden=True)
 def pdf(
     file: Path = typer.Argument(
         ..., exists=True, dir_okay=False, help="Input .md file (YAML front matter honoured)"
@@ -728,9 +726,8 @@ def pdf(
         "brand.yml); else $KO_BRAND or `[pdf] brand`",
     ),
 ) -> None:
-    """Markdown → print-ready PDF (A4, code highlighting, page footer; `--style report`
-    adds a letterhead + Contents). Prints the path it wrote to stdout, so
-    `-a "$(ko pdf doc.md)"` composes. `ko pdf` and `ko md-to-pdf` are the same command."""
+    """Markdown → print-ready PDF (A4, code highlighting, page footer). Prints the path it
+    wrote to stdout, so `-a "$(ko pdf doc.md)"` composes. Alias: `ko md-to-pdf`."""
     from . import pdf as pdf_mod
 
     try:
@@ -906,8 +903,9 @@ def _fetch_banner(r: fetch_mod.Fetched) -> str:
 
 
 @app.command("fetch")
-# The WebFetch/web_fetch spelling, for the same reason as `ko websearch`.
-@app.command("webfetch")
+# The WebFetch/web_fetch spelling, for the same reason as `ko websearch`. Hidden from the
+# listing so one function prints one line — the name still works, and the docstring names it.
+@app.command("webfetch", hidden=True)
 def fetch_cmd(
     urls: list[str] = typer.Argument(
         ...,
@@ -933,12 +931,9 @@ def fetch_cmd(
         None, "--out", "-o", help="write to this path; prints to stdout if omitted"
     ),
 ) -> None:
-    """URL → clean markdown. Articles via trafilatura, PDFs download + parse,
-    arxiv links via arxiv2md, reddit via a third-party public mirror (reddit.synth.download —
-    if it ever dies, the durable path is Reddit's official OAuth API),
-    paywalls via archive.today, dead links via Wayback.
-    Pass several URLs to fetch them in one go (each under a `# <url>` header, `---`-separated).
-    Shortcut: `ko <url>`; `ko webfetch` is the same command."""
+    """URL → clean markdown, routed by host (arxiv, YouTube, PDF, reddit, wikipedia), with
+    archive.today for paywalls and Wayback for dead links. Takes several URLs.
+    Shortcut: `ko <url>`. Alias: `ko webfetch`."""
     # Sequential fetch, mirroring `ko exa get`: per-URL failures go to stderr and are skipped;
     # exit 0 if any URL succeeded, 1 if all failed.
     docs: list[tuple[str, fetch_mod.Fetched]] = []
