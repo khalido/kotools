@@ -18,7 +18,7 @@ import re
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-import httpx
+import httpx2 as httpx
 
 ALGOLIA = "https://hn.algolia.com/api/v1"
 DEFAULT_TOP_N = 10

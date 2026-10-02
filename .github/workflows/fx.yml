@@ -1,0 +1,63 @@
+# An agent on this repo's issues — khalido/fx-agent-action, pinned to @main so a fix
+# upstream lands here on the next run (the action has no tags; main is the release).
+# Copied from that repo's examples/fx.yml; diff against it when upstream changes.
+#
+#   issue opened or edited  → a note: where this lives, what's already there, or the
+#                             answer when the issue turns out to be a question
+#   /fx <question>          → an answer, read-only with a scratch shell, on an issue or PR
+#   /fx pr <what to build>  → a draft pull request
+#
+# The action tells the three apart by event and by the word after /fx.
+
+name: fx
+
+on:
+  issues:
+    types: [opened, edited]
+  issue_comment:
+    types: [created]
+
+jobs:
+  fx:
+    # Write access only, never a bot. The `if:` skips without booting a runner; the
+    # action re-checks both and fails the run if either is wrong.
+    if: >-
+      (
+        github.event_name == 'issues' &&
+        github.event.issue.user.type != 'Bot' &&
+        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association)
+      ) || (
+        github.event_name == 'issue_comment' &&
+        contains(github.event.comment.body, '/fx') &&
+        github.event.comment.user.type != 'Bot' &&
+        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # One group per event and issue: a burst of edits means the last note wins, while
+    # comments queue so a plain comment can't cancel a /fx answer mid-flight.
+    concurrency:
+      group: fx-${{ github.event_name }}-${{ github.event.issue.number }}
+      cancel-in-progress: ${{ github.event_name == 'issues' }}
+    # `contents: write` is what lets `/fx pr` push a branch and the memory file reach
+    # its own branch. fx never holds this token itself.
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0 # full history, so `git log -S` and `git blame` can answer "this used to work"
+
+      - uses: khalido/fx-agent-action@main
+        env:
+          AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}
+        with:
+          # Scratch mode for notes and questions: a shell and throwaway edits, so it can
+          # run pytest or try a fix before answering. `/fx pr` gets the full tool set.
+          shell: true
+          max_steps: '60'
+          # Nothing else to set. The note prompt is built into the action; repo facts go in
+          # AGENTS.md (`## In CI`). Memory is one MEMORY.md on an `agent-memory` branch.

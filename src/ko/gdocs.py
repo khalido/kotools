@@ -2,7 +2,7 @@
 
 Read a tab as plain text or light markdown; append text; find/replace — whole-doc or
 scoped to one tab. Addresses docs by ID or URL.
-Reads use the read-only scope, writes the read+write one (one `ko gsheets auth` covers both).
+Reads use the read-only scope, writes the read+write one (one `ko google auth` covers both).
 
 Deliberately minimal: full structural editing (tables, styles, inline formatting, images) is
 the web editor's job. This is the "read it / append a note / swap some text" surface.
@@ -17,7 +17,7 @@ from dataclasses import dataclass
 
 from googleapiclient.errors import HttpError
 
-from ko.google_auth import GoogleError, get_docs_service, id_from_url, raise_for_status
+from ko.google_auth import GoogleError, id_from_url, raise_for_status, service
 
 
 @dataclass
@@ -54,7 +54,7 @@ def _handle(e: HttpError, context: str) -> None:
         context,
         not_found=DocsNotFound,
         permission=DocsPermissionDenied,
-        hint="Is the doc accessible to the signed-in account, and for a write did you `ko gdocs auth`?",
+        hint="Is the doc accessible to the signed-in account, and for a write did you `ko google auth`?",
     )
 
 
@@ -84,7 +84,7 @@ def get_info(doc: str) -> DocInfo:
     """The doc's title + id."""
     did = doc_id(doc)
     try:
-        d = get_docs_service().documents().get(documentId=did, fields="title,documentId").execute(num_retries=3)
+        d = service("docs").documents().get(documentId=did, fields="title,documentId").execute(num_retries=3)
     except HttpError as e:
         _handle(e, did)
     return DocInfo(id=d["documentId"], title=d.get("title", ""))
@@ -177,7 +177,7 @@ def list_tabs(doc: str) -> list[TabInfo]:
     did = doc_id(doc)
     try:
         document = (
-            get_docs_service()
+            service("docs")
             .documents()
             .get(documentId=did, includeTabsContent=True, fields=_tabs_fields_mask())
             .execute(num_retries=3)
@@ -201,7 +201,7 @@ def get_tab_text(doc: str, tab: str, markdown: bool = True) -> str:
     did = doc_id(doc)
     try:
         document = (
-            get_docs_service().documents().get(documentId=did, includeTabsContent=True).execute(num_retries=3)
+            service("docs").documents().get(documentId=did, includeTabsContent=True).execute(num_retries=3)
         )
     except HttpError as e:
         _handle(e, did)
@@ -225,7 +225,7 @@ def add_tab(doc: str, title: str) -> str:
         raise DocsError(f"a tab titled {title!r} already exists — titles must be unique. Tabs: {_tab_listing(existing)}")
     try:
         result = (
-            get_docs_service(readonly=False)
+            service("docs", readonly=False)
             .documents()
             .batchUpdate(
                 documentId=did,
@@ -255,7 +255,7 @@ def append_text(doc: str, text: str, tab: str | None = None) -> int:
     """Append text to the end of the doc (or of a single tab if `tab` is a title/tabId). Returns
     the number of characters inserted."""
     did = doc_id(doc)
-    svc = get_docs_service(readonly=False)
+    svc = service("docs", readonly=False)
     try:
         if tab is None:
             document = svc.documents().get(documentId=did, fields="body(content(endIndex))").execute(num_retries=3)
@@ -295,7 +295,7 @@ def replace_text(
         request["replaceAllText"]["tabsCriteria"] = {"tabIds": tab_ids}
     try:
         result = (
-            get_docs_service(readonly=False)
+            service("docs", readonly=False)
             .documents()
             .batchUpdate(documentId=did, body={"requests": [request]})
             .execute(num_retries=3)
@@ -340,7 +340,7 @@ def shade_table(
     doc (e.g. shade all headers at once). All shading goes in one batchUpdate. Returns the number of
     ranges styled. The minimal escape hatch for the bit Markdown can't do."""
     did = doc_id(doc)
-    svc = get_docs_service(readonly=False)
+    svc = service("docs", readonly=False)
     try:  # field mask: we only need each element's index + table dimensions
         document = (
             svc.documents()

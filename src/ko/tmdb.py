@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-import httpx
+import httpx2 as httpx
 
 from . import config
 

@@ -32,7 +32,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-import httpx
+import httpx2 as httpx
 
 from ko import config
 from ko.dirs import state_dir

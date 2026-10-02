@@ -2,6 +2,270 @@
 
 Newest first. Big picture only — git commits have the detail; candidate ideas and decisions live in `docs/ideas.md`.
 
+## 2026-10-02 — doc: .docx read directly (python-docx), no LibreOffice
+
+- **Why.** `ko doc` on a .docx shelled out to LibreOffice (liteparse converts Office → PDF), so it
+  failed on any machine without it — for the most common document an agent is handed.
+- **Direct read:** paragraphs and tables in document order (`iter_inner_content`), headings and
+  lists from Word styles (and Word's own numbering — bullets are often "Normal" + numPr),
+  tables as pipe tables. A merged cell is written once: python-docx repeats the same `_tc` for
+  every grid column and row it spans, so a repeat is left blank. All-blank rows (Word spacing
+  in form-style tables) are dropped. Provenance line: author, created, changed (and by whom,
+  when not the author), size, md5.
+- **No pages:** a .docx has none until something lays it out. `--pages` / `--json` (both
+  page-shaped) still take the LibreOffice → PDF route for page markers. `doc.parse` (used by
+  `llm -f`) reads .docx directly too.
+
+## 2026-09-30 — fetch: parallel rescue (real browser, Exa, archives) + a local cache
+
+- **Why.** ko fetch acts as KO, so it gets pages coding agents' built-in fetchers don't — but on
+  a wall it walked archive.today → Wayback serially at 30 s each: stackoverflow (a Cloudflare
+  "Just a moment…" in 0.1 s) took 60 s+ to fail; carsales/whirlpool 36–44 s to reach Wayback.
+- **Rescue in parallel, pick by preference.** When the free live fetch fails, every rescuer
+  starts at once; the most-preferred success wins as soon as everything above it has failed
+  (25 s deadline, daemon threads so a hung one is abandoned). Walled/empty: browser > Exa >
+  archive.today > Wayback. Gone (404/410/no answer): Wayback > Exa. Other statuses count as
+  walls, not deaths — Cloudflare challenges come as 403 and 503. Archive timeouts 30 → 10 s.
+- **Browser = agent-browser** (no Python SDK — PyPI has none; it's a Rust CLI with a warm daemon,
+  ~2.5 s a page). ko's own session `ko-fetch` (never the shared default), one tab behind a
+  file lock; waits for `readyState` + a non-challenge title, then extracts the rendered HTML
+  with the same trafilatura path as live (its own `read` keeps sign-up modals).
+- **Exa** runs only with EXA_API_KEY (paid, ~$1/1k pages) — it rescued carsales,
+  realestate and whirlpool in 4–14 s where archives failed or crawled.
+- Measured after: stackoverflow 5.6 s (browser), carsales 4.9 s, realestate 3.6 s,
+  whirlpool 14 s (Exa). NYT's live page returns the paywall teaser as a "success" — logins in
+  the ko-fetch session (later) are the fix, not a detector.
+- **Cache:** `~/.cache/ko/fetch/`, keyed on url + archive flags, `[fetch] cache_hours`
+  (default 1); `--fresh` skips it; hits say "cached Nm ago".
+
+## 2026-09-30 — doc: OCR only the pages that need it; deps refreshed
+
+- **`ko doc` OCR'd every page by default.** A 132-page magazine PDF took 109 s, and `--no-ocr`
+  read the same text layer in 0.9 s for ~6% less text (words baked into photos). Now: read the
+  text layer, then OCR only the pages liteparse's `is_complex` pass says are scanned, textless or
+  garbled, and splice them back in page order. The magazine takes 4.6 s; an image-only PDF still
+  OCRs. `--ocr/--no-ocr` force either way.
+- **Page markers (agent feedback, 2026-10-01):** an agent converting a 72-page Danfoss guide
+  kept its own script because ko's output couldn't be traced to a page. `ko doc` now puts
+  `<!-- page N -->` (plus the PDF's own label when it differs) before every page; `--md` gives
+  liteparse's per-page markdown (pipe tables, `image_mode="none"` so no links to images never
+  written); `--json` gives `[{page, label, text}]`. `doc.parse()` stays marker-free for `fetch`
+  and `llm -f`.
+- **sfl-mes in real use (1,612 + 72 pages, 2026-10-01), three fixes:**
+  - liteparse caps at 1,000 pages *silently* (a 1,113-page manual → pages 1–1000, exit 0). ko
+    passes `max_pages=100_000` and raises if fewer pages come back than the document has.
+  - Plain pages now sit in a ```` ```text ```` fence under their marker, so the output is a
+    valid markdown file whose column alignment survives rendering (their wrapper script did
+    this). The source line counts pages without text.
+  - "vector-text" (text drawn as outlines) joins the OCR triggers.
+  - Also: the installed `ko` tool env had liteparse 2.11 (uv tool envs don't follow
+    `uv lock`), so `page_label` crashed there — floor raised to `liteparse>=2.15`, tool
+    reinstalled. After any dep bump: `uv tool install --reinstall -e .`.
+- **Known gap: `--md` on two-column prose.** liteparse's markdown renderer turns a two-column
+  page into a fake pipe table mixing both columns, and its layout stats report column_count=1
+  there, so ko can't route around it. Plain mode reads fine. Measured alternatives on the
+  same page: local marker (old CPU build) keeps columns apart but took 91 s for one page;
+  Gemini Flash via OpenRouter aborted mid-page (below). A paid per-page fallback (Gemini /
+  Mistral OCR / Datalab, ~$4–10 per 1k pages) is the open decision — research in the
+  2026-10-01 session.
+- **`ko llm` passed partial output as an answer.** OpenRouter → Google returned half a page
+  with `finish_reason: "error"` and 0 usage; ko printed it, exit 0. `llm.run` now raises
+  `TruncatedOutput` on error/length/content_filter finishes.
+- **Not liteparse's own `needs_ocr`:** it also fires on "embedded-images" and "sparse-text",
+  i.e. any page with a photo (126 of 132 pages). Those pages already have their text.
+- Tesseract's "Detected N diacritics" lines went to fd 2 past liteparse's `quiet`; silenced
+  around OCR calls only.
+- **`uv lock --upgrade`:** pydantic-ai 2.36→2.51, oauthlib 3→4, openai 3.6→3.22, weasyprint
+  69→70, liteparse 2.15; tests and live llm/schema/ai/gmail/pdf/websearch all pass. pydantic-ai
+  2.51 added an ASCII-art Logfire banner on the first agent run; ko sets `PYDANTIC_AI_NO_BANNER`.
+- **`--json` added where the output is data:** `fetch` (per-URL rows, failures included, so
+  jaldi parses one array), `gmail view|thread|draft show` (whole bodies + account), `cal add`
+  (the created event), `google accounts`. Left plain: commands whose output *is* a document
+  (`doc`, `gdocs get`, `hf get`) or a single path/URL.
+
+## 2026-09-29 — google: one way in (`ko google`), gmail goes thread-first
+
+- **Why.** KO works across 3–5 Google accounts (own + one per client). Sign-in was copied into five
+  groups (`gsheets/gdocs/cal/gmail/drive auth`), the default lived only in hand-edited config.toml,
+  and gmail output never said which account it read.
+- **`ko google auth|use|accounts|rename|logout`.** Per-service `auth`/`accounts` removed outright
+  (KO: "one way to login"). Accounts are short tags. `use` writes `state/settings.json` — per machine,
+  command-owned — so commands never rewrite the synced, hand-edited config.toml; config's
+  `[google] account` stays as the fallback so other machines keep working.
+- **Unknown tag = error, not a browser.** `-a sfll` used to open a consent flow and sign up a new
+  account by accident; now it lists who is signed in.
+- **Thread-first gmail.** Lists are threads (Gmail's own model; a lone email is a one-message thread).
+  `draft reply <thread>` answers the latest message, as Gmail's Reply does — if that one is mine, it
+  goes to my message's recipients. `--msg` picks another. The positional takes any message id too:
+  Gmail's thread id is its first message's id, so a later id needs a threadId lookup. `brief` keeps
+  the message-level `recent()`.
+- **Calendar merges accounts.** Reads cover every signed-in OAuth account, deduped on (iCalUID,
+  start) so a client invite on two accounts shows once. One dead account is a warning, not a failed
+  agenda. `cal add`'s target is its own setting (`ko cal use`): changing the mail default must not
+  move where events land. `brief` gathers today + unread per account. Network blips (SSL EOF seen
+  live, twice in ten minutes) now die clean instead of a traceback — `NETWORK_ERRORS`, not all
+  `OSError`, so a full disk mid-download isn't mislabeled.
+- **Startup 1.74 s → 0.19 s.** Every group registers at import, so an eager `from . import llm`
+  made `ko cal` pay for pydantic-ai, exa and the X SDK. `_cli_shared.lazy()` (stdlib
+  LazyLoader) keeps `llm_mod.fn()` call sites unchanged; `llm`/`exa`/`x` import their SDK inside
+  the function that uses it, because `--help` text reads their constants at import.
+- **One error net, one service getter.** `_GoogleTyper` runs every Google command inside
+  `_google_errors` (19 of 51 had none; 31 hand-written `with` blocks went). `google_auth.service(api)`
+  replaced five identical getters. The five `_handle`s stay: each is a single `raise_for_status`
+  call with its own error class and hint, so they're configuration, not duplication. `--json` errors gained
+  `fix` (the command that resolves it); cf's launch post doesn't cover errors, and the field is
+  the agent-CLI pattern the research pass found. `ko doctor` probes the network once and skips
+  live checks offline (1.4 s, not a hang).
+
+## 2026-09-10 — drive: folder mirror + push, and the Drive scope widens
+
+- **Why now.** The ops session built `ne drive ls|pull` (one-way sync of a client folder into a
+  gitignored `data/<slug>/`) and KO wanted the same in ko, plus write-back. ko's documented
+  `drive.file` stance made that impossible: per-file scope can't list a folder ko didn't create.
+- **Scope: `drive.file` → `drive.readonly` (read token) / `drive` (write token).** The blast-radius
+  argument was real but the practical use is client folders; per-folder scoping is a
+  service-account profile, which ko already has. Old tokens re-consent once — `_load_cached`
+  checks for the Drive scope the way it already checked the write marker. Catch to remember:
+  `drive` is a Google *restricted* scope — harmless in Testing/Internal, but publishing the
+  External app with it means Google verification.
+- **Manifest, not mtime.** ne stamps local mtime from `modifiedTime` and calls "unchanged" size +
+  mtime ≥ remote. That can't distinguish "edited here after pull" from "both sides changed", so a
+  push would clobber a remote edit. `.ko-drive.json` records per file the id, remote md5/modifiedTime
+  and local md5/size as of the last sync: both sides compare to a common base. Binary files use
+  Drive's free `md5Checksum`; exported Docs/Sheets/Slides have none (and no `headRevisionId`
+  either — confirmed), so they fall back to `modifiedTime`. Local side: size+mtime fast path,
+  hash only when mtime moved.
+- **Refusals over guesses.** Both-sides-changed is a conflict: pull leaves it, push uploads
+  nothing at all (all-or-nothing) — `--force` makes Drive win on pull, local on push. A file
+  removed on Drive but still local is a push conflict too (else the next push resurrects it).
+  Untracked local files that match Drive byte-for-byte are adopted; differing ones are conflicts.
+  Never deletes on either side; exported natives never push (a docx re-import drops comments).
+- **Gemini second opinion (design-level, triaged):** took — `/` in Drive names must not become a
+  directory, duplicate names in one folder collapse to one path (first wins, twin reported),
+  save the manifest in `finally` so a mid-run 403 leaves it consistent, refuse a folder arg that
+  disagrees with the manifest, push confirms on a TTY like every outward command. Rejected —
+  `version` over `modifiedTime` (it bumps on invisible server-side changes: noisier, not safer).
+- Left out of v1: following shortcuts (listed as unsupported), local deletion propagating anywhere
+  (a locally deleted file comes back on the next pull), concurrency on the folder walk.
+- Offline suite: a fake `files().list()` + stubbed transfer helpers cover walk/pull/push
+  classification (18 tests). Live: needs the re-consent first.
+
+## 2026-09-11 — google auth: who am I, and no silent hangs
+
+- **`accounts` like `gh auth status`.** Asked for after the drive work: `ko gmail accounts`
+  showed `* work` and nothing else. Google's token JSON carries no address, so ko learns it
+  once (Drive `about.get`, Gmail profile as fallback) using only the cached token and stashes
+  it in the token file; one derived line describes the grant per API (read-only / read+write /
+  missing / stale per-file Drive). Same renderer in every group's `accounts` and `ko doctor`.
+  First run surfaced two facts: the only signed-in account is ko@khalido.dev (not the personal
+  Gmail), and its grant is read-only across the board.
+- **The read-only grant then explained a field bug** (everx session): `gdocs push` and
+  `gmail draft new` "hung for minutes" from an agent. A write on a read-only token fell into
+  the consent flow, which blocks on a browser callback nobody can click. Fixed at the one
+  chokepoint, not per command: an *implicit* flow (a command found no usable token) refuses
+  without `/dev/tty` — one line saying why (`read-only grant and this is a write`, `isn't
+  signed in`, `pre-2026-09 token`, `expired token that couldn't refresh`) and the exact `ko
+  gsheets [-a x] auth` to run — and with a terminal prints that reason before opening the
+  browser. The `auth` command is `explicit` and always runs. `/dev/tty` rather than
+  `stdin.isatty()`: a human piping markdown into `gdocs push -` still has a terminal; an
+  agent's shell has none (ENXIO).
+- **A bare `--account` shortcut was tried and dropped.** Typer 0.27 ignores `flag_value`, and
+  Click's value-less option would swallow the next subcommand as the account name.
+- **Global net in `main()`** for `AuthError`: 27 of 55 Google commands had no error wrapper, so
+  the new clean refusal still arrived as a traceback from `gsheets set`. Every command now
+  gets the one-liner. (Spotted in passing, not fixed: `gdocs push` on a Sheet id 400s with a
+  traceback from `export_markdown` — the same missing wrapper for `HttpError`.)
+
+## 2026-08-31 — deps: ko's own HTTP moved to httpx2 (rode pydantic-ai 2.32 → 2.36.0)
+
+- **The upgrade flipped the board.** A routine `uv lock --upgrade` landed pydantic-ai-slim
+  2.36.0, which migrated to **httpx2** (pydantic's kept-API fork of httpx). With the ecosystem
+  already moving (OpenAI SDK 3.3 + Anthropic's SDK on httpx2, httpxyz folded in as "the blessed
+  fork", upstream httpx dormant since 2024-12 with 1.0 built in a private repo), the wait-for-
+  pydantic-ai trigger from that morning's research fired the same day.
+- **Our code: `import httpx2 as httpx` everywhere (22 sites, src + tests).** Tests construct
+  Response/Request and raise the exception classes our code catches — they must be the same
+  package, so the swap covers both. Plain `httpx` stays a dep because exa-py, arxiv2markdown,
+  mcp/fastmcp-slim, google-genai and pydantic-ai-harness pin it; both stacks ship, which is
+  the fork's design. One behavioral delta accepted knowingly: **httpx2 verifies TLS against
+  the OS trust store, not certifi** — live-smoked on a generic fetch, the reddit ladder
+  end-to-end, and `ko billing` (Client + auth headers), all fine; a mirror failing OS-store
+  verification just becomes a dead rung in the ladder.
+- **2.36 break found by the regression guard, fixed in the test only:**
+  `agent._instructions` entries are now `SourcedInstruction` wrappers (callables inside
+  `.instruction`) — the preamble guard looks through the wrapper and still handles the
+  pre-2.36 bare-callable shape, since the floor (`>=2.32`) admits both.
+- Full suite 531 passed + ruff clean before and after; `ko llm` smoke through 2.36+httpx2.
+
+
+## 2026-08-31 — reddit: the mirror became a ladder (safereddit → synth → Wayback)
+
+- **The single mirror died** — reddit.synth.download 502s, which is what "I have trouble
+  reading reddit pages" turned out to be. Re-probed every direct method against a live
+  thread first, because the BROWSER bundle changed the board: www/api `.json` → 403 with
+  AND without the bundle + a Chrome UA (this wall is endpoint/IP-shaped, not header-shaped
+  — the drive.com.au lesson does not transfer); old.reddit → 302 login wall (`reason=lor2`,
+  a logged-out rate limit); pullpush.io → 200 with zero data; r.jina.ai free → empty shell;
+  Wayback → no old.reddit capture. Nothing direct works.
+- **redlib is other people having solved it** — an open-source reddit frontend with public
+  instances; a redlib URL is just a readable URL, so it's the same straight host swap the
+  synth mirror already was. safereddit.com served the thread cleanly through trafilatura
+  (post, selftext, comment authors + ages, ~9.3k tokens). Of 9 instances probed it was the
+  only one alive — catsarch 403s our UA, perennialte is shut down (410), bloat.cat serves
+  a challenge page, privacydev times out. Instance churn is THE failure mode.
+- **So: `_REDDIT_MIRROR` (one host) → a try-in-order ladder** `safereddit.com →
+  reddit.synth.download` (502 today, fine last month — kept second), first non-empty
+  extract wins, Wayback of the ORIGINAL url after the whole ladder, then the loud error.
+  Swappable without a release: `[fetch] reddit_mirrors = "h1,h2"` / `KO_REDDIT_MIRRORS`.
+  Mirror requests now carry the BROWSER bundle (both live successes had it). Tests pin
+  ladder order, the fall-through (200-but-unextractable first mirror), the config
+  override, and wayback-of-original when everything's down.
+- **Durable path registered, not built:** Reddit OAuth app "kotools"
+  (developers.reddit.com/apps/kotools) — the answer when the ladder dies for good or
+  search/listings/comment-trees are wanted. For plain reads the host swap is enough.
+
+
+## 2026-08-19 — fetch: browser navigation headers, and the end of markdown negotiation
+
+- **The 403 was about missing headers, not the User-Agent.** drive.com.au (Cloudflare) blocked
+  `ko fetch` outright. Isolated it a header at a time on the live URL: our honest kotools UA
+  plus the `Sec-Fetch-*` family and `Upgrade-Insecure-Requests` → 200; the same UA without them
+  → 403; a **spoofed Chrome UA without them → still 403**, twice. So the wall keys on the
+  absence of what a navigating browser sends, and claiming to be Chrome while sending nothing
+  Chrome sends looks worse, not better. We keep the honest UA and just describe the request
+  truthfully — it *is* a top-level document navigation. Free, instant, no new dependency, so
+  it's the default rather than a fallback rung above Wayback.
+- **Dropped `Accept: text/markdown`.** The premise was that agent-optimized servers hand back
+  clean markdown. Measured across 6 sites: only 2 answer at all, and answering isn't
+  extracting — Cloudflare's own blog is a wash (24k chars vs trafilatura's 19.7k) and
+  drive.com.au is a whole-DOM dump, 31k tokens of nav, icons and a JSON-LD author blob against
+  trafilatura's 4.6k of just the review. 6.6x the tokens for less of the article. The branch
+  bought nothing measurable on the sites that hit it, so it's gone and every non-PDF page goes
+  through trafilatura. Worth re-running as the practice matures — more sites will serve
+  genuinely useful markdown — but today it's hit and miss, and the miss is expensive.
+- **The ladder was misclassifying walls as dead links** — the real finding, surfaced by a
+  second-opinion pass. `except httpx.HTTPError` sent *everything* to `_wayback` under a
+  comment reading "the page is gone", but a 403 is the opposite of gone: the page is there
+  and refusing us. The archive.today rung — JS-rendered capture, better on exactly this case
+  — only fired on 200-with-empty-extraction. So 401/403/429 now route to `_paywall_fallback`
+  (archive.today, then Wayback); 404/5xx/timeouts still go straight to Wayback. Strictly
+  a superset of the old behaviour, and the documented successor for when the header bundle
+  stops working.
+- **Kept the markdown *response* pass-through.** Dropping the request header and dropping the
+  response branch were one edit but two decisions; only the first was measured. A server can
+  volunteer `text/markdown` unsolicited (llmstxt.org does), and trafilatura on a markdown body
+  is length-dependent — the full 13.5k doc round-trips near-verbatim, but truncate it to 2.5k
+  and `_extract` returns None, which would send a fine page down the paywall path.
+- **What the bundle actually claims.** The first draft of this entry said we "don't lie about
+  who we are" — true of the UA, false of `Sec-Fetch-User: ?1`, which asserts a click nobody
+  made, and that turns out to be the one header you can't drop (three paired rounds:
+  full set 200, minus that header 403, every time). The honest framing is that the wall asks
+  whether the request carries the bundle a click-initiated top-level GET sends, not whether
+  you're Chrome. Also noted as rot: `Sec-Fetch-Site: none` is replayed verbatim across
+  redirects where a browser would flip it to same-origin/cross-site.
+- Net on the URL that started this: 403 → 4,580 clean tokens. Three new tests cover the
+  header bundle, the markdown pass-through, and refused-vs-gone; each was mutation-checked.
+
 ## 2026-08-10 — `--help` on a budget: one function, one line
 
 - **The old principle caused the verbosity it was meant to prevent.** "Assume humans and

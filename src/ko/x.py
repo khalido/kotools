@@ -37,12 +37,15 @@ import re
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from functools import lru_cache
+from typing import TYPE_CHECKING
 
 import requests
-from xdk import Client
 
 from . import config
 from .dirs import state_file
+
+if TYPE_CHECKING:
+    from xdk import Client
 
 DEFAULT_MAX_RESULTS = 10
 DEFAULT_DAYS = 7  # recent-search index only goes back ~7 days
@@ -81,6 +84,10 @@ class Post:
 
 @lru_cache(maxsize=1)
 def _client() -> Client:
+    from xdk import (
+        Client,  # ~0.2 s (generated schemas) — only when X is actually called
+    )
+
     token = config.require_key(
         "X_BEARER_TOKEN",
         "Create an app at https://developer.x.com/, grab the Bearer Token, export "

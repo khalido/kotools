@@ -55,7 +55,7 @@ def test_refresh_openrouter_noop_without_key(monkeypatch, tmp_path):
 
 
 def test_refresh_force_bypasses_ttl(monkeypatch, tmp_path):
-    import httpx
+    import httpx2 as httpx
 
     monkeypatch.setenv("KO_CACHE_DIR", str(tmp_path))
     monkeypatch.setenv("OPENROUTER_API_KEY", "k")
@@ -82,7 +82,7 @@ def test_refresh_force_bypasses_ttl(monkeypatch, tmp_path):
 
 
 def test_refresh_records_network_failure(monkeypatch, tmp_path):
-    import httpx
+    import httpx2 as httpx
 
     monkeypatch.setenv("KO_CACHE_DIR", str(tmp_path))
     monkeypatch.setenv("OPENROUTER_API_KEY", "k")
@@ -283,8 +283,10 @@ def test_input_goes_before_the_prompt(monkeypatch):
 
         run_sync = staticmethod(_run_sync)
 
-    monkeypatch.setattr(llm, "Agent", _Agent)
-    monkeypatch.setattr(llm, "_agent", _Agent())
+    import pydantic_ai
+
+    monkeypatch.setattr(pydantic_ai, "Agent", _Agent)  # llm imports it lazily, inside run()
+    monkeypatch.setattr(llm, "_default_agent", lambda: _Agent())
     with pytest.raises(SystemExit):
         llm.run("MY QUESTION", stdin="DOC TEXT")
     assert seen["prompt"].index("DOC TEXT") < seen["prompt"].index("MY QUESTION")
@@ -305,7 +307,7 @@ def test_llm_svg_reaches_the_model_as_text(fake_run, tmp_path):
 def test_llm_media_url_serving_html_fails_loud(fake_run, monkeypatch):
     """A .png URL behind a login wall returns text/html — attaching that as an image sends
     the model garbage, so it must be an error, not a silent bad attachment."""
-    import httpx
+    import httpx2 as httpx
 
     class _Resp:
         headers = {"content-type": "text/html; charset=utf-8"}
@@ -318,3 +320,22 @@ def test_llm_media_url_serving_html_fails_loud(fake_run, monkeypatch):
     r = runner.invoke(app, ["llm", "-f", "https://x.com/chart.png", "describe"])
     assert r.exit_code != 0 and not fake_run
     assert "text/html" in r.stderr
+
+
+def test_a_response_cut_short_raises_instead_of_passing_as_an_answer():
+    """Gemini via OpenRouter returned half a page with finish_reason "error" and 0 usage; ko
+    printed it and exited 0. Partial output must never pass as the answer."""
+    import pytest
+    from pydantic_ai.messages import ModelResponse, TextPart
+
+    def resp(reason):
+        return ModelResponse(
+            parts=[TextPart("half a sente")], finish_reason=reason,
+            provider_details={"downstream_provider": "Google"},
+        )
+
+    with pytest.raises(llm.TruncatedOutput, match=r"provider errored mid-answer \(upstream: Google\)"):
+        llm._raise_if_cut_short([resp("error")], "openrouter:google/gemini-3-flash-preview")
+    with pytest.raises(llm.TruncatedOutput, match="output-token limit"):
+        llm._raise_if_cut_short([resp("length")], "m")
+    llm._raise_if_cut_short([resp("stop")], "m")  # a finished answer passes

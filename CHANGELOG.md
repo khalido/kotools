@@ -13,6 +13,26 @@ Cut a release with the repo's `/release` skill.
 
 ## [Unreleased]
 
+### Added
+- `ko drive ls|pull|push` — mirror a Drive folder into a local dir and push edits back in place
+  (same file id, sharing kept). A `.ko-drive.json` manifest makes both-sides-changed a refused
+  conflict rather than a silent clobber; nothing is ever deleted on either side.
+
+- `ko <google group> accounts` and `ko doctor` now show each account's signed-in address and
+  what its grant can do (read-only vs read+write per API, stale grants), `gh auth status` style.
+
+- A command that finds no usable Google token (read-only grant on a write, stale or missing
+  token) fails in one line naming the fix when there is no terminal, instead of hanging on a
+  browser consent nobody can click. With a terminal it says why before opening the browser.
+
+- `gdocs push`: a missing file or empty Markdown is a usage error (exit 2) instead of a traceback
+  or a silently created blank Doc; a Sheet/Slides id as TARGET says "isn't a Google Doc".
+
+### Changed
+- **Breaking:** the Drive OAuth scope widened from per-file `drive.file` to `drive.readonly` (read
+  token) / `drive` (write token). Existing tokens re-consent once (`ko gsheets auth`); `gdocs
+  get`/`comments` now work on docs ko didn't create.
+
 ## [2026.7.27] - 2026-07-27
 
 The Google-suite-goes-read-write release: Sheets tab ops + print-to-PDF, draft-first

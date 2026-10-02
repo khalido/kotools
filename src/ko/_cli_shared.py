@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
+import sys
 from dataclasses import asdict
+from types import ModuleType
 from typing import NoReturn
 
 import typer
@@ -29,25 +32,48 @@ app = typer.Typer(
 )
 
 
+def lazy(name: str) -> ModuleType:
+    """`ko.<name>`, loaded on first attribute access, not at import. Every command group
+    registers at startup, so an eager `from . import llm` made `ko cal` pay for pydantic-ai,
+    exa and the X SDK (~1.3 s of a 1.6 s start). Call sites stay `llm_mod.fn()`. A module whose
+    constants feed `--help` text still loads at startup — so keep SDK imports inside its
+    functions (llm, exa, x do)."""
+    full = f"ko.{name}"
+    if full in sys.modules:
+        return sys.modules[full]
+    spec = importlib.util.find_spec(full)
+    spec.loader = importlib.util.LazyLoader(spec.loader)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[full] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 def _emit_json(items: list) -> None:
     """Shared --json path: list of dataclasses -> one JSON array on stdout."""
     typer.echo(json.dumps([asdict(i) for i in items], default=str))
 
 
 def _die(
-    msg: str, *, as_json: bool = False, code: str = "error", exit_code: int | None = None
+    msg: str,
+    *,
+    as_json: bool = False,
+    code: str = "error",
+    exit_code: int | None = None,
+    fix: str | None = None,
 ) -> NoReturn:
     """Error exit: a JSON error object to stderr under --json, else plain text.
     Exit code follows AGENTS.md — `code="usage"` → 2, everything else → 1 (override with
     exit_code). Keeps stdout clean so a downstream `... | jq` never sees a half-message.
     Records the error code label in `_last_error` so cli.main() can populate the log's
-    `error` field without capturing user-data from the message."""
+    `error` field without capturing user-data from the message. `fix` is the command that
+    resolves it: a `fix` field under --json, "— run `…`" in text."""
     global _last_error
     _last_error = code
     if as_json:
-        typer.echo(json.dumps({"error": msg, "code": code}), err=True)
+        typer.echo(json.dumps({"error": msg, "code": code} | ({"fix": fix} if fix else {})), err=True)
     else:
-        typer.echo(msg, err=True)
+        typer.echo(f"{msg} — run `{fix}`" if fix else msg, err=True)
     if exit_code is None:
         exit_code = 2 if code == "usage" else 1
     raise typer.Exit(exit_code)

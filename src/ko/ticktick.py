@@ -28,7 +28,7 @@ from datetime import date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
-import httpx
+import httpx2 as httpx
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 

@@ -1,55 +1,28 @@
-# OpenCode agents
+# OpenCode config
 
-Curated [OpenCode](https://opencode.ai) agent definitions, installed onto a machine by
-`ko setup opencode` → `~/.config/opencode/agents/`. Source of truth is here; edit here,
-install, commit. Docs: https://opencode.ai/docs/agents/
+Global [OpenCode](https://opencode.ai/v2/docs) v2 config. Source of truth is here; edit here, copy into place, commit.
 
-These exist so another agent (Claude Code, usually) can shell out for a second opinion
-from a different model family without being able to touch anything.
+```bash
+cp ~/code/kotools/src/ko/configs/opencode/opencode.json ~/.config/opencode/
+opencode reload   # usually automatic
+```
 
-| Agent | Model | For |
-|---|---|---|
-| `consult` | grok-latest | second opinion, poke holes, adversarial read |
-| `design` | kimi-latest | UI/UX for SvelteKit + Tailwind + shadcn-svelte + LayerChart |
-| `review` | grok-latest | code review — correctness and security, no style nitpicks |
+No custom agents: the `/opencode` Claude Code skill uses the v2 built-ins — `explore` for opinions (read, glob, grep, webfetch, websearch; no shell, write or MCP) and `build` for delegated work. Built-ins are also the only agents Zen's free tier accepts: custom agents get "OpenCode's free tier can only be used from within OpenCode" (2.0.11).
 
-Invoke: `opencode run "question" --agent design -f file.svelte`. `-m` overrides the
-pinned model.
+`opencode.json` holds:
 
-## Conventions for these files
+- **Permission denies**, for `build`: shell `railway …` and `git push …`, and every `railway*` MCP tool (hides a project's own Railway MCP). Deny patterns are best-effort — the docs recommend allowlists for strict work.
+- **The sol provider pin** on OpenRouter (`only: ["openai"]`).
 
-- **Markdown, YAML frontmatter, filename = agent name.** `mode: primary` so they're
-  directly invocable via `--agent` (subagents are for `@`-mention/delegation instead).
-- **Read-only by default.** Every agent sets `"*": deny` then allows `read`, `grep`,
-  `glob`. Permission keys match as wildcard patterns against tool names, so `*: deny`
-  also strips MCP tools — without it, OpenCode's default `build` agent runs `*: allow`
-  and can edit files and reach every configured MCP server. Open extra doors one at a
-  time and say why (`design` allows `webfetch` for the shadcn-svelte and LayerChart
-  llms.txt entry points).
-- **Use `permission`, not the legacy `tools` boolean key.**
-- **Pin the `model`** to the job; leave sampling settings alone. Temperature and friends
-  are tuned by the labs and second-guessing them rarely helps — what to tune is the
-  model choice and the brief.
-- **Project-specific agents** belong in that repo's `.opencode/agents/`. This cuts both
-  ways: a repo's `.opencode/agents/<name>.md` **overrides** these global definitions and
-  can hand back full permissions — verified. Check for `.opencode/` before running
-  against a repo you don't control.
-- **Read-only is not the same as private.** Everything these agents read goes to a
-  third-party model via OpenRouter, and `design` can fetch URLs too. Pointing one at a
-  client repo is a deliberate decision, not a default.
-- **Write the brief for an agent audience.** These are consumed by another agent, not a
-  human — answer what was asked, stop, and let the caller follow up in-session. Say so
-  in the brief; models pad otherwise.
-- **Nothing client-specific and nothing private** — this repo is public. Stack
-  preferences and taste are fine; client names, pricing, MCP topology and
-  machine-specific paths are not. Client-specific tweaks belong in that client's repo
-  under `.opencode/agents/`.
-- Don't add an agent named after a built-in unless deliberately overriding it. On
-  1.18.10 those are `build`, `plan`, `general`, `explore`, `compaction`, `summary`,
-  `title` — check `opencode agent list` rather than trusting this list.
+Conventions:
 
-## Gotcha
+- **Never add a catch-all allow** (`"*": "allow"` under `bash` or top level). The last matching rule wins, so it re-opens shell for `explore` too — verified 2026-09-21.
+- Written in v1 field names (`permission`, `provider`, `options`); v2 normalizes them. `opencode debug config` shows the v2 shape.
+- **Nothing private** — this repo is public. No keys, client names or machine-specific paths.
 
-`opencode agent list` shows only global permission rules — custom agents look identical
-to `build` there even when their overrides are live. Don't trust it; test behaviour
-instead (ask the agent to write a file and confirm it refuses).
+Test behaviour after any change rather than trusting a listing (`opencode debug agents` returns `[]`):
+
+```bash
+opencode run "List your exact tool names, then run shell 'echo hi' and report the result." \
+  --agent explore --format json < /dev/null | jq -r 'select(.type=="text").part.text'
+```

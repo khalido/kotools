@@ -215,9 +215,14 @@ def test_preamble_falls_back_on_bad_timezone(monkeypatch):
 
 def test_all_agents_inject_the_preamble():
     """Every agent registers _shared.preamble as a dynamic instruction — so the shared
-    frame reaches all of them (regression guard for a new agent forgetting it)."""
+    frame reaches all of them (regression guard for a new agent forgetting it).
+    pydantic-ai 2.36 wraps entries in SourcedInstruction (callables inside .instruction);
+    pre-2.36 kept them bare. Handle both — the floor (>=2.32) still admits the old shape."""
     from ko.agents import ai, repo, research, tv
 
     for mod in (ai, research, repo, tv):
-        names = [getattr(i, "__name__", "") for i in mod.agent._instructions]
+        names = [
+            getattr(getattr(i, "instruction", i), "__name__", "")
+            for i in mod.agent._instructions
+        ]
         assert "_context" in names, mod.__name__

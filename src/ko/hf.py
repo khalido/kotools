@@ -16,7 +16,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime
 
-import httpx
+import httpx2 as httpx
 
 HF = "https://huggingface.co"
 DEFAULT_TOP_N = 10

@@ -25,54 +25,67 @@ def _try(label: str, fn, *args, **kwargs) -> tuple[str, str]:
         return (label, f"({label}: {e})")
 
 
+def _accounts_or_active() -> list[str]:
+    from ko import gcal
+    from ko.google_auth import active_account
+
+    return gcal.calendar_accounts() or [active_account()]
+
+
 def _today_events() -> str:
-    """Today's calendar events as a plain text list."""
+    """Today's events across every signed-in account, merged; `[tag]` when there's more than one."""
     from datetime import datetime, timedelta
 
     from ko import gcal
 
     tz = gcal.tz()
-    now = datetime.now(tz)
-    start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    start = datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0)
     end = start + timedelta(days=1)
-    events = gcal.list_events(time_min=start, time_max=end)
-    if not events:
-        return "(no events today)"
-    lines = []
+    accounts = _accounts_or_active()
+    events, warnings = gcal.merged(
+        lambda a, ids: gcal.list_events(time_min=start, time_max=end, calendar_ids=ids, account=a),
+        accounts,
+    )
+    lines = [f"  (skipped {w})" for w in warnings]
     for e in events:
-        s = e.start
-        if "T" in s:
-            # timed event — show HH:MM
+        tag = f"  [{e.account}]" if len(accounts) > 1 else ""
+        if "T" in e.start:
             try:
-                dt = datetime.fromisoformat(s)
-                local = dt.astimezone(tz)
-                time_str = local.strftime("%H:%M")
+                time_str = datetime.fromisoformat(e.start).astimezone(tz).strftime("%H:%M")
             except (ValueError, OSError):
-                time_str = s[11:16]
-            lines.append(f"  {time_str}  {e.summary}")
+                time_str = e.start[11:16]
+            lines.append(f"  {time_str}  {e.summary}{tag}")
         else:
-            lines.append(f"  (all day)  {e.summary}")
-    return "\n".join(lines)
+            lines.append(f"  (all day)  {e.summary}{tag}")
+    return "\n".join(lines) or "(no events today)"
 
 
 def _unread_email() -> str:
-    """Recent unread inbox, ~10 messages, one line each."""
+    """Unread inbox per signed-in account, ~10 messages each, one line per message."""
     from ko import gmail
 
-    msgs = gmail.recent(n=10, unread=True)
-    if not msgs:
-        return "(no unread messages)"
-    lines = []
-    for m in msgs:
-        # Truncate snippet: strip whitespace, cap at 80 chars
-        snip = " ".join(m.snippet.split())
-        if len(snip) > 80:
-            snip = snip[:77] + "..."
-        sender = m.from_.split("<")[0].strip().strip('"') or m.from_
-        lines.append(f"  {m.date[:10]}  {sender[:25]:<25}  {m.subject[:50]}")
-        if snip:
-            lines.append(f"    {snip}")
-    return "\n".join(lines)
+    accounts = _accounts_or_active()
+    blocks = []
+    for acct in accounts:
+        head = f"  [{acct}]" if len(accounts) > 1 else None
+        try:
+            msgs = gmail.recent(n=10, unread=True, account=acct)
+        except Exception as e:  # one dead account is a note, like any other brief source
+            blocks.append(f"{head or ''}  ({acct}: {e})")
+            continue
+        lines = [head] if head else []
+        if not msgs:
+            lines.append("    (no unread)" if head else "(no unread messages)")
+        for m in msgs:
+            snip = " ".join(m.snippet.split())
+            if len(snip) > 80:
+                snip = snip[:77] + "..."
+            sender = m.from_.split("<")[0].strip().strip('"') or m.from_
+            lines.append(f"  {m.date[:10]}  {sender[:25]:<25}  {m.subject[:50]}")
+            if snip:
+                lines.append(f"    {snip}")
+        blocks.append("\n".join(lines))
+    return "\n".join(blocks)
 
 
 def _hn_top() -> str:

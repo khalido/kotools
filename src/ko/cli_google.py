@@ -1,7 +1,8 @@
-"""Google cluster CLI commands: gsheets, gdocs, cal, gmail."""
+"""Google cluster CLI commands: gsheets, gdocs, drive, cal, gmail."""
 
 from __future__ import annotations
 
+import functools
 import json
 import os
 import re
@@ -13,13 +14,15 @@ from pathlib import Path
 import typer
 from googleapiclient.errors import HttpError
 
-from . import gcal as gcal_mod
-from . import gdocs as gdocs_mod
-from . import gdrive as gdrive_mod
-from . import gmail as gmail_mod
-from . import google_auth
-from . import gsheets as gsheets_mod
-from ._cli_shared import _die, _no_results, _reject_group_flags, _tsv_cell, app
+from . import config, google_auth
+from ._cli_shared import _die, _no_results, _reject_group_flags, _tsv_cell, app, lazy
+from .publish import slugify
+
+gcal_mod = lazy("gcal")
+gdocs_mod = lazy("gdocs")
+gdrive_mod = lazy("gdrive")
+gmail_mod = lazy("gmail")
+gsheets_mod = lazy("gsheets")
 
 
 def _http_error_msg(e: HttpError) -> str:
@@ -34,21 +37,48 @@ def _http_error_msg(e: HttpError) -> str:
 @contextmanager
 def _google_errors(as_json: bool = False):
     """One net for every Google failure mode: a domain error (403/404), a stray HttpError
-    (400 bad range, 429 quota, 5xx), or AuthError (missing client file / first-run). Turns
-    all of them into a clean `_die` line instead of a raw traceback."""
+    (400 bad range, 429 quota, 5xx), AuthError (no usable token — carries its `fix`), or a
+    network blip. Turns each into a clean `_die` line instead of a traceback. Every command in
+    the Google groups runs inside it (`_GoogleTyper`), so none can forget."""
     try:
         yield
-    except (google_auth.GoogleError, google_auth.AuthError) as e:
+    except google_auth.AuthError as e:
+        _die(e.msg, as_json=as_json, code="auth", fix=e.fix)
+    except google_auth.GoogleError as e:
         _die(str(e), as_json=as_json)
     except HttpError as e:
         _die(_http_error_msg(e), as_json=as_json)
+    except google_auth.NETWORK_ERRORS as e:
+        _die(f"network error talking to Google: {e}", as_json=as_json, code="network")
+
+
+class _GoogleTyper(typer.Typer):
+    """A Typer whose commands and callbacks all run inside `_google_errors` (honouring the
+    command's own `--json`)."""
+
+    @staticmethod
+    def _netted(fn):
+        @functools.wraps(fn)
+        def run(*args, **kwargs):
+            with _google_errors(bool(kwargs.get("as_json"))):
+                return fn(*args, **kwargs)
+
+        return run
+
+    def command(self, *args, **kwargs):
+        register = super().command(*args, **kwargs)
+        return lambda fn: register(self._netted(fn))
+
+    def callback(self, *args, **kwargs):
+        register = super().callback(*args, **kwargs)
+        return lambda fn: register(self._netted(fn))
+
 
 # --- sub-apps ---
 
-gsheets_app = typer.Typer(
+gsheets_app = _GoogleTyper(
     help=(
-        "Read & write Google Sheets. OAuth to your Google account on first run "
-        "(`ko gsheets auth` grants read+write). Reads: info / tabs / get / find. "
+        "Read & write Google Sheets (account from `ko google`). Reads: info / tabs / get / find. "
         "Writes (refuse to clobber non-empty cells unless --overwrite): set / put / "
         "header / add-tab / new / clear. Tab & bulk ops: dup-tab / delete-tab / "
         "insert-rows / insert-cols / replace. Print: pdf."
@@ -58,9 +88,9 @@ gsheets_app = typer.Typer(
 app.add_typer(gsheets_app, name="gsheets")
 app.add_typer(gsheets_app, name="gs", hidden=True)  # shortcut alias
 
-gdocs_app = typer.Typer(
+gdocs_app = _GoogleTyper(
     help=(
-        "Read & write Google Docs as Markdown (same OAuth token as `ko gsheets`). "
+        "Read & write Google Docs as Markdown (account from `ko google`). "
         "Read: get (Doc→Markdown) / info / tabs / comments. Write: push (Markdown→new or existing "
         "Doc) / replace / append / add-tab / reply / shade-table. Per-client docs use one tab each — "
         "`tabs` lists them; get/replace/append take `--tab`."
@@ -70,28 +100,27 @@ gdocs_app = typer.Typer(
 app.add_typer(gdocs_app, name="gdocs")
 app.add_typer(gdocs_app, name="gd", hidden=True)  # shortcut alias
 
-cal_app = typer.Typer(
+cal_app = _GoogleTyper(
     help=(
-        "Google Calendar: agenda + quick-add (same OAuth token as `ko gsheets`). "
-        "`ko cal` shows the next 7 days; also `cal day`, `cal find`, `cal add`, `cal cals`."
+        "Google Calendar across all your accounts: `ko cal` = next 7 days merged (`-a` for one); "
+        "also `day`, `find`, `cals`, `add` (lands where `cal use` says)."
     ),
 )
 app.add_typer(cal_app, name="cal")
 
-gmail_app = typer.Typer(
+gmail_app = _GoogleTyper(
     help=(
-        "Gmail (same OAuth token as `ko gsheets`). Read (read-only): bare `ko gmail` = recent "
-        "inbox; also `search` (Gmail query syntax), `from <who>`, `view <id>`, `thread <id>`, "
-        "`attach <id>` (list/download attachments). `draft` = compose drafts (needs `gmail.compose` "
-        "— re-auth once). Sending is opt-in (`draft send`)."
+        "Gmail, thread-first (account from `ko google`; every command names it on stderr). Bare "
+        "`ko gmail` = recent inbox threads; also `search` (Gmail query syntax), `from <who>`, "
+        "`thread <id>` (read one), `view <msg id>`, `attach <msg id>`. `draft reply <thread>` "
+        "answers a thread. Sending is opt-in (`draft send`)."
     ),
 )
 app.add_typer(gmail_app, name="gmail")
 
-gmail_draft_app = typer.Typer(
+gmail_draft_app = _GoogleTyper(
     help=(
-        "Compose Gmail drafts (needs `gmail.compose` — `ko gmail auth --logout` then `auth` to "
-        "grant it). new / reply / list / show / update / send. Drafts are the default workflow; "
+        "Compose Gmail drafts: new / reply / list / show / update / send. Drafts are the default workflow; "
         "`draft send` is opt-in (`[gmail] allow_send = true` / KO_GMAIL_SEND=1). "
         "Write bodies in Markdown via `--md <file>`: headings, **bold**/*italic*, bulleted + "
         "numbered lists, [links](url), GFM tables, ~~strikethrough~~, `code` all render as "
@@ -101,8 +130,29 @@ gmail_draft_app = typer.Typer(
 )
 gmail_app.add_typer(gmail_draft_app, name="draft")
 
+drive_app = _GoogleTyper(
+    help="Mirror a Drive folder locally (`ls`, `pull`) and push edits back in place (`push`); never deletes, refuses both-sides-changed.",
+    no_args_is_help=True,
+)
+app.add_typer(drive_app, name="drive")
 
-# --- google auth helpers (shared across gsheets / gdocs / cal — one token per account) ---
+
+# --- ko google: the one way to sign in, pick and name accounts (one token per account) ---
+
+google_app = _GoogleTyper(
+    help=(
+        "Google accounts, shared by gsheets/gdocs/drive/cal/gmail. `auth <name>` signs one in "
+        "under a short tag (`home`, `sfl`); `use <name>` makes it the default; `-a <name>` on any "
+        "Google command picks one for that call."
+    ),
+    no_args_is_help=True,
+)
+app.add_typer(google_app, name="google")
+
+_ACCOUNT_OPT = typer.Option(
+    None, "--account", "-a", help="Google account tag (default: `ko google use`; `ko google accounts` lists them)"
+)
+_NAME_ARG = typer.Argument(None, help="account tag (default: the active account)")
 
 
 def _set_account(account: str | None) -> None:
@@ -110,20 +160,62 @@ def _set_account(account: str | None) -> None:
         os.environ["KO_GOOGLE_ACCOUNT"] = account
 
 
-def _google_auth(out: bool, readonly: bool, sa_key: Path | None = None) -> None:
-    acct = google_auth.active_account()
-    if out:  # checked BEFORE sa_key: `auth --logout --service-account k.json` must log out
-        removed = google_auth.logout()
-        typer.echo(f"Signed out of '{acct}'." if removed else f"'{acct}' wasn't authenticated.")
-        return
+def _account(name: str | None) -> str:
+    if name is None:
+        return google_auth.active_account()
+    return google_auth.check_name(name)
+
+
+def account_lines(lookup: bool = True) -> list[str]:
+    """The `accounts` listing, gh-auth-status style: one line per account (`*` = active) with
+    the signed-in address, then what its grant can do. Shared with `ko doctor`, which passes
+    `lookup=False` offline (no API call for an address the token file lacks)."""
+    active = google_auth.active_account()
+    lines = []
+    for name in sorted(set(google_auth.list_accounts()) | {active}):
+        st = google_auth.account_status(name, lookup=lookup)
+        mark = "*" if name == active else " "
+        if st.kind == "none":
+            lines.append(f"{mark} {name}  (no token — `ko google auth {name}`)")
+            continue
+        who = st.email or f"(address unknown — token stale? re-run `ko google auth {name}`)"
+        tag = "  (service account)" if st.kind == "service-account" else ""
+        lines.append(f"{mark} {name}  {who}{tag}")
+        if st.kind == "service-account":
+            lines.append("    read+write on whatever is shared with that address")
+        else:
+            lines.append(f"    {google_auth.describe_scopes(st.scopes)}")
+        lines.append(f"    {st.path}")
+    return lines
+
+
+def account_banner() -> str:
+    """`sfl · khalidomar@syntechfibres.com` — which account a command is reading/writing.
+    Local files only, no API call."""
+    name = google_auth.active_account()
+    email = google_auth.account_status(name, lookup=False).email
+    return f"{name} · {email}" if email else name
+
+
+@google_app.command("auth")
+def google_auth_cmd(
+    name: str = _NAME_ARG,
+    readonly: bool = typer.Option(False, "--readonly", help="grant read-only scope (default read+write)"),
+    sa_key: Path = typer.Option(
+        None, "--service-account", exists=True, dir_okay=False,
+        help="register a service-account key JSON under this name instead (no browser)",
+    ),
+) -> None:
+    """Sign an account in (browser consent) under a short tag: `ko google auth sfl`. Re-run to re-consent."""
+    acct = _account(name)
+    first = not google_auth.list_accounts()
     if sa_key is not None:
         shadowed = google_auth.token_file(acct).exists()
-        with _google_errors():
-            email = google_auth.register_service_account(sa_key, acct)
+        email = google_auth.register_service_account(sa_key, acct)
         if shadowed:
             typer.echo(
                 f"note: '{acct}' also has an OAuth token; the service account now takes "
-                f"precedence for it. `auth --logout` clears both.",
+                f"precedence for it. `ko google logout {acct}` clears both.",
                 err=True,
             )
         typer.echo(
@@ -133,46 +225,73 @@ def _google_auth(out: bool, readonly: bool, sa_key: Path | None = None) -> None:
             f"SA can't read them by being shared.)\n"
             f"Key copied to {google_auth.sa_file(acct)} — delete your downloaded copy."
         )
-        return
-    if google_auth.sa_file(acct).exists():
+    elif google_auth.sa_file(acct).exists():
         typer.echo(
             f"'{acct}' is a service-account profile — no browser auth needed. "
-            f"`auth --logout` unregisters it."
+            f"`ko google logout {acct}` unregisters it."
         )
         return
-    with _google_errors():
-        google_auth.get_credentials(readonly=readonly)
-    scope = "read-only" if readonly else "read+write"
-    typer.echo(
-        f"Signed in as '{acct}' ({scope}). One token covers Sheets + Docs + Calendar. "
-        f"Cached at {google_auth.token_file()}."
-    )
+    else:
+        google_auth.authenticate(readonly=readonly, account=acct)
+        st = google_auth.account_status(acct)
+        typer.echo(f"Signed in: {acct}  {st.email or '(address unknown)'}")
+        typer.echo(f"    {google_auth.describe_scopes(st.scopes)}")
+        typer.echo(f"    {st.path}")
+    if first and google_auth.active_account() != acct:
+        google_auth.use_account(acct)
+        typer.echo(f"'{acct}' is your first account — now the default.", err=True)
 
 
-def _google_accounts() -> None:
-    active = google_auth.active_account()
-    authed = google_auth.list_accounts()
-    for name in sorted(set(authed) | {active}):
-        mark = "*" if name == active else " "
-        if google_auth.sa_file(name).exists():
-            note = "  (service account)"
-        elif name in authed:
-            note = ""
-        else:
-            note = f"  (no token — `ko gsheets -a {name} auth`)"
-        typer.echo(f"{mark} {name}{note}")
+@google_app.command("logout")
+def google_logout(name: str = _NAME_ARG) -> None:
+    """Remove an account's token (or service-account key)."""
+    acct = _account(name)
+    removed = google_auth.logout(acct)
+    typer.echo(f"Signed out of '{acct}'." if removed else f"'{acct}' wasn't signed in.")
 
 
-# One option definition shared by the four auth commands — a key registers an SA profile.
-_SA_KEY_OPT = typer.Option(
-    None,
-    "--service-account",
-    exists=True,
-    dir_okay=False,
-    help="register a service-account key JSON for this account (automation: no browser; "
-    "share Sheets/Docs/Drive files with the key's client_email, shown on success). "
-    "`--logout` unregisters it",
-)
+@google_app.command("use")
+def google_use(name: str = typer.Argument(..., help="account tag to make the default")) -> None:
+    """Make an account the default on this machine until you switch again."""
+    google_auth.use_account(name)
+    email = google_auth.account_status(name).email
+    typer.echo(f"default Google account: {name}" + (f" · {email}" if email else ""))
+    if os.environ.get("KO_GOOGLE_ACCOUNT"):
+        typer.echo("note: KO_GOOGLE_ACCOUNT is set in this shell and still wins", err=True)
+
+
+@google_app.command("accounts")
+def google_accounts(
+    as_json: bool = typer.Option(False, "--json", help="emit JSON: [{name, active, kind, email, scopes, path}]"),
+) -> None:
+    """Who's signed in: each account's address and what its grant can do; `*` marks the active one."""
+    if as_json:
+        active = google_auth.active_account()
+        rows = []
+        for name in google_auth.list_accounts():
+            st = google_auth.account_status(name)
+            rows.append({"name": name, "active": name == active, "kind": st.kind, "email": st.email,
+                         "scopes": st.scopes, "path": str(st.path) if st.path else None})
+        typer.echo(json.dumps(rows))
+        return
+    for line in account_lines():
+        typer.echo(line)
+
+
+@google_app.command("rename")
+def google_rename(
+    old: str = typer.Argument(..., help="current tag"),
+    new: str = typer.Argument(..., help="new tag"),
+) -> None:
+    """Rename an account's tag, e.g. `ko google rename work kd`. Keeps its token."""
+    google_auth.rename_account(old, new)
+    typer.echo(f"renamed '{old}' → '{new}'")
+    if config.get("google", "account") == old:
+        typer.echo(
+            f"note: config.toml still says [google] account = \"{old}\" — "
+            f"this machine now uses '{new}'; edit config.toml for other machines",
+            err=True,
+        )
 
 
 # --- gsheets helpers ---
@@ -229,10 +348,7 @@ def _norm_block(val) -> list[list]:
 
 @gsheets_app.callback()
 def _gsheets_account(
-    account: str = typer.Option(
-        None, "--account", "-a",
-        help="Google account to use (else KO_GOOGLE_ACCOUNT / [google] account / 'default')",
-    ),
+    account: str = _ACCOUNT_OPT,
 ) -> None:
     """Pick the Google account for this command (one token covers Sheets/Docs/Calendar)."""
     _set_account(account)
@@ -246,8 +362,7 @@ def gsheets_info(
     ),
 ) -> None:
     """Show a sheet's title and tab names."""
-    with _google_errors(as_json):
-        info = gsheets_mod.get_info(_resolve_sid(spreadsheet_id, as_json))
+    info = gsheets_mod.get_info(_resolve_sid(spreadsheet_id, as_json))
     if as_json:
         typer.echo(json.dumps(asdict(info)))
         return
@@ -262,8 +377,7 @@ def gsheets_tabs(
     as_json: bool = typer.Option(False, "--json", help="emit a JSON array of tab names"),
 ) -> None:
     """List tab names, one per line (machine-friendly)."""
-    with _google_errors(as_json):
-        info = gsheets_mod.get_info(_resolve_sid(spreadsheet_id, as_json))
+    info = gsheets_mod.get_info(_resolve_sid(spreadsheet_id, as_json))
     if as_json:
         typer.echo(json.dumps(info.tabs))
         return
@@ -296,15 +410,14 @@ def gsheets_get(
         typer.echo("--raw and --formula are mutually exclusive", err=True)
         raise typer.Exit(2)
     render = "UNFORMATTED_VALUE" if raw else "FORMULA" if formula else "FORMATTED_VALUE"
-    with _google_errors(as_json):
-        sid = _resolve_sid(spreadsheet_id, as_json)
-        if range_name is None:  # no range -> the first tab's used range (one metadata call)
-            api_range = gsheets_mod.quote_tab(gsheets_mod.first_tab(sid))
-        elif "!" in range_name:  # a full 'Tab!A1:Z9' — the caller owns any quoting
-            api_range = range_name
-        else:  # a bare tab name -> that tab's used range, quoted if it needs it
-            api_range = gsheets_mod.quote_tab(range_name)
-        rows = gsheets_mod.get_range(sid, api_range, value_render=render)
+    sid = _resolve_sid(spreadsheet_id, as_json)
+    if range_name is None:  # no range -> the first tab's used range (one metadata call)
+        api_range = gsheets_mod.quote_tab(gsheets_mod.first_tab(sid))
+    elif "!" in range_name:  # a full 'Tab!A1:Z9' — the caller owns any quoting
+        api_range = range_name
+    else:  # a bare tab name -> that tab's used range, quoted if it needs it
+        api_range = gsheets_mod.quote_tab(range_name)
+    rows = gsheets_mod.get_range(sid, api_range, value_render=render)
     _emit_rows(gsheets_mod.pad_rectangular(rows), as_json)
 
 
@@ -720,38 +833,12 @@ def gsheets_clear(
     typer.echo(f"cleared {cleared}", err=True)
 
 
-@gsheets_app.command("auth")
-def gsheets_auth(
-    out: bool = typer.Option(
-        False, "--logout", help="remove the cached token and exit"
-    ),
-    readonly: bool = typer.Option(
-        False, "--readonly", help="grant read-only scope (default grants read+write)"
-    ),
-    service_account: Path = _SA_KEY_OPT,
-) -> None:
-    """Trigger or reset Google OAuth for the active account (`-a <name>` to pick). Opens a
-    browser on first run. Default grants read+write (covers Sheets, Docs, and Calendar) so every
-    command works. Authed read-only or a narrower scope before? `--logout` then re-run to upgrade.
-    `--service-account <key.json>` registers the account as a service-account profile instead."""
-    _google_auth(out, readonly, service_account)
-
-
-@gsheets_app.command("accounts")
-def gsheets_accounts() -> None:
-    """List Google accounts with a cached token; `*` marks the active one."""
-    _google_accounts()
-
-
 # --- gdocs commands ---
 
 
 @gdocs_app.callback()
 def _gdocs_account(
-    account: str = typer.Option(
-        None, "--account", "-a",
-        help="Google account to use (else KO_GOOGLE_ACCOUNT / [google] account / 'default')",
-    ),
+    account: str = _ACCOUNT_OPT,
 ) -> None:
     """Pick the Google account for this command (one token covers Sheets/Docs/Calendar)."""
     _set_account(account)
@@ -929,17 +1016,16 @@ def _resolve_folder(folder: str | None) -> str | None:
     return gdrive_mod.ensure_folder(folder)
 
 
-def _ask_tty(prompt: str) -> bool:
-    """Yes/no from the controlling terminal — works even when stdin is piped Markdown. No TTY → False
-    (so non-interactive callers must pass --force)."""
+def _ask_tty(prompt: str, flag: str = "--force") -> bool:
+    """Yes/no from the controlling terminal — works even when stdin is piped Markdown. No TTY →
+    exit 2 naming `flag` (AGENTS.md: non-TTY callers never hang); a typed "n" → False."""
     try:
         with open("/dev/tty", "r+") as tty:
             tty.write(prompt)
             tty.flush()
             return tty.readline().strip().lower() in ("y", "yes")
     except OSError:
-        typer.echo("no TTY for confirmation — pass --force to overwrite", err=True)
-        return False
+        _die(f"no TTY for confirmation — pass {flag}", code="usage")
 
 
 def _confirm_overwrite(target: str, new_md: str, force: bool) -> None:
@@ -947,11 +1033,12 @@ def _confirm_overwrite(target: str, new_md: str, force: bool) -> None:
     Markdown, and confirm — unless --force. Aborts if declined or there's no TTY. The title is the
     real wrong-id catch (you notice 'Overwrite "Budget 2026"?' when you meant the proposal)."""
     try:
-        current = gdrive_mod.export_markdown(target)
+        current = gdrive_mod.export_markdown(target)  # first: a Sheet/Slides id 400s here
         title = gdocs_mod.get_info(target).title
-    except gdrive_mod.DriveError as e:
-        typer.echo(str(e), err=True)
-        raise typer.Exit(1) from None
+    except HttpError as e:
+        if e.resp.status == 400:  # Drive won't export it as markdown: a Sheet/Slides/file id
+            _die(f"{target} isn't a Google Doc — `gdocs push` only updates Docs")
+        raise
     summary, diff = gdrive_mod.diff_summary(current, new_md)
     typer.echo(f'Overwrite "{title}" ({gdocs_mod.doc_id(target)[:8]}…): {summary}', err=True)
     if force:
@@ -978,28 +1065,24 @@ def gdocs_push(
     ),
     force: bool = typer.Option(False, "--force", help="skip the overwrite diff/confirm when updating"),
 ) -> None:
-    """Markdown → Google Doc; prints ID (stdout) and URL (stderr). No TARGET creates a new doc; a
-    TARGET (id or URL) updates that doc in place (same URL/sharing) after showing a diff to confirm
-    (--force skips). An update re-imports the whole body, so re-apply shading with `shade-table`.
-    Targets the whole doc; per-tab push isn't supported by the API (Drive Markdown import can't
-    aim at a tab) — use `append --tab` / `replace --tab` to edit within one tab."""
-    md = sys.stdin.read() if str(markdown_file) == "-" else markdown_file.read_text()
+    """Markdown → Google Doc: prints the id (stdout) + URL (stderr); with TARGET, re-imports into that
+    Doc in place after a diff + confirm. Example: `ko gdocs push proposal.md -f Proposals`."""
+    if str(markdown_file) == "-":
+        md = sys.stdin.read()
+    elif not markdown_file.is_file():
+        _die(f"no such file: {markdown_file}", code="usage")
+    else:
+        md = markdown_file.read_text()
+    if not md.strip():
+        _die("nothing to push — the Markdown is empty", code="usage")
     if target:
         _confirm_overwrite(target, md, force)
-        try:
-            doc = gdrive_mod.push_markdown(md, "", update_id=target)
-        except gdrive_mod.DriveError as e:
-            typer.echo(str(e), err=True)
-            raise typer.Exit(1) from None
+        doc = gdrive_mod.push_markdown(md, "", update_id=target)
         typer.echo(doc)
         typer.echo(f"updated: https://docs.google.com/document/d/{doc}/edit", err=True)
         return
     doc_title = title or (markdown_file.stem if str(markdown_file) != "-" else "Untitled")
-    try:
-        new_id = gdrive_mod.push_markdown(md, doc_title, folder_id=_resolve_folder(folder))
-    except gdrive_mod.DriveError as e:
-        typer.echo(str(e), err=True)
-        raise typer.Exit(1) from None
+    new_id = gdrive_mod.push_markdown(md, doc_title, folder_id=_resolve_folder(folder))
     typer.echo(new_id)
     typer.echo(f"created: https://docs.google.com/document/d/{new_id}/edit", err=True)
 
@@ -1083,22 +1166,6 @@ def gdocs_shade_table(
     typer.echo(f"shaded {n} range(s)", err=True)
 
 
-@gdocs_app.command("auth")
-def gdocs_auth(
-    out: bool = typer.Option(False, "--logout", help="remove the cached token and exit"),
-    readonly: bool = typer.Option(False, "--readonly", help="grant read-only scope"),
-    service_account: Path = _SA_KEY_OPT,
-) -> None:
-    """Google OAuth (shared token with gsheets/cal). Default grants read+write."""
-    _google_auth(out, readonly, service_account)
-
-
-@gdocs_app.command("accounts")
-def gdocs_accounts() -> None:
-    """List Google accounts with a cached token; `*` marks the active one."""
-    _google_accounts()
-
-
 # --- cal helpers ---
 
 
@@ -1112,6 +1179,7 @@ def _fmt_events(events, window_start: str | None = None) -> None:
 
     zone = gcal_mod.tz()
     last_day = None
+    multi = len({ev.account for ev in events}) > 1
     for ev in events:
         if ev.all_day:
             # Clamp: an ongoing all-day event whose start precedes the window boundary should
@@ -1127,7 +1195,28 @@ def _fmt_events(events, window_start: str | None = None) -> None:
             typer.echo(f"\n{header}")
             last_day = day
         loc = f"  @ {ev.location.replace(chr(10), ', ').replace(chr(13), '')}" if ev.location else ""
-        typer.echo(f"  {when:>7}  {ev.summary}  [{ev.calendar_name}]{loc}")
+        where = f"{ev.account} · {ev.calendar_name}" if multi else ev.calendar_name
+        typer.echo(f"  {when:>7}  {ev.summary}  [{where}]{loc}")
+
+
+def _cal_accounts() -> list[str]:
+    """Accounts a cal read covers: the one `-a`/KO_GOOGLE_ACCOUNT names, else all signed in.
+    Prints them on stderr — which calendars you're looking at is never a guess."""
+    one = os.environ.get("KO_GOOGLE_ACCOUNT")
+    accts = [one] if one else (gcal_mod.calendar_accounts() or [google_auth.active_account()])
+    typer.echo(f"# cal: {', '.join(accts)}", err=True)
+    return accts
+
+
+def _merged_events(fetch, calendar: list[str] | None, as_json: bool):
+    """Events across `_cal_accounts()`; per-account failures go to stderr, not the floor."""
+    try:
+        events, warnings = gcal_mod.merged(fetch, _cal_accounts(), calendar)
+    except (gcal_mod.CalError, ValueError) as e:
+        _die(str(e), as_json=as_json)
+    for w in warnings:
+        typer.echo(f"warning: skipped {w}", err=True)
+    return events
 
 
 def _emit_events(events, as_json: bool, window_start: str | None = None) -> bool:
@@ -1150,10 +1239,7 @@ def _emit_events(events, as_json: bool, window_start: str | None = None) -> bool
 @cal_app.callback(invoke_without_command=True)
 def _cal_main(
     ctx: typer.Context,
-    account: str = typer.Option(
-        None, "--account", "-a",
-        help="Google account to use (else KO_GOOGLE_ACCOUNT / [google] account / 'default')",
-    ),
+    account: str = _ACCOUNT_OPT,
     days: int = typer.Option(7, "--days", "-d", help="days of agenda (default 7)"),
     today: bool = typer.Option(False, "--today", help="just today"),
     calendar: list[str] = typer.Option(
@@ -1161,7 +1247,7 @@ def _cal_main(
     ),
     as_json: bool = typer.Option(False, "--json", help="emit JSON (see shape below)"),
 ) -> None:
-    """Agenda across your calendars (bare `ko cal`). Subcommands: day / add / cals / auth.
+    """Agenda across every signed-in account's calendars, merged (bare `ko cal`; `-a` for one).
 
     `--json` emits an array of events; timed `start`/`end` are ISO8601 in the configured tz
     (with offset), all-day events use bare `YYYY-MM-DD` dates with `all_day: true` and an
@@ -1178,12 +1264,9 @@ def _cal_main(
     # don't appear under their original start date header (e.g. a Jul 5–12 event shows
     # under "today" when you run `ko cal --today`, not under "Sun 05 Jul").
     win_start = _dt.now(gcal_mod.tz()).date().isoformat()
-    with _google_errors(as_json):
-        try:
-            ids = gcal_mod.resolve_calendar_ids(calendar) if calendar else None
-            events = gcal_mod.list_events(days=n, calendar_ids=ids)
-        except gcal_mod.CalError as e:
-            _die(str(e), as_json=as_json)
+    events = _merged_events(
+        lambda a, ids: gcal_mod.list_events(days=n, calendar_ids=ids, account=a), calendar, as_json
+    )
     if not _emit_events(events, as_json, window_start=win_start):
         typer.echo(f"nothing in the next {n} day(s)", err=True)
 
@@ -1201,17 +1284,19 @@ def cal_day(
     """All events for a single day."""
     from datetime import datetime, timedelta
 
-    with _google_errors(as_json):
-        try:
-            _, val = gcal_mod.parse_when(date_str)
-            d = val.date() if isinstance(val, datetime) else val
-            start = datetime(d.year, d.month, d.day, tzinfo=gcal_mod.tz())
-            ids = gcal_mod.resolve_calendar_ids(calendar) if calendar else None
-            events = gcal_mod.list_events(
-                time_min=start, time_max=start + timedelta(days=1), calendar_ids=ids
-            )
-        except (gcal_mod.CalError, ValueError) as e:
-            _die(str(e), as_json=as_json)
+    try:
+        _, val = gcal_mod.parse_when(date_str)
+    except ValueError as e:
+        _die(str(e), as_json=as_json)
+    d = val.date() if isinstance(val, datetime) else val
+    start = datetime(d.year, d.month, d.day, tzinfo=gcal_mod.tz())
+    events = _merged_events(
+        lambda a, ids: gcal_mod.list_events(
+            time_min=start, time_max=start + timedelta(days=1), calendar_ids=ids, account=a
+        ),
+        calendar,
+        as_json,
+    )
     if not _emit_events(events, as_json, window_start=d.isoformat()):
         typer.echo(f"nothing on {date_str}", err=True)
 
@@ -1224,17 +1309,36 @@ def cal_add(
     ),
     end: str = typer.Option(None, "--end", help="end time/date (timed default: +--minutes)"),
     minutes: int = typer.Option(60, "--minutes", "-m", help="duration for a timed event with no --end"),
-    cal: str = typer.Option("primary", "--cal", help="calendar id (default: primary)"),
+    cal: str = typer.Option(None, "--cal", help="calendar name or id (default: the `ko cal use` target)"),
+    as_json: bool = typer.Option(False, "--json", help="emit the created event as JSON"),
 ) -> None:
-    """Create an event. Timed if WHEN has a time (T), else all-day. Prints the event id."""
-    with _google_errors():
+    """Create an event in the `ko cal use` calendar (`-a`/`--cal` override). Timed if WHEN has a
+    time (T), else all-day. Prints the event id."""
+    try:
+        acct, cal_id = gcal_mod.add_target(os.environ.get("KO_GOOGLE_ACCOUNT"))
+        if cal:
+            cal_id = gcal_mod.resolve_calendar_ids([cal], gcal_mod.list_calendars(acct))[0]
+        ev = gcal_mod.create_event(title, when, end=end, calendar_id=cal_id, minutes=minutes, account=acct)
+    except (gcal_mod.CalError, ValueError) as e:
+        _die(str(e))
+    typer.echo(f"created: {ev.summary}  {ev.start}  [{acct} · {ev.calendar_id}]", err=True)
+    typer.echo(json.dumps(asdict(ev)) if as_json else ev.id)
+
+
+@cal_app.command("use")
+def cal_use(
+    account: str = typer.Argument(None, help="account tag new events go to (omit to show the current target)"),
+    calendar: str = typer.Argument(None, help="calendar name or id in that account (default: primary)"),
+) -> None:
+    """Where `cal add` puts new events — set apart from `ko google use`, so switching mail
+    accounts doesn't move your events."""
+    if account is not None:
         try:
-            ev = gcal_mod.create_event(title, when, end=end, calendar_id=cal, minutes=minutes)
-        except (gcal_mod.CalError, ValueError) as e:
-            typer.echo(str(e), err=True)
-            raise typer.Exit(1) from None
-    typer.echo(f"created: {ev.summary}  {ev.start}  [{ev.calendar_id}]", err=True)
-    typer.echo(ev.id)
+            gcal_mod.set_add_target(account, calendar)
+        except gcal_mod.CalError as e:
+            _die(str(e))
+    acct, cal_id = gcal_mod.add_target()
+    typer.echo(f"new events → {acct} · {calendar or cal_id}")
 
 
 @cal_app.command("find")
@@ -1252,45 +1356,31 @@ def cal_find(
     ),
 ) -> None:
     """Find events whose title matches TEXT. Forward by default; `--past` for 'when was my last X'."""
-    with _google_errors(as_json):
-        try:
-            ids = gcal_mod.resolve_calendar_ids(calendar) if calendar else None
-            events = gcal_mod.search_events(text, days=days, past=past, calendar_ids=ids)
-        except gcal_mod.CalError as e:
-            _die(str(e), as_json=as_json)
+    events = _merged_events(
+        lambda a, ids: gcal_mod.search_events(text, days=days, past=past, calendar_ids=ids, account=a),
+        calendar,
+        as_json,
+    )
+    if past:
+        events.reverse()  # merged() sorts ascending; "when was my last X" wants most recent first
     if not _emit_events(events, as_json):
         typer.echo(f"no {'past' if past else 'upcoming'} '{text}' within {days} day(s)", err=True)
 
 
 @cal_app.command("cals")
 def cal_cals(as_json: bool = typer.Option(False, "--json", help="emit JSON")) -> None:
-    """List calendars (TSV: id, name, role, primary)."""
-    with _google_errors(as_json):
+    """List calendars across accounts (TSV: account, id, name, role, primary)."""
+    rows = []
+    for acct in _cal_accounts():
         try:
-            cals = gcal_mod.list_calendars()
-        except gcal_mod.CalError as e:
-            _die(str(e), as_json=as_json)
+            rows += [(acct, c) for c in gcal_mod.list_calendars(acct)]
+        except (google_auth.GoogleError, google_auth.AuthError, HttpError, *google_auth.NETWORK_ERRORS) as e:
+            typer.echo(f"warning: skipped {acct}: {e}", err=True)
     if as_json:
-        typer.echo(json.dumps([asdict(c) for c in cals]))
+        typer.echo(json.dumps([{"account": a, **asdict(c)} for a, c in rows]))
         return
-    for c in cals:
-        typer.echo(f"{c.id}\t{c.name}\t{c.role}\t{'primary' if c.primary else ''}")
-
-
-@cal_app.command("auth")
-def cal_auth(
-    out: bool = typer.Option(False, "--logout", help="remove the cached token and exit"),
-    readonly: bool = typer.Option(False, "--readonly", help="grant read-only scope"),
-    service_account: Path = _SA_KEY_OPT,
-) -> None:
-    """Google OAuth (shared token with gsheets/gdocs). Default grants read+write."""
-    _google_auth(out, readonly, service_account)
-
-
-@cal_app.command("accounts")
-def cal_accounts() -> None:
-    """List Google accounts with a cached token; `*` marks the active one."""
-    _google_accounts()
+    for a, c in rows:
+        typer.echo(f"{a}\t{c.id}\t{c.name}\t{c.role}\t{'primary' if c.primary else ''}")
 
 
 # --- gmail helpers ---
@@ -1305,18 +1395,33 @@ def _short_from(raw: str) -> str:
     return raw
 
 
-def _emit_messages(msgs, as_json: bool) -> None:
+def _who(raw: str, me: str | None) -> str:
+    return "me" if me and gmail_mod.email_of(raw) == me.lower() else _short_from(raw)
+
+
+def _message_json(meta, body: str) -> dict:
+    """One message for --json: every header field, the whole body, and the account it came from."""
+    return {"account": google_auth.active_account(), **asdict(meta), "body": body}
+
+
+def _emit_threads(threads, as_json: bool) -> None:
+    """One row per thread: unread mark, thread id, latest date, who (count), subject, then the
+    latest snippet. `--json` rows carry the account too."""
+    acct = google_auth.active_account()
     if as_json:
-        typer.echo(json.dumps([asdict(m) for m in msgs], default=str))
+        typer.echo(json.dumps([{"account": acct, **asdict(t)} for t in threads], default=str))
         return
-    if not msgs:
-        typer.echo("no messages", err=True)
+    if not threads:
+        typer.echo("no threads", err=True)
         return
-    for m in msgs:
-        mark = "●" if m.unread else " "
-        typer.echo(f"{mark} {m.id}  {m.date}  {_short_from(m.from_)}  —  {m.subject}")
-        if m.snippet:
-            typer.echo(f"    {m.snippet[:160]}")
+    me = google_auth.account_status(acct, lookup=False).email
+    for t in threads:
+        mark = "●" if t.unread else " "
+        who = ", ".join(_who(p, me) for p in t.people) or "?"
+        count = f" ({t.count})" if t.count > 1 else ""
+        typer.echo(f"{mark} {t.id}  {t.date}  {who}{count}  —  {t.subject}")
+        if t.snippet:
+            typer.echo(f"    {t.snippet[:160].rstrip()}")
 
 
 def _resolve_body(body: str | None, body_file: Path | None, md: Path | None) -> tuple[str, str | None]:
@@ -1343,24 +1448,22 @@ def _resolve_body(body: str | None, body_file: Path | None, md: Path | None) -> 
 @gmail_app.callback(invoke_without_command=True)
 def _gmail_main(
     ctx: typer.Context,
-    account: str = typer.Option(
-        None, "--account", "-a", help="Google account (else env / config / 'default')"
-    ),
-    n: int = typer.Option(10, "-n", "--n", "--max", help="how many messages (default 10)"),
-    unread: bool = typer.Option(False, "--unread", help="only unread"),
+    account: str = _ACCOUNT_OPT,
+    n: int = typer.Option(10, "-n", "--n", "--max", help="how many threads (default 10)"),
+    unread: bool = typer.Option(False, "--unread", help="only threads with unread mail"),
     as_json: bool = typer.Option(False, "--json", help="emit JSON"),
 ) -> None:
-    """Recent inbox messages (bare `ko gmail`). Subcommands: search / from / view.
+    """Recent inbox threads (bare `ko gmail`).
 
-    `--json` adds `labels` (Gmail labelIds) and `list_unsubscribe` (the header, empty on human
-    mail) per message — newsletter-vs-human triage data. The plain-text list is unchanged."""
+    `--json` adds `labels` (union of Gmail labelIds) and `list_unsubscribe` (empty on human
+    mail) per thread — newsletter-vs-human triage data."""
     _set_account(account)
+    typer.echo(f"# gmail: {account_banner()}", err=True)
     if ctx.invoked_subcommand is not None:
         _reject_group_flags(ctx, n="-n", unread="--unread", as_json="--json")
         return
-    with _google_errors(as_json):
-        msgs = gmail_mod.recent(n=n, unread=unread)
-    _emit_messages(msgs, as_json)
+    threads = gmail_mod.recent_threads(n=n, unread=unread)
+    _emit_threads(threads, as_json)
 
 
 @gmail_app.command("search")
@@ -1370,11 +1473,10 @@ def gmail_search(
     unread: bool = typer.Option(False, "--unread", help="only unread"),
     as_json: bool = typer.Option(False, "--json", help="emit JSON"),
 ) -> None:
-    """Search with Gmail's own query syntax (passed verbatim): `ko gmail search is:unread newer_than:2d`."""
+    """Threads matching Gmail's own query syntax (passed verbatim): `ko gmail search is:unread newer_than:2d`."""
     q = " ".join(query) + (" is:unread" if unread else "")
-    with _google_errors(as_json):
-        msgs = gmail_mod.search(q, n=n)
-    _emit_messages(msgs, as_json)
+    threads = gmail_mod.search_threads(q, n=n)
+    _emit_threads(threads, as_json)
 
 
 @gmail_app.command("from")
@@ -1384,22 +1486,25 @@ def gmail_from(
     unread: bool = typer.Option(False, "--unread", help="only unread"),
     as_json: bool = typer.Option(False, "--json", help="emit JSON"),
 ) -> None:
-    """Recent mail from a person (shortcut for `search from:<who>`)."""
-    with _google_errors(as_json):
-        msgs = gmail_mod.from_sender(who, n=n, unread=unread)
-    _emit_messages(msgs, as_json)
+    """Recent threads with mail from a person (shortcut for `search from:<who>`)."""
+    q = f"from:{who}" + (" is:unread" if unread else "")
+    threads = gmail_mod.search_threads(q, n=n)
+    _emit_threads(threads, as_json)
 
 
 @gmail_app.command("view")
 def gmail_view(
-    msg_id: str = typer.Argument(..., help="message id (from a list/search row)"),
+    msg_id: str = typer.Argument(..., help="message id (from `ko gmail thread`)"),
     full: bool = typer.Option(
         False, "--full", help="print the whole body (default: first ~1500 chars)"
     ),
+    as_json: bool = typer.Option(False, "--json", help="emit JSON (headers + whole body + account)"),
 ) -> None:
     """Read one message: headers + plain-text body."""
-    with _google_errors():
-        meta, body = gmail_mod.get_message(msg_id)
+    meta, body = gmail_mod.get_message(msg_id)
+    if as_json:
+        typer.echo(json.dumps(_message_json(meta, body), default=str))
+        return
     typer.echo(f"From:    {meta.from_}")
     typer.echo(f"Date:    {meta.date}")
     if meta.cc:
@@ -1412,14 +1517,17 @@ def gmail_view(
 
 @gmail_app.command("thread")
 def gmail_thread(
-    thread_id: str = typer.Argument(..., help="thread id (a message's thread_id from a list row)"),
+    thread_id: str = typer.Argument(..., help="thread id from a list row (or any message id in it)"),
     full: bool = typer.Option(
         False, "--full", help="print each whole body (default: first ~800 chars per message)"
     ),
+    as_json: bool = typer.Option(False, "--json", help="emit a JSON array of messages (whole bodies)"),
 ) -> None:
-    """Read a whole conversation: every message in the thread, oldest first."""
-    with _google_errors():
-        msgs = gmail_mod.get_thread(thread_id)
+    """Read a whole conversation, oldest first; each message shows its id (for `view`, `attach`, `draft reply --msg`)."""
+    msgs = gmail_mod.get_thread(thread_id)
+    if as_json:
+        typer.echo(json.dumps([_message_json(m, b) for m, b in msgs], default=str))
+        return
     if not msgs:
         typer.echo("no messages", err=True)
         return
@@ -1427,6 +1535,7 @@ def gmail_thread(
     for i, (meta, body) in enumerate(msgs):
         if i:
             typer.echo("\n" + "─" * 40 + "\n")
+        typer.echo(f"Id:      {meta.id}")
         typer.echo(f"From:    {meta.from_}")
         typer.echo(f"Date:    {meta.date}")
         if meta.cc:
@@ -1439,7 +1548,7 @@ def gmail_thread(
 
 @gmail_app.command("attach")
 def gmail_attach(
-    msg_id: str = typer.Argument(..., help="message id (from a list/search row)"),
+    msg_id: str = typer.Argument(..., help="message id (from `ko gmail thread`)"),
     n: int = typer.Argument(
         None, help="which attachment to download (1-based; omit in download mode = all)"
     ),
@@ -1453,14 +1562,13 @@ def gmail_attach(
     omitted, to DIR (default cwd). Never overwrites — appends -1, -2, …; prints saved paths.
     Downloads compose with `ko doc <file>` (PDF/Office/image → text)."""
     download = n is not None or out is not None
-    with _google_errors(as_json):
-        if download:
-            paths = gmail_mod.download_attachments(msg_id, index=n, out_dir=out)
-            for p in paths:
-                typer.echo(str(p))
-            typer.echo(f"saved {len(paths)} file(s)", err=True)
-            return
-        atts = gmail_mod.list_attachments(msg_id)
+    if download:
+        paths = gmail_mod.download_attachments(msg_id, index=n, out_dir=out)
+        for p in paths:
+            typer.echo(str(p))
+        typer.echo(f"saved {len(paths)} file(s)", err=True)
+        return
+    atts = gmail_mod.list_attachments(msg_id)
     if not atts:
         _no_results("no attachments", as_json)
     if as_json:
@@ -1487,17 +1595,19 @@ def gmail_draft_new(
 ) -> None:
     """Create a new draft. Prints the draft id (stable across updates). Nothing is sent."""
     text, html_body = _resolve_body(body, body_file, md)
-    with _google_errors():
-        draft_id = gmail_mod.create_draft(
-            to, subject, text, cc=cc or "", html_body=html_body, attachments=attach or None
-        )
+    draft_id = gmail_mod.create_draft(
+        to, subject, text, cc=cc or "", html_body=html_body, attachments=attach or None
+    )
     typer.echo(draft_id)
     typer.echo(f"draft created — review/send in Gmail, or `ko gmail draft send {draft_id}`", err=True)
 
 
 @gmail_draft_app.command("reply")
 def gmail_draft_reply(
-    msg_id: str = typer.Argument(..., help="message id to reply to"),
+    thread: str = typer.Argument(..., help="thread id to reply in (or any message id in it)"),
+    msg: str = typer.Option(
+        None, "--msg", help="answer this message in the thread (default: the latest)"
+    ),
     body: str = typer.Option(None, "--body", help="reply text (plain text/plain)"),
     body_file: Path = typer.Option(None, "--body-file", help="read the plain-text reply from a file"),
     md: Path = typer.Option(None, "--md", help="Markdown reply → formatted mail (headings, lists, links, GFM tables)"),
@@ -1513,21 +1623,21 @@ def gmail_draft_reply(
         None, "--subject", "-s", help="override the 'Re: …' subject (a different subject drops threading)"
     ),
 ) -> None:
-    """Draft a threaded reply (threadId + In-Reply-To/References + 'Re: '). Prints the draft id.
-    Errors if the original has no Message-ID. Nothing is sent."""
+    """Draft a reply in a thread, to its latest message (`--msg` picks another); replying to your
+    own message goes to its recipients. Prints the draft id. Nothing is sent."""
     text, html_body = _resolve_body(body, body_file, md)
-    with _google_errors():
-        draft_id = gmail_mod.create_reply_draft(
-            msg_id,
-            text,
-            html_body=html_body,
-            reply_all=all_,
-            subject_override=subject,
-            extra_cc=cc or "",
-            attachments=attach or None,
-        )
+    draft_id, r = gmail_mod.create_reply_draft(
+        thread,
+        text,
+        msg_id=msg,
+        html_body=html_body,
+        reply_all=all_,
+        subject_override=subject,
+        extra_cc=cc or "",
+        attachments=attach or None,
+    )
     typer.echo(draft_id)
-    typer.echo(f"reply draft created — `ko gmail draft send {draft_id}` to send", err=True)
+    typer.echo(f"reply draft to {r.to} — `ko gmail draft send {draft_id}` to send", err=True)
 
 
 @gmail_draft_app.command("list")
@@ -1536,8 +1646,7 @@ def gmail_draft_list(
     as_json: bool = typer.Option(False, "--json", help="emit JSON"),
 ) -> None:
     """List drafts (TSV: draft id, to, subject, cc)."""
-    with _google_errors(as_json):
-        drafts = gmail_mod.list_drafts(n=n)
+    drafts = gmail_mod.list_drafts(n=n)
     if not drafts:
         _no_results("no drafts", as_json)
     if as_json:
@@ -1550,11 +1659,14 @@ def gmail_draft_list(
 @gmail_draft_app.command("show")
 def gmail_draft_show(
     draft_id: str = typer.Argument(..., help="draft id (from `ko gmail draft list`)"),
+    as_json: bool = typer.Option(False, "--json", help="emit JSON (headers, body, attachment names)"),
 ) -> None:
     """Show a draft: headers + plain-text body. Lists attached files (so you can confirm an
     `--attach` stuck) when the draft has any."""
-    with _google_errors():
-        _id, meta, body, atts = gmail_mod.get_draft(draft_id)
+    _id, meta, body, atts = gmail_mod.get_draft(draft_id)
+    if as_json:
+        typer.echo(json.dumps({"draft_id": _id, **_message_json(meta, body), "attachments": atts}, default=str))
+        return
     typer.echo(f"To:      {meta.to}")
     if meta.cc:
         typer.echo(f"Cc:      {meta.cc}")
@@ -1586,16 +1698,15 @@ def gmail_draft_update(
     anything you don't override (the API replaces the whole message). Refuses if the draft has
     attachments — an update drops them — unless --force. Draft id is unchanged."""
     text, html_body = _resolve_body(body, body_file, md)
-    with _google_errors():
-        gmail_mod.update_draft(
-            draft_id,
-            text,
-            html_body=html_body,
-            subject_override=subject,
-            to_override=to,
-            cc_override=cc,
-            force=force,
-        )
+    gmail_mod.update_draft(
+        draft_id,
+        text,
+        html_body=html_body,
+        subject_override=subject,
+        to_override=to,
+        cc_override=cc,
+        force=force,
+    )
     typer.echo(f"updated draft {draft_id}", err=True)
 
 
@@ -1613,8 +1724,7 @@ def gmail_draft_send(
             "sending is disabled — drafts are the default workflow. Enable with "
             "`[gmail] allow_send = true` in config.toml or KO_GMAIL_SEND=1."
         )
-    with _google_errors():
-        info = gmail_mod.draft_summary(draft_id)
+    info = gmail_mod.draft_summary(draft_id)
     if info["mentions_attachment"] and info["attachments"] == 0 and not yes:
         _die(
             "body says 'attached' but the draft has no attachments — attach or pass --yes",
@@ -1631,23 +1741,142 @@ def gmail_draft_send(
         else:
             typer.echo("refusing to send without a TTY — pass --yes", err=True)
             raise typer.Exit(2)
-    with _google_errors():
-        sent_id = gmail_mod.send_draft(draft_id)
+    sent_id = gmail_mod.send_draft(draft_id)
     typer.echo(sent_id)
     typer.echo("sent", err=True)
 
 
-@gmail_app.command("auth")
-def gmail_auth(
-    out: bool = typer.Option(False, "--logout", help="remove the cached token and exit"),
-    readonly: bool = typer.Option(False, "--readonly", help="grant read-only scope"),
-    service_account: Path = _SA_KEY_OPT,
+# --- drive commands ---
+
+
+@drive_app.callback()
+def _drive_account(
+    account: str = _ACCOUNT_OPT,
 ) -> None:
-    """Google OAuth (shared token with gsheets/gdocs/cal). Default grants read+write."""
-    _google_auth(out, readonly, service_account)
+    """Pick the Google account for this command (one token covers Sheets/Docs/Drive/Calendar)."""
+    _set_account(account)
 
 
-@gmail_app.command("accounts")
-def gmail_accounts() -> None:
-    """List Google accounts with a cached token; `*` marks the active one."""
-    _google_accounts()
+def _drive_file_row(f: gdrive_mod.DriveFile) -> dict:
+    return {
+        "path": f.rel.as_posix(),
+        "id": f.id,
+        "mime": f.mime,
+        "size": f.size,
+        "modified": f.modified.isoformat(),
+    }
+
+
+@drive_app.command("ls")
+def drive_ls(
+    folder: str = typer.Argument(..., help="Drive folder URL or id"),
+    as_json: bool = typer.Option(False, "--json", help="JSON list instead of TSV"),
+) -> None:
+    """List every file under a folder, recursively. TSV: path, size, modified, id."""
+    tree = gdrive_mod.walk(folder)
+    for f in tree.unsupported:
+        typer.echo(f"skipped {f.rel.as_posix()} ({f.mime.rsplit('.', 1)[-1]}: no export)", err=True)
+    if not tree.files:
+        _no_results("folder is empty", as_json)
+    if as_json:
+        typer.echo(json.dumps([_drive_file_row(f) for f in tree.files], indent=2))
+        return
+    for f in tree.files:
+        size = "-" if f.size is None else str(f.size)
+        typer.echo(f"{f.rel.as_posix()}\t{size}\t{f.modified:%Y-%m-%d}\t{f.id}")
+
+
+def _pull_target(target: str, dest: Path | None) -> tuple[str, Path]:
+    """`pull <dir>` re-syncs a dir that has a manifest; otherwise target is a folder URL/id and
+    dest defaults to a slug of the folder's name in the cwd."""
+    p = Path(target)
+    if dest is None and (p / gdrive_mod.MANIFEST).exists():
+        return gdrive_mod.Manifest.load(p).folder, p
+    return target, dest or Path(slugify(gdrive_mod.folder_name(target)))
+
+
+def _emit_sync(rows: list[tuple[str, str]], summary: str, as_json: bool, payload: dict) -> None:
+    if as_json:
+        typer.echo(json.dumps(payload, indent=2))
+    else:
+        for action, path in rows:
+            typer.echo(f"{action}\t{path}")
+    typer.echo(summary, err=True)
+
+
+@drive_app.command("pull")
+def drive_pull(
+    target: str = typer.Argument(..., help="Drive folder URL/id, or a local dir pulled before"),
+    dest: Path = typer.Argument(None, help="local dir (default: ./<folder-name-slug>)"),
+    dry_run: bool = typer.Option(False, "--dry-run", "-n", help="report only; download nothing"),
+    force: bool = typer.Option(False, "--force", help="on a both-sides-changed file, Drive wins"),
+    as_json: bool = typer.Option(False, "--json", help="JSON result instead of TSV"),
+) -> None:
+    """Sync a folder down (never deletes; Docs/Sheets/Slides arrive as docx/xlsx/pptx). Example: `ko drive pull <url> data/acme`, later `ko drive pull data/acme`."""
+    folder, dest = _pull_target(target, dest)
+    res = gdrive_mod.pull(folder, dest, dry_run=dry_run, force=force)
+    rows = (
+        [("added", f.rel.as_posix()) for f in res.added]
+        + [("updated", f.rel.as_posix()) for f in res.updated]
+        + [("conflict", f.rel.as_posix()) for f in res.conflicts]
+        + [("local-edit", f.rel.as_posix()) for f in res.local_edits]
+        + [("local-only", p.as_posix()) for p in res.local_only]
+        + [("duplicate", f.rel.as_posix()) for f in res.duplicates]
+        + [("unsupported", f.rel.as_posix()) for f in res.unsupported]
+    )
+    verb = "would download" if dry_run else "downloaded"
+    summary = (
+        f"{verb} {len(res.added)} new + {len(res.updated)} changed, {len(res.skipped)} unchanged"
+        f" → {dest}"
+    )
+    if res.conflicts:
+        summary += f"; {len(res.conflicts)} conflict(s) left alone — --force lets Drive win"
+    payload = {
+        "dest": str(dest),
+        **{k: [f.rel.as_posix() for f in getattr(res, k)] for k in ("added", "updated", "skipped", "conflicts", "local_edits", "duplicates", "unsupported")},
+        "local_only": [p.as_posix() for p in res.local_only],
+    }
+    _emit_sync(rows, summary, as_json, payload)
+    if res.conflicts:
+        raise typer.Exit(1)
+
+
+def _push_rows(res: gdrive_mod.PushResult) -> tuple[list[tuple[str, str]], dict]:
+    rows = (
+        [("create", p.as_posix()) for p in res.created]
+        + [("update", p.as_posix()) for p in res.updated]
+        + [("conflict", p.as_posix()) for p in res.conflicts]
+        + [("remote-edit", p.as_posix()) for p in res.remote_edits]
+        + [("native", p.as_posix()) for p in res.native]
+    )
+    keys = ("created", "updated", "skipped", "conflicts", "remote_edits", "native")
+    return rows, {k: [p.as_posix() for p in getattr(res, k)] for k in keys}
+
+
+@drive_app.command("push")
+def drive_push(
+    src: Path = typer.Argument(..., help="local dir (pulled before, or a fresh dir + FOLDER)"),
+    folder: str = typer.Argument(None, help="Drive folder URL/id (default: the dir's manifest)"),
+    dry_run: bool = typer.Option(False, "--dry-run", "-n", help="show the plan; upload nothing"),
+    force: bool = typer.Option(False, "--force", help="on conflicts, local wins (else nothing uploads)"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="skip the confirm (required without a TTY)"),
+    as_json: bool = typer.Option(False, "--json", help="JSON result instead of TSV"),
+) -> None:
+    """Upload local changes: new files created, changed ones updated in place (same id + sharing); refuses both-sides-changed unless --force."""
+    plan = gdrive_mod.push(src, folder, dry_run=True, force=force)
+    rows, payload = _push_rows(plan)
+    n = len(plan.created) + len(plan.updated)
+    if plan.conflicts:
+        _emit_sync(rows, f"{len(plan.conflicts)} conflict(s) — nothing uploaded. Pull first, or --force to make local win", as_json, payload)
+        raise typer.Exit(1)
+    if dry_run or n == 0:
+        _emit_sync(rows, f"would upload {n} file(s) ({len(plan.skipped)} unchanged)" if dry_run else "nothing to upload", as_json, payload)
+        return
+    if not yes:
+        for action, path in rows:
+            typer.echo(f"{action}\t{path}", err=True)
+        if not _ask_tty(f"Upload {n} file(s) to Drive? [y/N] ", "--yes"):
+            _die("aborted — nothing uploaded (pass --yes to skip this check)", code="aborted", as_json=as_json)
+    res = gdrive_mod.push(src, folder, force=force)
+    rows, payload = _push_rows(res)
+    _emit_sync(rows, f"uploaded {len(res.created)} new + {len(res.updated)} changed", as_json, payload)

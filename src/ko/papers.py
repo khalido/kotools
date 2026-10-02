@@ -25,7 +25,7 @@ import re
 import time
 from dataclasses import dataclass, field
 
-import httpx
+import httpx2 as httpx
 
 OPENALEX = "https://api.openalex.org"
 S2 = "https://api.semanticscholar.org"

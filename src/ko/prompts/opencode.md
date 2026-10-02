@@ -58,12 +58,15 @@ Other useful flags:
 
 | Tier | Model | $/1M in/out | When |
 |---|---|---|---|
-| **Budget** | `openrouter/z-ai/glm-5.2` | 0.74 / 2.32 | everyday "what am I missing", quick sanity checks, high volume |
+| **Budget** | `openrouter/~z-ai/glm-latest` | 1.4 / 4.4 | everyday "what am I missing", quick sanity checks, high volume |
 | **Default** | `openrouter/~x-ai/grok-latest` | 2 / 6 | most second opinions — different family, good bang for buck |
 | **High-stakes** | `openrouter/~moonshotai/kimi-latest` | 3 / 15 | design thinking, architecture calls, subtle bugs |
 
 A leading `~` marks an alias that auto-tracks the latest of that family — set and forget.
-Prices drift, so check `opencode models --verbose` rather than trusting this table.
+Prices drift, so check `opencode models --verbose` rather than trusting this table — but
+never `cat` it whole (~55k lines); grep the one model: `opencode models --verbose | grep -A 20 '^z-ai/glm-5.3$'`.
+Cheaper still if the budget tier is too dear: `z-ai/glm-4.7-flash` (0.06 / 0.4) or
+`deepseek/deepseek-v4-flash` (0.14 / 0.28). Figures verified 2026-08-20.
 
 OpenRouter over OpenCode Zen: cheaper on open-weight models, and new ones land there
 first — worth swapping in something newer when it ships.

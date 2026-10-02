@@ -4,7 +4,7 @@ Designed so an agent (or me at a terminal) can understand a sheet's structure an
 safely read/write it. No project-specific shortcuts — this module stays generic;
 project-specific shortcuts belong in the calling project.
 
-Reads use the read-only scope; writes use the read+write scope (run `ko gsheets auth`
+Reads use the read-only scope; writes use the read+write scope (run `ko google auth`
 once — it grants write access, which also covers reads). Write safety: the shape-aware
 writers (`write_values`, `write_ranges`, `write_row`/`write_column`, `write_df`) refuse
 to clobber occupied cells — including formulas that currently display blank — unless
@@ -23,16 +23,16 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-import httpx
+import httpx2 as httpx
 from googleapiclient.errors import HttpError
 
 from ko.dirs import state_dir
 from ko.google_auth import (
     GoogleError,
     get_credentials,
-    get_sheets_service,
     id_from_url,
     raise_for_status,
+    service,
 )
 
 
@@ -69,13 +69,13 @@ def _handle(e: HttpError, context: str) -> None:
         context,
         not_found=SheetsNotFound,
         permission=SheetsPermissionDenied,
-        hint="Is the sheet accessible to the signed-in account, and for a write did you `ko gsheets auth`?",
+        hint="Is the sheet accessible to the signed-in account, and for a write did you `ko google auth`?",
     )
 
 
 def _svc(write: bool = False):
     """The Sheets service — read-only by default, read+write when write=True."""
-    return get_sheets_service(readonly=not write)
+    return service("sheets", readonly=not write)
 
 
 # --- helpers ------------------------------------------------------------
@@ -585,7 +585,7 @@ def export_pdf(
     if r.status_code != 200:
         raise SheetsError(f"PDF export failed: HTTP {r.status_code} — is the sheet accessible?")
     if not r.content.startswith(b"%PDF"):
-        raise SheetsError("export returned non-PDF (auth redirect?) — try `ko gsheets auth`")
+        raise SheetsError("export returned non-PDF (auth redirect?) — try `ko google auth`")
     return r.content
 
 

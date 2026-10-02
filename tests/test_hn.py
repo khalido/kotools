@@ -102,7 +102,7 @@ def test_story_from_hit():
 
 def test_get_404_raises_clean_not_found(monkeypatch):
     """_get on items/<id> with a 404 should raise a clean RuntimeError, not leak httpx internals."""
-    import httpx
+    import httpx2 as httpx
 
     def fake_get(url, params, timeout):
         resp = httpx.Response(404, request=httpx.Request("GET", url))
@@ -115,7 +115,7 @@ def test_get_404_raises_clean_not_found(monkeypatch):
 
 def test_get_non_404_raises_generic_error(monkeypatch):
     """_get on a non-404 HTTP error should raise a clean 'HN API error <status>' RuntimeError."""
-    import httpx
+    import httpx2 as httpx
 
     def fake_get(url, params, timeout):
         resp = httpx.Response(503, request=httpx.Request("GET", url))

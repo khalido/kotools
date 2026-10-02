@@ -8,17 +8,18 @@ from pathlib import Path
 
 import typer
 
-from . import arxiv as arxiv_mod
-from . import doc as doc_mod
-from . import exa as exa_mod
-from . import fetch as fetch_mod
-from . import hf as hf_mod
-from . import hn as hn_mod
-from . import papers as papers_mod
-from . import tmdb as tmdb_mod
-from . import x as x_mod
-from . import yt as yt_mod
-from ._cli_shared import _die, _emit_json, _fmt_day, _no_results, _tsv_cell, app
+from ._cli_shared import _die, _emit_json, _fmt_day, _no_results, _tsv_cell, app, lazy
+
+arxiv_mod = lazy("arxiv")
+doc_mod = lazy("doc")
+exa_mod = lazy("exa")
+fetch_mod = lazy("fetch")
+hf_mod = lazy("hf")
+hn_mod = lazy("hn")
+papers_mod = lazy("papers")
+tmdb_mod = lazy("tmdb")
+x_mod = lazy("x")
+yt_mod = lazy("yt")
 
 # --- sub-apps ---
 
@@ -670,7 +671,7 @@ def doc(
         ...,
         exists=True,
         dir_okay=False,
-        help="PDF, Office doc, or image (Office needs LibreOffice; images use OCR)",
+        help="PDF, Office doc, or image (.docx reads directly; other Office files need LibreOffice; images use OCR)",
     ),
     pages: str = typer.Option(
         None, "--pages", "-p", help="page range, e.g. '1-5' or '3'"
@@ -678,15 +679,36 @@ def doc(
     out: Path = typer.Option(
         None, "--out", "-o", help="write text to this path; prints to stdout if omitted"
     ),
-    no_ocr: bool = typer.Option(
-        False, "--no-ocr", help="skip OCR of image-based text (faster)"
+    ocr: bool = typer.Option(
+        None, "--ocr/--no-ocr", help="OCR every page / none (default: only PDF pages with no text layer)"
     ),
+    md: bool = typer.Option(False, "--md", help="markdown per page (tables as pipe tables)"),
+    as_json: bool = typer.Option(False, "--json", help="emit [{page, label, text}]"),
 ) -> None:
-    """Document → plain text via liteparse. Local + fast, no models. Shortcut: `ko <file>`."""
+    """Document → text via liteparse, each page under a `<!-- page N -->` line so claims can cite
+    it. A .docx reads directly as markdown (no pages); `--pages`/`--json` lay it out via
+    LibreOffice instead. Local + fast, no models. Shortcut: `ko <file>`."""
+    if file.suffix.lower() == ".docx" and pages is None and not as_json:
+        try:
+            head, body = doc_mod.docx_markdown(file)
+        except Exception as e:
+            _die(str(e))
+        _write_doc(f"{head}\n\n{body}", out)
+        return
     try:
-        text = doc_mod.parse(file, pages=pages, ocr=not no_ocr)
+        parsed = doc_mod.parse_pages(file, pages=pages, ocr=ocr, markdown=md)
     except Exception as e:
-        _die(str(e))
+        _die(str(e), as_json=as_json)
+    if as_json:
+        import json
+
+        text = json.dumps([{"page": p.num, "label": p.label, "text": p.text} for p in parsed.pages])
+    else:
+        text = doc_mod.marked(parsed)
+    _write_doc(text, out)
+
+
+def _write_doc(text: str, out: Path | None) -> None:
     if out is None:
         typer.echo(text)
     else:
@@ -892,11 +914,15 @@ def x_lists(
 # --- fetch command (root-level) ---
 
 
+def _tokens(r: fetch_mod.Fetched) -> int:
+    return len(r.text) // 4
+
+
 def _fetch_banner(r: fetch_mod.Fetched) -> str:
     """One consistent stderr note per fetched doc: source, ~token estimate, and any detail
     (saved path, wayback timestamp). ~4 chars/token — the heuristic used across ko — so a
     caller can decide read-vs-pipe-into-llm on every fetch, not just some."""
-    bits = [r.source, f"~{len(r.text) // 4:,} tokens"]
+    bits = [r.source, f"~{_tokens(r):,} tokens"]
     if r.note:
         bits.append(r.note)
     return "[" + " · ".join(bits) + "]"
@@ -930,6 +956,10 @@ def fetch_cmd(
     out: Path = typer.Option(
         None, "--out", "-o", help="write to this path; prints to stdout if omitted"
     ),
+    as_json: bool = typer.Option(
+        False, "--json", help="array of {url, source, tokens, note, text} — or {url, error} per failed URL"
+    ),
+    fresh: bool = typer.Option(False, "--fresh", help="skip the local cache (default: reuse a fetch < 1 h old)"),
 ) -> None:
     """URL → clean markdown, routed by host (arxiv, YouTube, PDF, reddit, wikipedia), with
     archive.today for paywalls and Wayback for dead links. Takes several URLs.
@@ -937,18 +967,26 @@ def fetch_cmd(
     # Sequential fetch, mirroring `ko exa get`: per-URL failures go to stderr and are skipped;
     # exit 0 if any URL succeeded, 1 if all failed.
     docs: list[tuple[str, fetch_mod.Fetched]] = []
+    rows: list[dict] = []  # --json: one per URL, failures included, in the order asked
     for u in urls:
         try:
             r = fetch_mod.fetch(
-                u, archive=archive, archive_is=archive_is, date=date, save=not no_save
+                u, archive=archive, archive_is=archive_is, date=date, save=not no_save, fresh=fresh
             )
         except Exception as e:
             typer.echo(f"[failed: {u} — {e}]", err=True)
+            rows.append({"url": u, "error": str(e)})
             continue
         docs.append((u, r))
+        rows.append({"url": u, "source": r.source, "tokens": _tokens(r), "note": r.note, "text": r.text})
         typer.echo(_fetch_banner(r), err=True)  # one token banner per document
     if not docs:  # nothing succeeded → runtime error (no output to give)
-        _die(f"no content returned for any of the {len(urls)} URL(s)")
+        _die(f"no content returned for any of the {len(urls)} URL(s)", as_json=as_json)
+    if as_json:
+        import json
+
+        typer.echo(json.dumps(rows))
+        return
     # Single URL stays byte-identical on stdout (it's piped everywhere): raw text, no header.
     if len(urls) == 1:
         combined = docs[0][1].text

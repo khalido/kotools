@@ -39,9 +39,9 @@ DOIs, arxiv ids, or W-ids), `ko arxiv search|fetch`, `ko hf top|search|get` (HF 
 **News + social** — `ko hn top|search|item` (Hacker News), `ko x search|list|user` (X — **costs
 real money per read**, mind `--n`).
 
-**Google** — `ko gmail` (read mail, download attachments, create drafts; **sending is off by
-default**), `ko cal` (agenda, quick-add), `ko gsheets` (read + write), `ko gdocs` (Markdown ↔
-Docs). All share one OAuth token; `ko gsheets auth` grants it.
+**Google** — `ko gmail` (threads, attachments, drafts; replies go to a thread; **sending is off
+by default**), `ko cal` (agenda merged across accounts, quick-add), `ko gsheets` (read + write), `ko gdocs` (Markdown ↔
+Docs). Accounts are short tags: `ko google accounts` lists them, `-a <tag>` picks one.
 
 **Tasks** — `ko tt` / `ko todo` (TickTick: `lists`, `items <list>`, `search`, `add`, `done`).
 Task notes are markdown and render in the app.

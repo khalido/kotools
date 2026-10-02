@@ -49,7 +49,10 @@ Railway Volume. `start.sh` chowns the volume as root then drops to `node`. `rail
 - **`use-railway`** — deploy/infra. **`code-review`** before commit.
 
 ## Docs to load
-- LayerChart v2 llms: https://next.layerchart.com/docs/llms.txt · shadcn charts: https://shadcn-svelte.com/charts/
+- LayerChart v2 llms: https://www.layerchart.com/llms.txt (index) · /docs/llms.txt (full).
+  NOT `next.layerchart.com` — it still serves 200s, but documents the `next` dist-tag, frozen
+  at 2.0.0-next.66 (2026-07-01) while `latest` is 2.2.0 (2026-08-12). Verified 2026-08-20.
+- shadcn charts: https://shadcn-svelte.com/charts/
 - Context7 for fresh Drizzle / Better Auth docs; pin the Svelte MCP and run svelte-autofixer on components.
 
 ## Voice (client-facing copy)

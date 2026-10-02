@@ -11,13 +11,18 @@ secrets synced, keep them in the environment (which always wins) instead.
 
 from __future__ import annotations
 
+import json
 import os
 import tomllib
 from functools import lru_cache
 
-from ko.dirs import config_dir
+from ko.dirs import config_dir, state_file
 
 _from_config: set[str] = set()
+
+
+class ConfigError(RuntimeError):
+    """A local config/state file ko can't read — one clean line naming the file, never a traceback."""
 
 
 class MissingKeyError(RuntimeError):
@@ -95,15 +100,56 @@ def get(section: str, key: str, default=None):
 
 
 def setting(env_var: str, section: str, key: str, default=None):
-    """A non-secret setting with the standard resolution chain: env var wins,
-    then config.toml `[section] key`, then the baked default."""
-    return os.environ.get(env_var) or get(section, key) or default
+    """A non-secret setting with the standard resolution chain: env var wins, then a
+    command-set local setting (settings.json), then config.toml `[section] key`, then the
+    baked default."""
+    return os.environ.get(env_var) or local_get(section, key) or get(section, key) or default
 
 
 def setting_source(env_var: str, section: str, key: str) -> str:
-    """Where a setting resolves from: 'env', 'config', or 'default'."""
+    """Where a setting resolves from: 'env', 'settings', 'config', or 'default'."""
     if os.environ.get(env_var):
         return "env"
+    if local_get(section, key):
+        return "settings"
     if get(section, key):
         return "config"
     return "default"
+
+
+# --- local settings: written by commands (`ko google use`), per machine, never synced ---
+# config.toml is hand-edited and dotfile-synced, so commands never rewrite it; a setting a
+# command changes ("use this account for a while") lives in state/settings.json instead.
+
+
+def _settings_path():
+    return state_file("settings.json")
+
+
+def _local() -> dict:
+    try:
+        data = json.loads(_settings_path().read_text())
+    except FileNotFoundError:
+        return {}
+    except ValueError as e:
+        raise ConfigError(f"{_settings_path()} is not valid JSON ({e}) — fix or delete it") from e
+    if not isinstance(data, dict):
+        raise ConfigError(f"{_settings_path()} should hold a JSON object — fix or delete it")
+    return data
+
+
+def local_get(section: str, key: str, default=None):
+    return (_local().get(section) or {}).get(key, default)
+
+
+def local_set(section: str, key: str, value) -> None:
+    """Set (or with None, remove) one local setting."""
+    data = _local()
+    sec = data.setdefault(section, {})
+    if value is None:
+        sec.pop(key, None)
+        if not sec:
+            data.pop(section)
+    else:
+        sec[key] = value
+    _settings_path().write_text(json.dumps(data, indent=2) + "\n")

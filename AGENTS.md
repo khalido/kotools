@@ -23,7 +23,10 @@ they're present. If a command fails with an auth/key error, `ko doctor` tells yo
   single object — e.g. `ko tv --json` is `{top, matches}`, `ko hn item --json` is
   `{story, comments}`, `ko papers get --json` is a single work object, `ko hf info --json`
   is a single paper object — and `ko gsheets get --json` is a 2D array).
-  - Under `--json`, **errors are a JSON object on stderr**: `{"error": "...", "code": "..."}`.
+  - Under `--json`, **errors are a JSON object on stderr**: `{"error": "...", "code": "..."}`,
+    plus `"fix": "<command>"` when one command resolves it (e.g. `ko google auth sfl`). `code`
+    is a coarse label (`auth`, `network`, `usage`, `error`); in text mode the fix reads
+    "— run `<command>`".
   - Under `--json`, **empty results are `[]` on stdout** (plus a note on stderr), so a
     downstream `| jq` never chokes.
 - **A command that writes a file prints that file's path to stdout** — nothing else — so
@@ -60,10 +63,11 @@ they're present. If a command fails with an auth/key error, `ko doctor` tells yo
 
 ## Auth
 
-Google commands (`gsheets`/`gdocs`/`cal`/`gmail`) share one OAuth token per account.
-`ko gsheets auth` grants it (covers Sheets+Docs+Calendar read+write, Gmail read + `gmail.compose`
+Google commands (`gsheets`/`gdocs`/`drive`/`cal`/`gmail`) share one OAuth token per account; accounts
+are short tags (`-a sfl`), managed with `ko google` (`auth` / `use` / `accounts`). `ko gmail` names the
+account it read on stderr. `ko google auth <tag>` grants it (covers Sheets+Docs+Drive+Calendar read+write, Gmail read + `gmail.compose`
 for drafts — sending stays opt-in behind `[gmail] allow_send`).
-No browser? Destructive/outward commands (`gsheets delete-tab`, `gmail draft send`, `gdocs push` over an existing doc, `publish rm`) confirm on a TTY — but non-TTY callers never hang: they exit 2 with a `--yes`/`--force` hint. The only unavoidable interactive step is the one-time OAuth consent.
+No browser? Destructive/outward commands (`gsheets delete-tab`, `gmail draft send`, `gdocs push` over an existing doc, `drive push`, `publish rm`) confirm on a TTY — but non-TTY callers never hang: they exit 2 with a `--yes`/`--force` hint. The only unavoidable interactive step is the one-time OAuth consent.
 
 ## Working on the code
 
@@ -71,3 +75,16 @@ No browser? Destructive/outward commands (`gsheets delete-tab`, `gmail draft sen
 - Install/run: `uv run ko ...`. Test: `uv run pytest -q`. Lint: `uv run ruff check`.
 - One module per domain under `src/ko/`; `cli.py` registers the Typer subapps. See
   `CLAUDE.md` for the full design principles and how to add a subcommand.
+
+## In CI
+
+For the issue agent (`.github/workflows/fx.yml`), not a laptop:
+
+- `uv run pytest -q` and `uv run ruff check` are the whole gate; both must pass.
+- No API keys and no Google token on the runner, so live tests skip by design — a skip is
+  not a failure, and `ko doctor` will report most things missing. Don't try to authenticate.
+- Never run a command that writes to a real service (`gdocs push`, `drive push`, `gmail
+  draft send`, `publish`). Reading the code beats running the CLI here.
+- Decisions and rationale live in `WORKLOG.md`; candidate ideas in `docs/ideas.md`. Cite
+  the design doc that covers an issue rather than re-deriving it. Anything needing taste
+  is KO's call — say so instead of guessing.

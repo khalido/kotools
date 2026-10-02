@@ -72,7 +72,7 @@ They're different layers, not rivals: **agentskills.io is the portable file form
 
 ## Auth & secrets
 
-- Google: `ko gsheets auth` once → cached token; non-interactive contexts fail loud, never spawn a browser.
+- Google: `ko google auth <tag>` once → cached token; non-interactive contexts fail loud, never spawn a browser.
 - Provider keys: env vars, loaded lazily in the using module, never at import time.
 
 ## Ecosystem — use vs defer

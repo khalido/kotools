@@ -493,7 +493,7 @@ def test_cli_get_unknown_name_dies_cleanly(monkeypatch, tmp_path):
 
 @pytest.mark.skipif(
     not google_auth.token_file().exists(),
-    reason="no cached google token; run `ko gsheets auth` first for live tests",
+    reason="no cached google token; run `ko google auth` first for live tests",
 )
 def test_get_info_on_public_sheet():
     # Google's public sample sheet — the SDK uses this in its tutorials

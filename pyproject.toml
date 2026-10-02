@@ -23,8 +23,9 @@ dependencies = [
     "google-api-python-client>=2.198.0",
     "google-auth>=2.56.2",
     "google-auth-oauthlib>=1.4.0",
-    "httpx>=0.28.1",
-    "liteparse>=2.10.1",
+    "httpx>=0.28.1",  # stays: exa-py/arxiv2markdown/mcp/google-genai pin it; we don't import it
+    "httpx2>=2.12,<3",  # our own HTTP (`import httpx2 as httpx`) — pydantic's kept-API fork; OS trust store, not certifi (see WORKLOG 2026-08-31)
+    "liteparse>=2.15",  # page_label, image_mode="none", is_complex (ko doc)
     "loguru~=0.7.3",
     "markdown-it-py>=4.2.0",  # gmail draft --md: markdown -> html (also arrives transitively via rich)
     # <2 deliberately: mcp 2.0 drops `mcp.client.streamable_http.streamablehttp_client`,
@@ -35,8 +36,9 @@ dependencies = [
     "opentelemetry-sdk>=1.44.0",
     # floor at 2.21: without it uv maximizes fastmcp-slim into a 4.x prerelease and pins
     # pydantic-ai back to 2.4 (2.21 caps fastmcp-slim<4, older versions don't cap at all).
-    "pydantic-ai-slim[google,openrouter,mcp]>=2.21,<3",
+    "pydantic-ai-slim[google,openrouter,mcp]>=2.32,<3",
     "pygments>=2.20.0",
+    "python-docx>=1.2",
     "pyyaml>=6.0.3",
     "requests>=2.33.1",
     "rich>=15.0.0",  # direct import in agents/_shared.py; don't rely on typer's transitive extra
@@ -86,6 +88,7 @@ exclude = [".claude", "node_modules", "package.json", "package-lock.json"]
 
 [dependency-groups]
 dev = [
+    "pydantic-ai-harness[codemode]>=0.23.0",
     "pytest>=9.1.1",
     "ruff>=0.16",  # formatter output is version-sensitive; an older ruff would rewrap the repo
 ]

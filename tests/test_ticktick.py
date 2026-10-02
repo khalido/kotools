@@ -5,7 +5,7 @@ No network: `httpx.request` and the MCP call are monkeypatched.
 
 import json
 
-import httpx
+import httpx2 as httpx
 import pytest
 
 from ko import ticktick

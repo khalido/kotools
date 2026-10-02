@@ -49,3 +49,29 @@ def _isolate_active_google_account():
         os.environ.pop("KO_GOOGLE_ACCOUNT", None)
     else:
         os.environ["KO_GOOGLE_ACCOUNT"] = before
+
+
+@pytest.fixture(autouse=True)
+def _offline_fetch_rescue(monkeypatch, tmp_path):
+    """`ko fetch` caches to disk and, when the live fetch fails, launches a real browser and a
+    paid Exa call. Tests get a throwaway cache and neither rescuer unless they opt back in."""
+    monkeypatch.setenv("KO_CACHE_DIR", str(tmp_path / "cache"))
+    from ko import fetch
+
+    def off(name):
+        def rescuer(url):
+            raise RuntimeError(f"{name} disabled in tests")
+
+        return rescuer
+
+    monkeypatch.setattr(fetch, "_browser", off("browser"))
+    monkeypatch.setattr(fetch, "_exa", off("exa"))
+
+
+@pytest.fixture(autouse=True)
+def _isolated_local_settings(monkeypatch, tmp_path):
+    """settings.json holds machine choices (`ko google use`, `ko cal use`): a test must never read
+    the real one — it did, and the real default account leaked into an assertion."""
+    from ko import config
+
+    monkeypatch.setattr(config, "_settings_path", lambda: tmp_path / "settings.json")

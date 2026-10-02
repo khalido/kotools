@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 from urllib.parse import urlsplit
 
-import httpx
+import httpx2 as httpx
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamablehttp_client

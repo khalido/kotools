@@ -492,7 +492,7 @@ def test_search_json_carries_labels(monkeypatch):
         def execute(self, num_retries=0):
             return self._ret
 
-    monkeypatch.setattr(gmail, "get_gmail_service", lambda: _Svc())
+    monkeypatch.setattr(gmail, "service", lambda api, **k: _Svc())
     msgs = gmail.search("is:unread")
     assert len(msgs) == 1 and msgs[0].labels == ["INBOX", "IMPORTANT"]
 
@@ -529,3 +529,147 @@ def test_md_to_html_renders_gfm_tables():
     assert html_out.count(gmail._TABLE_CSS) == 4  # exactly one injection per cell (2 th + 2 td)
     assert "<s>gone</s>" in html_out and "<strong>bold</strong>" in html_out
     assert "|" not in html_out.replace("</", "").replace("<", "")  # no raw pipes survive
+
+
+# --- threads -----------------------------------------------------------------------------
+
+
+def _msg(mid, frm, *, to="me@x.com", date="Mon, 21 Sep 2026 10:00:00 +1000", unread=False, **h):
+    headers = {"From": frm, "To": to, "Subject": "Budget", "Date": date, "Message-ID": f"<{mid}@x>", **h}
+    return {
+        "id": mid,
+        "threadId": "t1",
+        "labelIds": ["INBOX"] + (["UNREAD"] if unread else []),
+        "snippet": f"snip {mid}",
+        "payload": {"headers": [{"name": k, "value": v} for k, v in headers.items()]},
+    }
+
+
+_THREAD = {
+    "id": "t1",
+    "messages": [
+        _msg("t1", "Alice <alice@x.com>"),
+        _msg("m2", "Me <me@x.com>", to="Alice <alice@x.com>, Bob <bob@x.com>"),
+        _msg("m3", "Alice <alice@x.com>", unread=True),
+    ],
+}
+
+
+def test_thread_summary_latest_date_first_subject_distinct_people():
+    t = gmail._thread(_THREAD)
+    assert (t.id, t.count, t.last_id, t.snippet) == ("t1", 3, "m3", "snip m3")
+    assert t.people == ["Alice <alice@x.com>", "Me <me@x.com>"]  # deduped by address
+    assert t.unread and "UNREAD" in t.labels
+
+
+def test_reply_target_defaults_to_latest_and_msg_picks_one():
+    msgs = _THREAD["messages"]
+    assert gmail.pick_reply_target(msgs)["id"] == "m3"
+    assert gmail.pick_reply_target(msgs, "m2")["id"] == "m2"
+    with pytest.raises(gmail.GmailError, match="isn't in this thread"):
+        gmail.pick_reply_target(msgs, "zzz")
+
+
+def test_derive_reply_to_my_own_message_goes_to_its_recipients():
+    mine = _THREAD["messages"][1]
+    r = gmail.derive_reply(mine, "me@x.com", reply_all=True)
+    assert "alice@x.com" in r.to and "bob@x.com" in r.to and "me@x.com" not in r.to
+    assert r.cc == ""  # its To isn't repeated as cc
+
+
+class _HttpErr(Exception):
+    def __init__(self, status):
+        self.resp = type("R", (), {"status": status})()
+        self.reason = "Not Found"
+
+
+def test_full_thread_resolves_a_mid_thread_message_id(monkeypatch):
+    """Gmail's thread id is its first message's id, so a later message id needs a lookup."""
+    monkeypatch.setattr(gmail, "HttpError", _HttpErr)
+    calls = []
+
+    class _Svc:
+        def users(self):
+            return self
+
+        def threads(self):
+            self._kind = "thread"
+            return self
+
+        def messages(self):
+            self._kind = "msg"
+            return self
+
+        def get(self, **kw):
+            calls.append((self._kind, kw["id"]))
+            self._args = (self._kind, kw["id"])
+            return self
+
+        def execute(self, num_retries=0):
+            kind, i = self._args
+            if kind == "thread":
+                if i != "t1":
+                    raise _HttpErr(404)
+                return _THREAD
+            return {"id": i, "threadId": "t1"}
+
+    assert gmail._full_thread(_Svc(), "m3")["id"] == "t1"
+    assert calls == [("thread", "m3"), ("msg", "m3"), ("thread", "t1")]
+
+
+def test_cli_lists_threads_with_account(monkeypatch, tmp_path):
+    import json
+
+    from typer.testing import CliRunner
+
+    from ko import cli_google
+    from ko.cli import app
+
+    monkeypatch.setenv("KO_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("KO_CONFIG_DIR", str(tmp_path / "cfg"))
+    (tmp_path / "google_token_sfl.json").write_text(json.dumps({"scopes": [], "email": "me@x.com"}))
+    monkeypatch.setattr(cli_google.gmail_mod, "recent_threads", lambda n, unread: [gmail._thread(_THREAD)])
+    r = CliRunner().invoke(app, ["gmail", "-a", "sfl"])
+    assert r.exit_code == 0, r.output
+    assert "# gmail: sfl · me@x.com" in r.stderr  # which account, on stderr
+    assert "● t1" in r.stdout and "Alice, me (3)  —  Budget" in r.stdout
+    r = CliRunner().invoke(app, ["gmail", "-a", "sfl", "--json"])
+    assert json.loads(r.stdout)[0]["account"] == "sfl"
+
+
+def test_cli_draft_reply_passes_thread_and_msg(monkeypatch, tmp_path):
+    from typer.testing import CliRunner
+
+    from ko import cli_google
+    from ko.cli import app
+
+    monkeypatch.setenv("KO_STATE_DIR", str(tmp_path))
+    seen = {}
+
+    def _fake(ref, text, **kw):
+        seen.update(ref=ref, text=text, **kw)
+        return "d1", gmail.ReplyDraft("Alice <alice@x.com>", "", "Re: Budget", "t1", "<m3@x>", "<m3@x>")
+
+    monkeypatch.setattr(cli_google.gmail_mod, "create_reply_draft", _fake)
+    r = CliRunner().invoke(app, ["gmail", "draft", "reply", "t1", "--msg", "m2", "--body", "ok"])
+    assert r.exit_code == 0, r.output
+    assert r.stdout.strip() == "d1"
+    assert (seen["ref"], seen["msg_id"], seen["text"]) == ("t1", "m2", "ok")
+    assert "reply draft to Alice <alice@x.com>" in r.stderr
+
+
+def test_unsent_drafts_are_not_reply_targets_or_the_latest():
+    draft = {**_msg("d9", "Me <me@x.com>"), "labelIds": ["DRAFT"]}
+    msgs = [*_THREAD["messages"], draft]
+    assert gmail.pick_reply_target(msgs)["id"] == "m3"
+    t = gmail._thread({"id": "t1", "messages": msgs})
+    assert t.last_id == "m3" and t.count == 3
+
+
+def test_not_found_names_the_account_only_for_id_lookups(monkeypatch):
+    monkeypatch.setattr(gmail, "active_account", lambda: "sfl")
+    with pytest.raises(gmail.GmailError, match="in account 'sfl'"):
+        gmail._handle(_HttpErr(404), "m1", lookup=True)
+    with pytest.raises(gmail.GmailError) as e:
+        gmail._handle(_HttpErr(404), "r-123")  # a draft id: plain not-found
+    assert "wrong -a" not in str(e.value)

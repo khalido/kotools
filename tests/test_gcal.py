@@ -261,3 +261,77 @@ def test_http_error_msg_extracts_clean_reason():
     msg = _http_error_msg(e)
     assert msg == "[400] Invalid id value"
     assert "http" not in msg.lower()  # no URL leakage
+
+
+# --- across accounts: merged view + where new events go ---
+
+
+def _ev(uid, start, acct, summary="Standup"):
+    return gcal.CalEvent(uid + acct, summary, start, start, True, "c", "Cal", account=acct, ical_uid=uid)
+
+
+def test_merged_dedupes_an_invite_on_two_accounts_and_sorts():
+    fake = {
+        "kd": [_ev("u1", "2026-07-02", "kd"), _ev("u2", "2026-07-01", "kd", "Lunch")],
+        "sfl": [_ev("u1", "2026-07-02", "sfl")],
+    }
+    events, warnings = gcal.merged(lambda a, ids: fake[a], ["kd", "sfl"])
+    assert [(e.summary, e.account) for e in events] == [("Lunch", "kd"), ("Standup", "kd, sfl")]
+    assert warnings == []
+
+
+def test_merged_one_dead_account_is_a_warning_unless_alone():
+    import pytest
+
+    def fetch(a, ids):
+        if a == "ne":
+            raise gcal.CalError("token revoked")
+        return [_ev("u1", "2026-07-02", a)]
+
+    events, warnings = gcal.merged(fetch, ["kd", "ne"])
+    assert len(events) == 1 and warnings == ["ne: token revoked"]
+    with pytest.raises(gcal.CalError, match="token revoked"):
+        gcal.merged(fetch, ["ne"])  # asked for just that one: a real error
+
+
+def test_merged_calendar_names_must_match_somewhere(monkeypatch):
+    import pytest
+
+    cals = {
+        "kd": [gcal.Calendar("fam@g", "Family", False, "owner")],
+        "sfl": [gcal.Calendar("k@sfl", "Work", True, "owner")],
+    }
+    monkeypatch.setattr(gcal, "list_calendars", lambda a: cals[a])
+    seen = []
+    gcal.merged(lambda a, ids: seen.append((a, ids)) or [], ["kd", "sfl"], ["family"])
+    assert seen == [("kd", ["fam@g"])]  # sfl has no Family: skipped, not an error
+    with pytest.raises(gcal.CalError, match="Holidays"):
+        gcal.merged(lambda a, ids: [], ["kd", "sfl"], ["Holidays"])
+
+
+def test_add_target_is_separate_from_the_default_account(monkeypatch, tmp_path):
+    import json
+
+    monkeypatch.setenv("KO_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("KO_GOOGLE_ACCOUNT", "kd")  # the mail default
+    assert gcal.add_target() == ("kd", "primary")  # nothing set: follow the Google default
+    (tmp_path / "settings.json").write_text(json.dumps({"cal": {"account": "sfl", "calendar": "work@g"}}))
+    assert gcal.add_target() == ("sfl", "work@g")  # `ko cal use` wins over the mail default
+    assert gcal.add_target("ne") == ("ne", "primary")  # -a: that account's primary, not sfl's calendar
+
+
+def test_cli_cal_add_json_emits_the_event(monkeypatch, tmp_path):
+    import json
+
+    from typer.testing import CliRunner
+
+    from ko import cli_google
+    from ko.cli import app
+
+    monkeypatch.setenv("KO_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("KO_GOOGLE_ACCOUNT", "kd")
+    ev = gcal.CalEvent("e1", "Dentist", "2026-10-01", "2026-10-01", True, "primary", "primary", account="kd")
+    monkeypatch.setattr(cli_google.gcal_mod, "create_event", lambda *a, **k: ev)
+    r = CliRunner().invoke(app, ["cal", "add", "Dentist", "2026-10-01", "--json"])
+    assert r.exit_code == 0, r.output
+    assert json.loads(r.stdout)["summary"] == "Dentist" and json.loads(r.stdout)["account"] == "kd"

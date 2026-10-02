@@ -2,9 +2,11 @@
 
 Deterministic routing, no LLM:
 - arxiv.org/abs|pdf links → arxiv2md (LaTeX-source markdown beats any PDF parse — measured)
-- reddit thread → the same path on reddit.synth.download, a third-party public mirror
-  (direct reddit fetching fails every method we tried; the mirror extracts cleanly via
-  trafilatura); if the mirror is dead/empty we recover via Wayback of the ORIGINAL url
+- reddit thread → the same path on a public mirror, trying a ladder in order
+  (safereddit.com → reddit.synth.download); direct reddit fetching fails every
+  method we tried (see the field-verified list in the reddit branch) and mirrors
+  churn, so the ladder is config-swappable (`[fetch] reddit_mirrors`); if every
+  mirror is dead/empty we recover via Wayback of the ORIGINAL url
 - wikipedia.org/wiki/<Title> → MediaWiki's own plaintext extract API, not trafilatura:
   the generic HTML path round-trips every wikilink as a full markdown link, ~4x the
   tokens for the same read (measured: BYD Auto, 81k vs 24k); the extract API returns
@@ -15,9 +17,18 @@ Deterministic routing, no LLM:
 - PDF (by extension or content-type) → download to ~/Downloads (where I'd look
   for it), parse via liteparse; `save=False` parses from temp and discards
 - everything else → trafilatura extraction (best-in-benchmark boilerplate removal)
-- dead link (HTTP error) → Wayback Machine (the page is gone, archive it)
-- 200 but empty extraction (paywall) → archive.today first (JS-rendered capture
-  beats Wayback on hard paywalls), then Wayback
+- when the free live fetch fails, the rescuers run IN PARALLEL and the most-preferred
+  one that succeeds wins (`_rescue`):
+  - refused (401/403/429), a bot challenge, or 200-but-empty (paywall) → a real browser
+    (agent-browser, if installed — clears JS challenges, renders SPAs), Exa contents (paid,
+    if EXA_API_KEY is set), archive.today (JS-rendered capture, good on hard paywalls),
+    Wayback — in that order of preference
+  - dead link (404/5xx/timeout) → Wayback (the page is gone, archive it), then Exa
+- results cache locally for `[fetch] cache_hours` (default 1); `fresh=True` skips it
+
+The live fetch sends the header bundle a browser sends on a top-level navigation
+(Sec-Fetch-*, et al) — a Cloudflare-class wall 403s on their absence, not on the
+User-Agent, so ours stays our own. See BROWSER for what that does and doesn't claim.
 
 Force a source: `archive=True` (Wayback), `archive_is=True` (archive.today).
 Wayback notes: availability API picks the snapshot; the `id_` URL suffix is
@@ -27,21 +38,58 @@ archive.today gates datacenter IPs behind a CAPTCHA — best-effort, residential
 
 from __future__ import annotations
 
+import fcntl
+import hashlib
+import json
+import os
+import queue
 import re
+import shutil
+import subprocess
 import tempfile
-from dataclasses import dataclass
+import threading
+import time
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from urllib.parse import unquote
 
-import httpx
+import httpx2 as httpx
 import trafilatura
 
 from . import arxiv as arxiv_mod
+from . import config
 from . import doc as doc_mod
 from . import yt as yt_mod
+from .dirs import cache_dir
 
 DOWNLOADS = Path.home() / "Downloads"
 UA = {"User-Agent": "kotools/0.1 (+https://github.com/khalido/kotools)"}
+# Bot walls (Cloudflare and friends) don't ask "are you Chrome" — they ask whether the
+# request carries the header bundle a click-initiated top-level GET sends, chiefly the
+# Sec-Fetch-* family. Measured on drive.com.au 2026-08-19: our own UA + these = 200; that
+# same UA without them = 403; a spoofed Chrome UA *without* them still 403 (claiming Chrome
+# while sending nothing Chrome sends looks worse, not better); and dropping Sec-Fetch-User
+# alone re-breaks it, three paired rounds out of three. So we keep our real UA and send the
+# bundle. `Sec-Fetch-User: ?1` does assert a click nobody made — the one false byte here,
+# and the load-bearing one. `Sec-Fetch-Site: none` likewise goes stale across redirects (a
+# browser flips it to same-origin/cross-site; httpx replays ours verbatim) — harmless so
+# far. When walls start pairing this with UA or TLS fingerprints the bundle stops working,
+# and the successor is the 403 → archive.today rung below, not a better disguise.
+BROWSER = UA | {
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-AU,en;q=0.9",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
+    "Upgrade-Insecure-Requests": "1",
+}
+# Gone, not refused: the page isn't there, so only an archive can have it.
+_GONE_STATUS = frozenset({404, 410})
+# Archives are fallbacks, run in parallel with the other rescuers: one slow archive mirror
+# must not hold a fetch for 30 s (it did — stackoverflow took 60 s+ to fail).
+_ARCHIVE_TIMEOUT = 10
+_RESCUE_DEADLINE = 25  # seconds for the whole parallel rescue; the best answer so far wins
 
 # /abs and /html → arxiv2md (LaTeX/HTML markdown beats a PDF parse — when it renders).
 # /pdf is deliberately excluded: those fall through to the PDF download path (full text),
@@ -67,7 +115,39 @@ _YT_RE = re.compile(
 _REDDIT_HOSTS = frozenset(
     {"reddit.com", "www.reddit.com", "old.reddit.com", "np.reddit.com", "m.reddit.com"}
 )
-_REDDIT_MIRROR = "reddit.synth.download"
+# The mirror ladder, in try-order. A snapshot, not a promise — probed against a live
+# thread 2026-08-31: safereddit.com (a public redlib instance — reddit re-served as
+# plain readable HTML, extracts cleanly; the ONLY one alive of 9 probed: catsarch 403s
+# us, perennialte is shut down, bloat.cat serves a challenge page, privacydev times
+# out) → reddit.synth.download (the spine until that day; 502 then, worked 2026-08 —
+# second for when it's back). Instance churn IS the recurring failure mode, so the
+# ladder is swappable without a release: `[fetch] reddit_mirrors = "h1,h2"` in
+# config.toml or KO_REDDIT_MIRRORS (comma-separated hosts, first wins).
+_BAKED_REDDIT_MIRRORS = ("safereddit.com", "reddit.synth.download")
+
+
+def _reddit_mirror_hosts() -> tuple[str, ...]:
+    raw = config.setting("KO_REDDIT_MIRRORS", "fetch", "reddit_mirrors", "")
+    hosts = tuple(h.strip().lower() for h in raw.split(",") if h.strip())
+    return hosts or _BAKED_REDDIT_MIRRORS
+
+
+def _reddit_mirrors(url: str) -> list[str] | None:
+    """A reddit thread URL → the same path/query on each mirror host, ladder order,
+    else None (any non-reddit url is returned unchanged by the caller). Straight host
+    swap per mirror. Skips redd.it short links and /s/ share links, which need reddit's
+    own redirect to resolve — the very thing that fails — so they take the normal path."""
+    try:
+        u = httpx.URL(url)
+    except httpx.InvalidURL:
+        return None
+    if u.host.lower() not in _REDDIT_HOSTS:
+        return None
+    if "s" in u.path.strip("/").split("/"):  # /r/<sub>/s/<code> share link
+        return None
+    return [str(u.copy_with(host=h)) for h in _reddit_mirror_hosts()]
+
+
 # The common ENGLISH namespaces only — "X talk:" variants and non-English prefixes
 # (Discussion:, Diskussion:) slip through to the extract API, where extracts still work,
 # just with the links-stripped trade. An exhaustive guard needs a per-language table.
@@ -106,7 +186,7 @@ def _wikipedia_ref(url: str) -> tuple[str, str] | None:
 @dataclass
 class Fetched:
     text: str
-    source: str  # "live" | "wayback" | "pdf" | "arxiv"
+    source: str  # "live" | "browser" | "exa" | "archive.is" | "wayback" | "pdf" | "arxiv" | …
     note: str = ""  # human context for stderr: saved path, wayback timestamp
 
 
@@ -115,20 +195,7 @@ def _arxiv_id(url: str) -> str | None:
     return m.group(1) if m else None
 
 
-def _reddit_mirror(url: str) -> str | None:
-    """A reddit thread URL → the same path/query on the public mirror reddit.synth.download,
-    else None (any non-reddit url is returned unchanged by the caller). Straight host swap.
-    Skips redd.it short links (host doesn't match) and /s/ share links, which need reddit's
-    own redirect to resolve — the very thing that fails — so they take the normal path."""
-    try:
-        u = httpx.URL(url)
-    except httpx.InvalidURL:
-        return None
-    if u.host.lower() not in _REDDIT_HOSTS:
-        return None
-    if "s" in u.path.strip("/").split("/"):  # /r/<sub>/s/<code> share link
-        return None
-    return str(u.copy_with(host=_REDDIT_MIRROR))
+# The common ENGLISH namespaces only — "X talk:" variants and non-English prefixes
 
 
 def _wikipedia_extract(lang: str, title: str) -> str | None:
@@ -173,7 +240,7 @@ def _wayback(url: str, date: str | None = None) -> Fetched:
     # url= param (httpx encodes, curl doesn't — verified 2026-06-13)
     query = f"url={url}" + (f"&timestamp={date}" if date else "")
     avail = httpx.get(
-        f"https://archive.org/wayback/available?{query}", headers=UA, timeout=30
+        f"https://archive.org/wayback/available?{query}", headers=UA, timeout=_ARCHIVE_TIMEOUT
     )
     avail.raise_for_status()
     closest = (avail.json().get("archived_snapshots") or {}).get("closest") or {}
@@ -184,7 +251,7 @@ def _wayback(url: str, date: str | None = None) -> Fetched:
     raw = httpx.get(
         f"https://web.archive.org/web/{ts}id_/{url}",
         headers=UA,
-        timeout=30,
+        timeout=_ARCHIVE_TIMEOUT,
         follow_redirects=True,
     )
     raw.raise_for_status()
@@ -207,7 +274,7 @@ def _archive_is(url: str) -> Fetched:
     resp = httpx.get(
         f"https://archive.ph/newest/{url}",
         headers=UA,
-        timeout=30,
+        timeout=_ARCHIVE_TIMEOUT,
         follow_redirects=True,
     )
     if resp.status_code == 429 or "captcha" in resp.text[:2000].lower():
@@ -236,13 +303,113 @@ def _pdf(content: bytes, url: str, save: bool) -> Fetched:
         return Fetched(text=doc_mod.parse(tmp.name), source="pdf")
 
 
-def _paywall_fallback(url: str, date: str | None) -> Fetched:
-    """A 200 page that extracted to nothing is usually a paywall. archive.today
-    (JS-rendered capture) beats Wayback here, so try it first, then Wayback."""
+# --- rescuers: what runs when the free, deterministic live fetch didn't get the page ---
+
+_BROWSER_SESSION = "ko-fetch"  # ko's own agent-browser session: warm between fetches, never
+# the shared default one (another agent's page), and the place logins will live later
+_READY_JS = (
+    "document.readyState === 'complete' && "
+    "!/just a moment|attention required|checking your browser|verify you are human/i.test(document.title)"
+)
+
+
+def _ab(*args: str, timeout: float) -> dict:
+    """One agent-browser call in ko's session → its `data`, or RuntimeError with its error."""
+    env = {**os.environ, "AGENT_BROWSER_SESSION": _BROWSER_SESSION}
+    r = subprocess.run(
+        ["agent-browser", "--json", *args], env=env, capture_output=True, text=True, timeout=timeout,
+        check=False,  # failures come back as {"success": false} on stdout
+    )
     try:
-        return _archive_is(url)
-    except (httpx.HTTPError, RuntimeError):
-        return _wayback(url, date)
+        out = json.loads(r.stdout)
+    except ValueError:
+        raise RuntimeError(f"agent-browser {args[0]}: {(r.stderr or r.stdout).strip()[:200]}") from None
+    if not out.get("success"):
+        raise RuntimeError(f"agent-browser {args[0]}: {out.get('error')}")
+    return out.get("data") or {}
+
+
+def _browser(url: str) -> Fetched:
+    """Render the page in a real Chrome (agent-browser) and extract it like a live fetch. Clears
+    JS bot challenges ("Just a moment…") and client-rendered pages. One shared tab, so ko
+    processes take turns (a file lock) rather than navigating each other's page."""
+    lock = cache_dir() / "fetch-browser.lock"
+    with open(lock, "w") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        _ab("open", url, timeout=20)
+        _ab("wait", "--fn", _READY_JS, "--timeout", "12000", timeout=15)
+        html = _ab("eval", "document.documentElement.outerHTML", timeout=10).get("result") or ""
+    text = _extract(html, url)
+    if not text:
+        raise RuntimeError("rendered page had no extractable content")
+    return Fetched(text=text, source="browser", note="rendered in agent-browser")
+
+
+def _exa(url: str) -> Fetched:
+    """Exa's crawler, from its own infrastructure (paid, ~$1 per 1,000 pages)."""
+    from . import exa as exa_mod
+
+    text = next(iter(exa_mod.get_contents([url]).texts.values()), "")
+    if not text.strip():
+        raise RuntimeError("Exa returned no text")
+    return Fetched(text=text, source="exa", note="exa contents (paid)")
+
+
+def _rescuers(url: str, date: str | None, dead: bool) -> list[tuple[str, object]]:
+    """(name, fn) in order of preference. A dead page's truth is its archive; a walled page's
+    is the live page, so a real browser comes first there."""
+    wayback = ("wayback", lambda: _wayback(url, date))
+    exa = [("exa", lambda: _exa(url))] if os.environ.get("EXA_API_KEY") else []
+    if dead:
+        return [wayback, *exa]
+    browser = [("browser", lambda: _browser(url))] if shutil.which("agent-browser") else []
+    return [*browser, *exa, ("archive.today", lambda: _archive_is(url)), wayback]
+
+
+def _rescue(url: str, date: str | None, *, dead: bool, why: str) -> Fetched:
+    """Run every rescuer at once; return the most-preferred success as soon as everything
+    preferred over it has failed, or the best by the deadline. Daemon threads: a hung rescuer
+    is abandoned, never waited on at exit."""
+    rungs = _rescuers(url, date, dead)
+    results: queue.Queue = queue.Queue()
+    for name, fn in rungs:
+        def run(name=name, fn=fn):
+            try:
+                results.put((name, fn()))
+            except Exception as e:  # each rung's failure is data for the final message
+                results.put((name, e))
+
+        threading.Thread(target=run, daemon=True).start()
+    done: dict[str, Fetched | Exception] = {}
+    deadline = time.monotonic() + _RESCUE_DEADLINE
+    while True:
+        for name, _ in rungs:
+            if name not in done:
+                break  # a more-preferred rung is still running — wait for it
+            if isinstance(done[name], Fetched):
+                return done[name]
+        else:
+            break  # every rung finished and failed
+        left = deadline - time.monotonic()
+        if left <= 0:
+            break
+        try:
+            name, value = results.get(timeout=left)
+        except queue.Empty:
+            break
+        done[name] = value
+    for name, _ in rungs:  # deadline: the best that did come back
+        if isinstance(done.get(name), Fetched):
+            return done[name]
+    tried = "; ".join(
+        f"{name}: {done.get(name, 'timed out')}" for name, _ in rungs
+    )
+    raise RuntimeError(f"{url}: {why}, and no fallback got it ({tried})")
+
+
+def _cache_path(url: str, archive: bool, archive_is: bool, date: str | None) -> Path:
+    key = hashlib.sha256(json.dumps([url, archive, archive_is, date]).encode()).hexdigest()[:32]
+    return cache_dir() / "fetch" / f"{key}.json"
 
 
 def fetch(
@@ -251,8 +418,35 @@ def fetch(
     archive_is: bool = False,
     date: str | None = None,
     save: bool = True,
+    fresh: bool = False,
 ) -> Fetched:
-    """One URL → markdown/text, routed by what it is. See module docstring."""
+    """One URL → markdown/text, routed by what it is, from the local cache when a fetch of it is
+    younger than `[fetch] cache_hours` (default 1). See module docstring."""
+    path = _cache_path(url, archive, archive_is, date)
+    ttl = float(config.get("fetch", "cache_hours", 1)) * 3600
+    if not fresh:
+        try:
+            age = time.time() - path.stat().st_mtime
+            if age < ttl:
+                hit = Fetched(**json.loads(path.read_text()))
+                ago = f"cached {int(age // 60)}m ago"
+                hit.note = f"{ago} · {hit.note}" if hit.note else ago
+                return hit
+        except (OSError, ValueError, TypeError):
+            pass  # no entry, or an unreadable one: fetch fresh and overwrite it
+    result = _fetch(url, archive=archive, archive_is=archive_is, date=date, save=save)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(asdict(result)))
+    return result
+
+
+def _fetch(
+    url: str,
+    archive: bool = False,
+    archive_is: bool = False,
+    date: str | None = None,
+    save: bool = True,
+) -> Fetched:
     # YouTube URLs → transcript. Must be early and deterministic: no fallback to trafilatura
     # (the description page is worse than an honest error when captions are disabled).
     if _YT_RE.match(url):
@@ -298,30 +492,36 @@ def fetch(
             except Exception:
                 pass  # OA copy bot-blocked or dead → fall through to the landing page
 
-    if mirror := _reddit_mirror(url):
-        # Why a mirror (field-verified 2026-08, don't re-test): direct fetch → blocked, .json
-        # API → HTML interstitial, old.reddit + browser UA → "Welcome to Reddit", headless
-        # browser → JS network-security challenge, Exa contents → empty. Exa doesn't index
-        # reddit.com at all (--domains reddit.com finds nothing) — an unfiltered Exa search is
-        # how the mirror surfaced. Durable path if the mirror dies for good: Reddit's OAuth API.
-        try:
-            resp = httpx.get(mirror, headers=UA, timeout=30, follow_redirects=True)
-            resp.raise_for_status()
-            text = _extract(resp.text, mirror)
-        except httpx.HTTPError:
-            text = None
-        if text:
-            return Fetched(text=text, source="reddit-mirror", note=f"reddit → {mirror}")
-        # Mirror dead/empty — someone else's infrastructure, so say so LOUDLY (a silent
-        # zero-word result reads as an empty page) and recover via Wayback of the ORIGINAL url.
+    if mirrors := _reddit_mirrors(url):
+        # Why mirrors (field-verified 2026-08-31, don't re-test): direct fetch → blocked,
+        # .json on www/api.reddit → 403 block page with AND without the BROWSER bundle +
+        # a spoofed Chrome UA (this wall is endpoint/IP-shaped, not header-shaped),
+        # old.reddit → 302 login wall (reason=lor2 — a logged-out rate limit), headless
+        # browser → JS network-security challenge, Exa contents → empty (and Exa doesn't
+        # index reddit.com at all — an unfiltered Exa search is how mirrors surfaced),
+        # pullpush.io → 200 but zero data, r.jina.ai free → empty shell. Durable path if
+        # the ladder ever dies for good: Reddit's OAuth API — the app "kotools" is
+        # registered (developers.reddit.com/apps/kotools, 2026-08-31).
+        for mirror in mirrors:
+            try:
+                resp = httpx.get(mirror, headers=BROWSER, timeout=30, follow_redirects=True)
+                resp.raise_for_status()
+                text = _extract(resp.text, mirror)
+            except httpx.HTTPError:
+                text = None
+            if text:
+                return Fetched(text=text, source="reddit-mirror", note=f"reddit → {mirror}")
+        # Whole ladder dead/empty — someone else's infrastructure, so say so LOUDLY (a
+        # silent zero-word result reads as an empty page) and recover via Wayback of the
+        # ORIGINAL url.
         try:
             r = _wayback(url, date)
-            r.note = f"reddit mirror returned no content → {r.note or 'wayback'}"
+            r.note = f"all reddit mirrors empty → {r.note or 'wayback'}"
             return r
         except Exception as e:
             raise RuntimeError(
-                f"reddit mirror ({_REDDIT_MIRROR}) returned no content, and Wayback has no "
-                f"capture of {url} — try Reddit's official OAuth API"
+                f"all reddit mirrors returned no content ({', '.join(_reddit_mirror_hosts())}), "
+                f"and Wayback has no capture of {url} — try Reddit's official OAuth API"
             ) from e
 
     if wiki_ref := _wikipedia_ref(url):
@@ -334,26 +534,38 @@ def fetch(
             # missing/empty extract (rare) — fall through, the generic path still works
 
     try:
-        # ask for markdown — agent-optimized servers (e.g. Cloudflare's markdown-for-agents)
-        # do content negotiation and hand back clean markdown; others ignore it and send HTML.
+        # No `Accept: text/markdown` — we asked servers to content-negotiate markdown and
+        # measured the result (2026-08-19): only 2 of 6 sites answer, and when they do it's
+        # a whole-DOM dump, not an extraction (drive.com.au: 31k tokens of nav and icons vs
+        # trafilatura's 4.7k of just the review). Worth re-testing as the practice matures —
+        # more sites will serve genuinely useful markdown — but today trafilatura wins.
         resp = httpx.get(
             url,
-            headers={**UA, "Accept": "text/markdown, text/html;q=0.9"},
+            headers=BROWSER,
             timeout=30,
             follow_redirects=True,
         )
         resp.raise_for_status()
     except httpx.HTTPError as e:
-        # dead link → page is gone → Wayback is the historical archive (not paywall)
-        try:
-            return _wayback(url, date)
-        except (httpx.HTTPError, RuntimeError):
-            raise RuntimeError(
-                f"{url} is unreachable ({e}) and the Wayback Machine has no usable capture"
-            ) from None
+        # 401/403/429 = refused, not gone. The page is there and a wall said no, so the
+        # JS-rendered archive.today capture is the better first try — the same rung the
+        # paywall path already uses (and it falls through to Wayback anyway, so this is a
+        # strict superset). Everything else — 404, 5xx, timeouts — really is a dead link,
+        # and Wayback is the historical archive for it.
+        # Gone (404/410, or no answer at all) → its archive is the truth. Any other status is
+        # a server that answered and said no — a wall (Cloudflare challenges come as 403 AND
+        # 503), a rate limit, a paywall — so the page exists and the browser goes first.
+        status = e.response.status_code if isinstance(e, httpx.HTTPStatusError) else None
+        dead = status is None or status in _GONE_STATUS
+        why = f"HTTP {status}" if status else f"unreachable ({type(e).__name__})"
+        return _rescue(url, date, dead=dead, why=why)
 
     content_type = resp.headers.get("content-type", "")
-    if "text/markdown" in content_type:  # the server already gave us clean markdown — use it
+    if "text/markdown" in content_type:
+        # Unsolicited — we no longer ask (see above) — but a server that volunteers markdown
+        # has already done the extraction, and trafilatura on a markdown body is
+        # length-dependent: it returns None on short docs (measured on llmstxt.org), which
+        # would send a perfectly good page down the paywall path.
         tokens = resp.headers.get("x-markdown-tokens")
         note = f"text/markdown ({tokens} tokens)" if tokens else "text/markdown"
         return Fetched(text=resp.text, source="live", note=note)
@@ -363,6 +575,6 @@ def fetch(
         return _pdf(resp.content, url, save)
 
     text = _extract(resp.text, url)
-    if not text:
-        return _paywall_fallback(url, date)  # 200 but empty → likely paywall
+    if not text:  # 200 but empty → a paywall, or a page that renders client-side
+        return _rescue(url, date, dead=False, why="the live page had no extractable content")
     return Fetched(text=text, source="live")

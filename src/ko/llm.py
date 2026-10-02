@@ -14,12 +14,14 @@ import json
 import os
 import time
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
-
-from pydantic_ai import Agent
-from pydantic_ai.messages import ModelResponse
+from typing import TYPE_CHECKING
 
 from ko import config
+
+if TYPE_CHECKING:
+    from pydantic_ai import Agent
 
 # Model tiers — pick by task stakes, not habit. Money matters for a personal tool:
 # basic/medium are the cheap workhorses; smart is capable-but-affordable; ultra is
@@ -70,7 +72,13 @@ SCHEMA_SYSTEM = (
     "Be accurate; leave a field empty (or omit it) only when the input doesn't supply it."
 )
 
-_agent = Agent(instructions=DEFAULT_SYSTEM)
+@lru_cache(maxsize=1)
+def _default_agent() -> Agent:
+    """The model-less default agent — built on first use: importing pydantic-ai costs ~0.5 s,
+    and every `ko` command imports this module for its constants."""
+    from pydantic_ai import Agent
+
+    return Agent(instructions=DEFAULT_SYSTEM)
 
 
 @dataclass
@@ -101,10 +109,35 @@ class RunCost:
 last_cost: RunCost | None = None
 
 
+class TruncatedOutput(RuntimeError):
+    """The model stopped before finishing — partial text must never pass as an answer."""
+
+
+def _raise_if_cut_short(messages: list, model: str) -> None:
+    """A provider can abort mid-generation and still return 200 with partial text and
+    finish_reason "error" (seen 2026-10-01: Gemini Flash via OpenRouter on a page image, cut
+    mid-sentence, 0 usage). pydantic-ai hands that back as a normal result; ko refuses it."""
+    from pydantic_ai.messages import ModelResponse
+
+    last = next((m for m in reversed(messages) if isinstance(m, ModelResponse)), None)
+    if last is None or last.finish_reason not in ("error", "length", "content_filter"):
+        return
+    why = {
+        "error": "the provider errored mid-answer",
+        "length": "it hit the output-token limit",
+        "content_filter": "a content filter stopped it",
+    }[last.finish_reason]
+    upstream = (last.provider_details or {}).get("downstream_provider")
+    via = f" (upstream: {upstream})" if upstream else ""
+    raise TruncatedOutput(f"{model} stopped early — {why}{via}; partial output discarded. Retry or try another -m.")
+
+
 def run_cost(messages: list) -> RunCost:
     """Aggregate cost over a run's messages. OpenRouter puts the ACTUAL billed cost in
     provider_details['cost'] — prefer it; fall back to a genai-prices estimate, which
     can fail for brand-new models (then tokens only)."""
+    from pydantic_ai.messages import ModelResponse
+
     model, tin, tout, usd, source = "?", 0, 0, None, ""
     for m in messages:
         if not isinstance(m, ModelResponse):
@@ -177,16 +210,20 @@ def run(
         # is also the shape provider prompt-caching rewards.
         prompt = f"<input>\n{stdin}\n</input>\n\n{prompt}"
     user_prompt = [prompt, *attachments] if attachments else prompt
+    from pydantic_ai import Agent
+
     if schema is not None:
         from pydantic_ai import StructuredDict
 
         agent = Agent(instructions=system or SCHEMA_SYSTEM, output_type=StructuredDict(schema))
         result = agent.run_sync(user_prompt, model=model or default_model())
         last_cost = run_cost(result.all_messages())
+        _raise_if_cut_short(result.all_messages(), model or default_model())
         return json.dumps(result.output, separators=(",", ":"), default=str)
-    agent = Agent(instructions=system) if system else _agent
+    agent = Agent(instructions=system) if system else _default_agent()
     result = agent.run_sync(user_prompt, model=model or default_model())
     last_cost = run_cost(result.all_messages())
+    _raise_if_cut_short(result.all_messages(), model or default_model())
     return str(result.output)
 
 
@@ -260,7 +297,7 @@ def refresh_openrouter_models(ttl: int = _OPENROUTER_TTL, *, force: bool = False
         except OSError:
             pass
     try:
-        import httpx
+        import httpx2 as httpx
 
         data = httpx.get(OPENROUTER_MODELS_URL, timeout=10).json()["data"]
     except Exception:

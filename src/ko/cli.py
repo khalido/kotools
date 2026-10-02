@@ -44,10 +44,27 @@ def _startup(
 ) -> None:
     """Runs before every command: make config.toml [keys] available as env vars,
     and instrument LLM telemetry if opted in ([telemetry] enabled — off by default)."""
+    import os
+
     from . import config, telemetry
 
+    # pydantic-ai ≥2.51 prints an ASCII-art Logfire ad before the first agent run; stderr is
+    # for notes an agent can act on, so ko opts out (a real env var still wins).
+    os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")
     config.load_keys_into_env()
     telemetry.setup()
+
+
+def _online(host: str = "openrouter.ai", timeout: float = 1.5) -> bool:
+    """Can we reach the internet? One TCP connect, so `ko doctor` can skip its live checks
+    offline instead of stalling on each one's timeout."""
+    import socket
+
+    try:
+        socket.create_connection((host, 443), timeout=timeout).close()
+        return True
+    except OSError:
+        return False
 
 
 @app.command("doctor")
@@ -138,7 +155,7 @@ def doctor(
         (
             "doc",
             "PDF/Office/image → text (local)",
-            "LibreOffice for Office files",
+            "LibreOffice for Office files (not .docx)",
             ("✓ found", "green") if soffice else ("– optional", "yellow"),
         ),
         (
@@ -194,7 +211,7 @@ def doctor(
             "OAuth client + token",
             (f"✓ authed ({google_auth.active_account()})", "green")
             if google_auth.token_file().exists()
-            else ("– run `ko gsheets auth`", "yellow")
+            else ("– run `ko google auth`", "yellow")
             if google_auth.client_file().exists()
             else ("✗ no client file", "red"),
         ),
@@ -204,7 +221,7 @@ def doctor(
             "OAuth client + token (same as gsheets)",
             (f"✓ authed ({google_auth.active_account()})", "green")
             if google_auth.token_file().exists()
-            else ("– run `ko gsheets auth`", "yellow")
+            else ("– run `ko google auth`", "yellow")
             if google_auth.client_file().exists()
             else ("✗ no client file", "red"),
         ),
@@ -236,7 +253,11 @@ def doctor(
         table.add_row(name, does, needs, f"[{color}]{status}[/{color}]")
     console.print(table)
 
-    _llm.refresh_openrouter_models()  # populate/refresh the OR catalog cache
+    online = _online()
+    if online:
+        _llm.refresh_openrouter_models()  # populate/refresh the OR catalog cache
+    else:
+        console.print("[yellow]offline — skipped the live checks (model catalog refresh, OpenRouter credits, account lookups)[/yellow]")
     extra = [m for m in _llm.available_models() if ":" in m]
     providers = sorted({m.split(":")[0] for m in extra})
     console.print(
@@ -266,6 +287,11 @@ def doctor(
         ("google account", active_account(), config.setting_source("KO_GOOGLE_ACCOUNT", "google", "account")),
         ("publish domain", _publish.publish_domain() or "(workers.dev)", "config" if config.get("publish", "domain") else "default"),
     ]
+    from .cli_google import account_lines
+
+    console.print("google accounts:")
+    for line in account_lines(lookup=online):
+        console.print("  " + line, highlight=False, markup=False, soft_wrap=True)
     console.print(
         "[dim]settings: "
         + " · ".join(f"{name}={val} ({src})" for name, val, src in settings)
@@ -295,7 +321,7 @@ def doctor(
 
     # live OpenRouter key check — /credits is a free authenticated GET, so this both
     # proves the key works and shows money left (the agent-tier default rides on it)
-    if config.key_source("OPENROUTER_API_KEY"):
+    if online and config.key_source("OPENROUTER_API_KEY"):
         from . import billing
 
         b = billing.openrouter()  # never raises — errors land in b.error
@@ -336,6 +362,7 @@ def doctor(
                     },
                     "models": {"count": len(extra), "providers": providers},
                     "config_error": config.config_error(),
+                    "online": online,
                 }
             )
         )
@@ -630,6 +657,8 @@ def main() -> None:
     import sys
     import time
 
+    from . import config, google_auth
+
     sys.argv[1:] = _route(sys.argv[1:])
     if os.environ.get("_KO_COMPLETE"):  # shell-completion run — never log it
         app()
@@ -648,6 +677,27 @@ def main() -> None:
         if code not in (0, None) and err is None:
             err = _shared._last_error
         raise
+    except google_auth.AuthError as e:
+        # The one Google failure every command can hit before its own error net: no usable
+        # token. One line naming the fix, never a traceback (agents read stderr, not frames).
+        code, err = 1, "AuthError"
+        if "--json" in sys.argv:
+            import json
+
+            fix = {"fix": e.fix} if e.fix else {}
+            print(json.dumps({"error": e.msg, "code": "auth"} | fix), file=sys.stderr)
+        else:
+            print(str(e), file=sys.stderr)
+        raise SystemExit(1) from None
+    except config.ConfigError as e:
+        code, err = 1, "ConfigError"
+        if "--json" in sys.argv:
+            import json
+
+            print(json.dumps({"error": str(e), "code": "config"}), file=sys.stderr)
+        else:
+            print(str(e), file=sys.stderr)
+        raise SystemExit(1) from None
     except BaseException as e:
         code, err = 1, type(e).__name__
         raise

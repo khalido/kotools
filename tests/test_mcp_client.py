@@ -73,7 +73,7 @@ def test_load_servers_expands_env(monkeypatch, tmp_path):
 def test_probe_replaces_html_body_with_terse_note(monkeypatch):
     """_probe should NOT quote raw HTML into the error — it's useless noise.
     Instead it emits a terse '(HTML page, not an MCP endpoint?)' hint."""
-    import httpx
+    import httpx2 as httpx
 
     html_body = "<!DOCTYPE html><html><head><title>App</title></head><body><h1>Not found</h1></body></html>"
 
@@ -94,7 +94,7 @@ def test_probe_replaces_html_body_with_terse_note(monkeypatch):
 
 def test_probe_keeps_json_error_snippet(monkeypatch):
     """Non-HTML error bodies (JSON payloads) should keep the current 300-char quote."""
-    import httpx
+    import httpx2 as httpx
 
     json_body = '{"error": "endpoint not configured", "code": "not_found"}'
 

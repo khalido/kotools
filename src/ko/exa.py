@@ -15,11 +15,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Literal, get_args
-
-from exa_py import Exa
+from typing import TYPE_CHECKING, Literal, get_args
 
 from ko import config
+
+if TYPE_CHECKING:
+    from exa_py import Exa
 
 DEFAULT_MAX_RESULTS = 10
 DEFAULT_MAX_CHARS = 3000
@@ -79,6 +80,8 @@ class Contents:
 
 
 def _client() -> Exa:
+    from exa_py import Exa  # ~0.35 s — only when a search actually runs
+
     key = config.require_key(
         "EXA_API_KEY",
         "Get a key at https://exa.ai/ and export EXA_API_KEY=<key> "

@@ -82,7 +82,7 @@ class _FakeService:
 
 def _patch_docs(monkeypatch, get_result, cap, batch_result=None):
     monkeypatch.setattr(
-        gdocs, "get_docs_service", lambda readonly=True: _FakeService(get_result, cap, batch_result)
+        gdocs, "service", lambda api, readonly=True: _FakeService(get_result, cap, batch_result)
     )
 
 
@@ -270,3 +270,77 @@ def test_replace_tab_orphan_guard_cli(monkeypatch):
     monkeypatch.setattr(cli_google.gdrive_mod, "list_comments", lambda doc: [])
     r3 = runner.invoke(app, ["gdocs", "replace", "docid", "Q2", "Q3", "--tab", "Acme"])
     assert r3.exit_code == 0 and len(calls) == 1
+
+
+# --- gdocs push: the edges a live run tripped on (2026-09-11) ---
+
+
+def _push_stubs(monkeypatch, calls):
+    from ko import gdocs, gdrive
+
+    monkeypatch.setattr(gdrive, "push_markdown", lambda md, title, folder_id=None, update_id=None: calls.append((md, title, folder_id, update_id)) or "NEWID")
+    monkeypatch.setattr(gdrive, "export_markdown", lambda doc: "# old\n")
+    monkeypatch.setattr(gdocs, "get_info", lambda doc: gdocs.DocInfo(id=doc, title="Old"))
+
+
+def test_push_refuses_empty_markdown_instead_of_creating_a_blank_doc(monkeypatch):
+    from typer.testing import CliRunner
+
+    from ko.cli import app
+
+    calls = []
+    _push_stubs(monkeypatch, calls)
+    r = CliRunner().invoke(app, ["gdocs", "push", "-", "--title", "x"], input="   \n")
+    assert r.exit_code == 2 and "empty" in r.output and calls == []
+
+
+def test_push_missing_file_is_a_usage_error_not_a_traceback(monkeypatch, tmp_path):
+    from typer.testing import CliRunner
+
+    from ko.cli import app
+
+    calls = []
+    _push_stubs(monkeypatch, calls)
+    r = CliRunner().invoke(app, ["gdocs", "push", str(tmp_path / "nope.md")])
+    assert r.exit_code == 2 and "no such file" in r.output and calls == []
+
+
+def test_push_onto_a_non_doc_says_so(monkeypatch):
+    """A Sheet id as TARGET: Drive refuses the markdown export with a 400 — that used to escape
+    as a raw HttpError traceback."""
+    from googleapiclient.errors import HttpError
+    from typer.testing import CliRunner
+
+    from ko import gdrive
+    from ko.cli import app
+
+    calls = []
+    _push_stubs(monkeypatch, calls)
+
+    class _Resp:
+        status = 400
+        reason = "The requested conversion is not supported."
+
+    def refuse(doc):
+        raise HttpError(_Resp(), b"conversion not supported")
+
+    monkeypatch.setattr(gdrive, "export_markdown", refuse)
+    r = CliRunner().invoke(app, ["gdocs", "push", "-", "SHEETID", "--force"], input="# x\n")
+    assert r.exit_code == 1 and "isn't a Google Doc" in r.output and calls == []
+    assert "Traceback" not in r.output
+
+
+def test_push_create_and_update_paths(monkeypatch, tmp_path):
+    from typer.testing import CliRunner
+
+    from ko.cli import app
+
+    calls = []
+    _push_stubs(monkeypatch, calls)
+    md = tmp_path / "proposal.md"
+    md.write_text("# hi\n")
+    r = CliRunner().invoke(app, ["gdocs", "push", str(md)])
+    assert r.exit_code == 0 and r.stdout.strip() == "NEWID"
+    assert calls[-1] == ("# hi\n", "proposal", None, None)  # title defaults to the file stem
+    r = CliRunner().invoke(app, ["gdocs", "push", str(md), "DOCID", "--force"])
+    assert r.exit_code == 0 and calls[-1] == ("# hi\n", "", None, "DOCID")

@@ -10,7 +10,7 @@ The single list of candidate subcommands. WORKLOG tracks what happened; this tra
 
 **Shipped this session (2026-06-22 → 27):** gmail `thread`; Google lib shared-spine refactor (errors/http/id in `google_auth`); CLI agent-friendliness pass (clean errors, no stdout leaks, fuller `--json`, `AGENTS.md`, trailing-`help`); **`ko prompt`** (kickoff briefs); `ko cal --calendar` allowlist; `ko exa search` summaries + human dates; hn `--min-comments` fix; **`ko mcp` inspect/call/overview/servers** (client + `mcp.json` registry with `${ENV}` expansion + an agent that summarizes a server); **`ko billing`** (OpenRouter); **local logging via loguru** + `ko logs`; repo made public + PyPI-ready; `cli.py` split into `_cli_shared`/`cli_google`/`cli_web`/`cli_ai`; `pydantic-ai-slim[mcp]` added.
 
-**The one blocker (USER action):** finish Google auth — APIs enabled ✓ (gcloud, project `kotools-500611`); now **publish the consent app** (External) + `ko gsheets auth` & `-a personal auth`. Everything Google-shaped waits on this.
+**The one blocker (USER action):** finish Google auth — APIs enabled ✓ (gcloud, project `kotools-500611`); now **publish the consent app** (External) + `ko google auth <tag>` per account. Everything Google-shaped waits on this.
 
 **Build queue (decided, in order):**
 1. **Google auth live** (user) → smoke-test `ko cal` / `gmail` / `gdocs` / `gsheets`.
@@ -156,11 +156,33 @@ none urgent:
   refresh; X access tokens ~2h). Worth it mainly for **`ko x bookmarks`** (curated saves) — the
   rest is niche. Skip unless bookmarks/likes become a habit; the bearer already covers lists +
   search + user timelines + full-archive.
-- [ ] **Shared `http.get_json()` helper** — hn/hf/papers/tmdb each hand-roll a near-identical httpx
-  `_get` (now over the CLAUDE.md "three things" bar). One chokepoint = one place for timeout/retry
-  policy, and makes a future `import httpx2 as httpx` swap a one-file change. (httpx2 = Pydantic's
-  maintained httpx successor; **wait to migrate** — pydantic-ai still pins plain `httpx` as of v2.4,
-  the move lives only on its unmerged `use-httpx2` branch. Trigger: that branch shipping in a release.)
+- [ ] **Shared `http.get_json()` helper + the httpx2 migration path** — hn/hf/papers/tmdb each
+  hand-roll a near-identical httpx `_get` (now over the CLAUDE.md "three things" bar, and the
+  planned `ko reddit` would be the fifth). One chokepoint = one place for timeout/retry policy,
+  and makes the httpx→httpx2 swap a one-line change.
+  **httpx2 status (verified 2026-08-31, HN 49477212 + our own uv.lock):** the shift is real —
+  OpenAI SDK 3.3.0 **and Anthropic's SDK have migrated**; httpxyz (the other fork) folded itself
+  into httpx2 as "the blessed fork"; httpx2 is Pydantic-sponsored with Kludex (new Starlette
+  maintainer) and promises to *keep* the existing API. Upstream httpx is dormant: no stable
+  release since 2024-12, issues/discussions closed, 1.0 work in a private repo. **Our venv
+  already runs BOTH**: openai 3.3.0 and genai-prices depend on httpx2 today, while
+  pydantic-ai-slim core, mcp, and google-genai still pin plain httpx (12 of our modules import
+  it directly).
+  **Decision: DONE 2026-08-31, same day — the trigger fired.** `uv lock --upgrade` took
+  pydantic-ai-slim 2.32 → **2.36.0, which depends on httpx2** (its own HTTP — every LLM
+  call — now rides httpx2's OS trust store, accepted and live-smoked). We added
+  `httpx2>=2.12,<3` as our own dep and swapped all 22 of our import sites to
+  `import httpx2 as httpx` (src + tests — tests construct Response/Request and raise
+  the exceptions our code catches, so they must be the same package). Plain `httpx`
+  stays installed for the libs that pin it (exa-py, arxiv2markdown, mcp/fastmcp-slim,
+  google-genai, pydantic-ai-harness) — both stacks ship, which is the fork's design,
+  not our problem. Verified: 531 tests, live generic fetch, reddit ladder end-to-end,
+  `ko billing` (Client + auth headers). One 2.36 break found+fixed:
+  `agent._instructions` entries are now `SourcedInstruction` wrappers (the guard test
+  looks through `.instruction`; pre-2.36 bare-callable shape still handled).
+  **Left as the standing pattern:** the shared `http.get_json()` chokepoint is still
+  worth building (hn/hf/papers/tmdb hand-roll `_get`; `ko reddit` would be the fifth) —
+  and now it starts life importing httpx2.
 - [ ] **`ko papers bib <id>` / `ko papers watch`** — extensions to the shipped `ko papers`
   (lab-motivated but generic, noted 2026-07-03): `bib` = DOI→BibTeX (doi.org content
   negotiation `Accept: application/x-bibtex`, or from OpenAlex fields; ~flag-sized).
@@ -170,6 +192,34 @@ none urgent:
   keyless (`/api/records/{id}` → files + checksums): list, selectively download,
   verify. figshare/OSF later behind the same verb. First real use: the 2DMatGMM
   in-focus set (10.5281/zenodo.8042834) for the UTS autofocus benchmark.
+- [ ] **`ko reddit search "<query>" [--sub] [--months N]`** — Reddit thread search over
+  the official API (motivated 2026-08-31 by the EV research habit: "threads on the
+  Xpeng X9 in the last six months"). Research done:
+  - **Credentials: the OAuth app "kotools"** (developers.reddit.com/apps/kotools,
+    registered 2026-08-31) — `REDDIT_CLIENT_ID`/`REDDIT_CLIENT_SECRET`, already in the
+    README keys table. **App-only flow** (client_credentials, HTTP Basic auth to
+    `/api/v1/access_token`) = read-only, no user login, no password; token per run,
+    nothing to cache (100 req/min free tier is plenty for CLI use).
+  - **Not Devvit** (dead end, researched): Devvit is reddit's platform for apps that
+    RUN ON reddit (games, mod tools, custom posts); its "Reddit API" client
+    authenticates automatically inside their infra — "you don't need to create an app
+    or manage API keys" applies to Devvit apps only, and a Devvit token can't
+    authenticate an external CLI. The `npm create devvit` app is inert for ko.
+  - **No library** — hand-roll httpx like hn/hf/papers/tmdb (ko precedent; surface is
+    two endpoints). `POST /api/v1/access_token` (Basic id:secret, grant_type=
+    client_credentials) → `GET oauth.reddit.com/search?q=…&sort=&t=` or
+    `/r/<sub>/search?restrict_sr=1`; `GET /comments/{id}` gives the true comment tree
+    (the thing mirrors can't). PRAW is the reach-for IF ambitions grow to user-context
+    (bookmarks/home timeline — same tier wall as `ko x`) or streaming; for read-search
+    it's a heavy dep wrapping two GETs.
+  - **`--months N`**: the API's `t=` granularity is hour/day/week/month/year/all — no
+    "six months" — so `t=year` + client-side `created_utc` filter, the same shape as
+    `ko hn search`'s 12-month default. Output TSV in the hn pattern (date, score,
+    comments, sub, title, url) → composes with `ko fetch <url>` (mirror ladder) today
+    and an OAuth thread route later.
+  - UA best practice per reddit's guidance: keep our real `kotools/…` UA (identify,
+    don't disguise — same stance as the BROWSER bundle).
+
 
 - [x] **`ko yt <url>`** — SHIPPED. YouTube → transcript / summary.
   - Transcript: **youtube-transcript-api** (v1.2.4) — hits YouTube's transcript endpoint directly, no video download; auto-captions, manual subs, translation. (yt-dlp is overkill for transcript-only.)

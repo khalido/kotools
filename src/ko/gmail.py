@@ -1,9 +1,11 @@
 """Gmail — read + attachments + drafts over the Gmail v1 API.
 
-Concise by design (less verbose than the Gmail MCP): a list is one line per message
-(id, date, from, subject, snippet); a view is headers + the plain-text body. Pass Gmail's
-own search syntax verbatim — `from:`, `to:`, `subject:`, `newer_than:7d`, `is:unread`,
-`has:attachment`. `view` reads one message; `thread` reads a whole conversation.
+Thread-first, like Gmail itself (a lone email is a one-message thread): a list is one line per
+thread (id, latest date, who, count, subject, latest snippet); `thread` reads a conversation;
+`view` reads one message. Replies go to a thread (its latest message, as Gmail's Reply does)
+or to one message in it. Pass Gmail's own search syntax verbatim — `from:`, `to:`, `subject:`,
+`newer_than:7d`, `is:unread`, `has:attachment`. The message-level `search`/`recent` stay for
+`ko brief`.
 
 **Attachments** work under the read-only scope (list + download). **Drafts** (new / reply /
 list / show / update / send) need `gmail.compose` — one re-auth per account. **Sending is
@@ -30,9 +32,10 @@ from googleapiclient.errors import HttpError
 from ko import config
 from ko.google_auth import (
     GoogleError,
+    active_account,
     get_credentials,
-    get_gmail_service,
     raise_for_status,
+    service,
 )
 
 
@@ -56,17 +59,21 @@ class GmailError(GoogleError):
     pass
 
 
-def _handle(e: HttpError, context: str) -> None:
+def _handle(e: HttpError, context: str, lookup: bool = False) -> None:
     # Gmail says 400 "Invalid id value" for malformed message/thread ids — speak
     # in ko's voice, not the API's ("no message with id 'X'", not "[400] Invalid id value")
-    if e.resp.status == 400 and "invalid id" in (e.reason or "").lower():
-        raise GmailError(f"no message or thread with id {context!r}") from e
+    # Message/thread ids are per-account, so a not-found on one (`lookup`) names the account —
+    # the usual cause is a missing -a.
+    if lookup and (e.resp.status == 404 or (e.resp.status == 400 and "invalid id" in (e.reason or "").lower())):
+        raise GmailError(
+            f"no message or thread with id {context!r} in account '{active_account()}' — wrong -a?"
+        ) from e
     raise_for_status(
         e,
         context,
         not_found=GmailError,
         permission=GmailError,
-        hint="Did you `ko gmail auth` (grants gmail.readonly)?",
+        hint="Did you `ko google auth` (grants gmail.readonly)?",
     )
 
 
@@ -112,9 +119,9 @@ def _message(m: dict) -> GmailMessage:
     )
 
 
-def search(query: str, n: int = 10) -> list[GmailMessage]:
+def search(query: str, n: int = 10, account: str | None = None) -> list[GmailMessage]:
     """Messages matching a Gmail query string (verbatim Gmail syntax). One metadata fetch per hit."""
-    svc = get_gmail_service()
+    svc = service("gmail", account=account)
     try:
         # maxResults is a single-page cap (Gmail tops out at 500); we don't paginate — this is a
         # "first n" tool, so n stays small. Then one metadata fetch per hit for headers + snippet.
@@ -134,14 +141,76 @@ def search(query: str, n: int = 10) -> list[GmailMessage]:
         return []  # unreachable: _handle always raises (keeps the return type honest)
 
 
-def recent(n: int = 10, unread: bool = False, query: str = "in:inbox") -> list[GmailMessage]:
+def recent(
+    n: int = 10, unread: bool = False, query: str = "in:inbox", account: str | None = None
+) -> list[GmailMessage]:
     """Recent inbox messages (newest first), optionally only unread."""
-    return search(query + (" is:unread" if unread else ""), n)
+    return search(query + (" is:unread" if unread else ""), n, account)
 
 
-def from_sender(who: str, n: int = 10, unread: bool = False) -> list[GmailMessage]:
-    """Messages from a person — a convenience wrapper over `from:<who>`."""
-    return search(f"from:{who}" + (" is:unread" if unread else ""), n)
+@dataclass
+class GmailThread:
+    id: str
+    date: str  # the latest message's
+    subject: str  # the first message's
+    people: list[str]  # distinct senders' From values, oldest first
+    count: int
+    unread: bool  # any message unread
+    snippet: str  # the latest message's
+    last_id: str  # the latest message's id
+    labels: list[str] = field(default_factory=list)  # union over the thread's messages
+    list_unsubscribe: str = ""  # first one found — set on newsletters, empty on human mail
+
+
+def _sent(msgs: list[dict]) -> list[dict]:
+    """A thread's messages minus unsent drafts (Gmail returns those too) — unless that's all."""
+    return [m for m in msgs if "DRAFT" not in m.get("labelIds", [])] or msgs
+
+
+def _thread(t: dict) -> GmailThread:
+    msgs = [_message(m) for m in _sent(t.get("messages", []))]
+    first, last = msgs[0], msgs[-1]
+    people: list[str] = []
+    for m in msgs:
+        if m.from_ and email_of(m.from_) not in {email_of(p) for p in people}:
+            people.append(m.from_)
+    return GmailThread(
+        id=t["id"],
+        date=last.date,
+        subject=first.subject,
+        people=people,
+        count=len(msgs),
+        unread=any(m.unread for m in msgs),
+        snippet=last.snippet,
+        last_id=last.id,
+        labels=sorted({lab for m in msgs for lab in m.labels}),
+        list_unsubscribe=next((m.list_unsubscribe for m in msgs if m.list_unsubscribe), ""),
+    )
+
+
+def search_threads(query: str, n: int = 10) -> list[GmailThread]:
+    """Threads with any message matching a Gmail query, newest activity first. One metadata
+    fetch per thread."""
+    svc = service("gmail")
+    try:
+        resp = svc.users().threads().list(userId="me", q=query, maxResults=n).execute(num_retries=3)
+        return [
+            _thread(
+                svc.users()
+                .threads()
+                .get(userId="me", id=ref["id"], format="metadata", metadataHeaders=_META_HEADERS)
+                .execute(num_retries=3)
+            )
+            for ref in resp.get("threads", [])
+        ]
+    except HttpError as e:
+        _handle(e, f"search {query!r}")
+        return []  # unreachable
+
+
+def recent_threads(n: int = 10, unread: bool = False) -> list[GmailThread]:
+    """Inbox threads, newest activity first, optionally only those with unread mail."""
+    return search_threads("in:inbox" + (" is:unread" if unread else ""), n)
 
 
 def _decode(data: str) -> str:
@@ -169,25 +238,36 @@ def _message_body(m: dict) -> str:
 
 def get_message(msg_id: str) -> tuple[GmailMessage, str]:
     """A single message: (metadata, plain-text body). Falls back to text/html if no plain part."""
-    svc = get_gmail_service()
+    svc = service("gmail")
     try:
         m = svc.users().messages().get(userId="me", id=msg_id, format="full").execute(num_retries=3)
         return _message(m), _message_body(m)
     except HttpError as e:
-        _handle(e, msg_id)
+        _handle(e, msg_id, lookup=True)
         raise  # unreachable: _handle always raises
 
 
-def get_thread(thread_id: str) -> list[tuple[GmailMessage, str]]:
-    """A whole conversation: every message as (metadata, plain-text body), oldest first.
-    Pass a thread id (a message's thread_id, or the same id Gmail shows for single-message threads)."""
-    svc = get_gmail_service()
+def _full_thread(svc, ref: str) -> dict:
+    """A thread (format=full) from a thread id OR the id of any message in it. Gmail gives a
+    thread its first message's id, so a later message's id needs a lookup of its threadId."""
     try:
-        t = svc.users().threads().get(userId="me", id=thread_id, format="full").execute(num_retries=3)
-        return [(_message(m), _message_body(m)) for m in t.get("messages", [])]
+        return svc.users().threads().get(userId="me", id=ref, format="full").execute(num_retries=3)
     except HttpError as e:
-        _handle(e, thread_id)
+        if e.resp.status not in (400, 404):
+            _handle(e, ref, lookup=True)
+    try:
+        m = svc.users().messages().get(userId="me", id=ref, format="minimal").execute(num_retries=3)
+        return svc.users().threads().get(userId="me", id=m["threadId"], format="full").execute(num_retries=3)
+    except HttpError as e:
+        _handle(e, ref, lookup=True)
         raise  # unreachable: _handle always raises
+
+
+def get_thread(ref: str) -> list[tuple[GmailMessage, str]]:
+    """A whole conversation: every message as (metadata, plain-text body), oldest first.
+    `ref` is a thread id or the id of any message in the thread."""
+    t = _full_thread(service("gmail"), ref)
+    return [(_message(m), _message_body(m)) for m in t.get("messages", [])]
 
 
 # --- attachments (read-only scope) -------------------------------------------------------
@@ -233,11 +313,11 @@ def _walk_attachments(payload: dict) -> list[tuple[str, str, int, str]]:
 
 def list_attachments(msg_id: str) -> list[Attachment]:
     """Attachments on a message, 1-based in payload order. Works under gmail.readonly."""
-    svc = get_gmail_service()
+    svc = service("gmail")
     try:
         m = svc.users().messages().get(userId="me", id=msg_id, format="full").execute(num_retries=3)
     except HttpError as e:
-        _handle(e, msg_id)
+        _handle(e, msg_id, lookup=True)
         raise  # unreachable
     return [
         Attachment(i, name, mime, size, att_id)
@@ -274,7 +354,7 @@ def download_attachments(msg_id: str, index: int | None = None, out_dir: Path | 
             )
         atts = [match]
     out_dir.mkdir(parents=True, exist_ok=True)
-    svc = get_gmail_service()
+    svc = service("gmail")
     saved = []
     for a in atts:
         try:
@@ -286,7 +366,7 @@ def download_attachments(msg_id: str, index: int | None = None, out_dir: Path | 
                 .execute(num_retries=3)
             )
         except HttpError as e:
-            _handle(e, msg_id)
+            _handle(e, msg_id, lookup=True)
             raise  # unreachable
         name = Path(a.filename).name or "attachment"  # strip any path components in the filename
         path = _unique_path(out_dir / name)
@@ -308,9 +388,9 @@ def _compose_service():
     if COMPOSE_SCOPE not in (creds.scopes or []):
         raise GmailError(
             "re-auth needed: this Gmail token can't create drafts (missing gmail.compose). "
-            "Run `ko gmail auth --logout` then `ko gmail auth`."
+            f"Run `ko google auth {active_account()}` to re-consent."
         )
-    return get_gmail_service()  # built from the same (compose-capable) token
+    return service("gmail")  # built from the same (compose-capable) token
 
 
 def _no_newlines(name: str, value: str) -> None:
@@ -413,26 +493,28 @@ class ReplyDraft:
     references: str
 
 
-def _email(addr: str) -> str:
+def email_of(addr: str) -> str:
     return parseaddr(addr)[1].lower()
 
 
 def derive_reply(
     orig: dict, my_addr: str, *, reply_all: bool = False, subject_override: str | None = None
 ) -> ReplyDraft:
-    """Reply fields from the original message dict. `to` = Reply-To if present else From;
-    `--all` adds the original To+Cc as Cc, minus our own address. `Re: ` prefixed once;
+    """Reply fields from the original message dict. `to` = Reply-To if present else From — or,
+    replying to our own message, its original To (as Gmail does); `--all` adds the original
+    To+Cc as Cc, minus our own address. `Re: ` prefixed once;
     References = original References + its Message-ID. A subject override that differs from the
     threaded subject drops threadId (keeping the RFC headers). No Message-ID -> can't thread."""
     h = _headers(orig)
     msg_id = h.get("message-id")
     if not msg_id:
         raise GmailError("original message has no Message-ID header — can't thread a reply")
-    to = h.get("reply-to") or h.get("from", "")
+    from_me = bool(my_addr) and email_of(h.get("from", "")) == email_of(my_addr)
+    to = h.get("to", "") if from_me else (h.get("reply-to") or h.get("from", ""))
     cc = ""
     if reply_all:
-        mine = _email(my_addr)
-        seen, keep = {mine, _email(to)}, []
+        mine = email_of(my_addr)
+        seen, keep = {mine} | {a.lower() for _, a in getaddresses([to]) if a}, []
         for _name, email in getaddresses([h.get("to", ""), h.get("cc", "")]):
             e = email.lower()
             if e and e not in seen:
@@ -486,30 +568,37 @@ def _merge_cc(to: str, cc: str, extra: str) -> str:
     return ", ".join(merged)
 
 
+def pick_reply_target(msgs: list[dict], msg_id: str | None = None) -> dict:
+    """Which message in a thread a reply answers: `msg_id` if given (must be in the thread),
+    else the latest non-draft — as Gmail's own Reply does. If that one is mine, derive_reply
+    addresses its recipients, not me."""
+    if msg_id:
+        for m in msgs:
+            if m["id"] == msg_id:
+                return m
+        raise GmailError(f"message {msg_id!r} isn't in this thread — `ko gmail thread` lists its ids")
+    return _sent(msgs)[-1]
+
+
 def create_reply_draft(
-    msg_id: str,
+    ref: str,
     body: str,
     *,
+    msg_id: str | None = None,
     html_body: str | None = None,
     reply_all: bool = False,
     subject_override: str | None = None,
     extra_cc: str = "",
     attachments: list[Path] | None = None,
-) -> str:
-    """Create a reply draft threaded onto message `msg_id`; returns its draft id.
-    `extra_cc` adds cc addresses on top of whatever reply/reply-all derived (deduped)."""
+) -> tuple[str, ReplyDraft]:
+    """Create a reply draft in thread `ref` (a thread id or any message id in it), answering
+    `msg_id` or else the thread's latest message. Returns (draft id, the
+    derived reply fields). `extra_cc` adds cc addresses on top of reply/reply-all's (deduped)."""
     svc = _compose_service()
-    try:
-        orig = svc.users().messages().get(userId="me", id=msg_id, format="full").execute(num_retries=3)
-    except HttpError as e:
-        _handle(e, msg_id)
-        raise  # unreachable
-    r = derive_reply(
-        orig,
-        my_address() if reply_all else "",  # only --all filters self out of To+Cc
-        reply_all=reply_all,
-        subject_override=subject_override,
-    )
+    thread = _full_thread(svc, ref)
+    me = my_address()
+    orig = pick_reply_target(thread.get("messages", []), msg_id)
+    r = derive_reply(orig, me, reply_all=reply_all, subject_override=subject_override)
     raw = _build_raw(
         to=r.to,
         cc=_merge_cc(r.to, r.cc, extra_cc),
@@ -528,7 +617,7 @@ def create_reply_draft(
     except HttpError as e:
         _handle(e, "create reply draft")
         raise  # unreachable
-    return d["id"]
+    return d["id"], r
 
 
 @dataclass
@@ -716,7 +805,7 @@ _PROFILE = _ProfileCache()
 def my_address() -> str:
     """The authed account's own email (users.getProfile — works under readonly). Cached per run."""
     if _PROFILE.addr is None:
-        svc = get_gmail_service()
+        svc = service("gmail")
         try:
             _PROFILE.addr = svc.users().getProfile(userId="me").execute(num_retries=3)["emailAddress"]
         except HttpError as e:

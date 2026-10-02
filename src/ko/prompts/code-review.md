@@ -5,7 +5,8 @@ description: Review brief — conventions, simplicity, push back, verify before 
 # Review this code the way I'd review it
 
 Paste this into whatever agent is holding the diff. It's the portable version of my
-`/ko-review` skill — same taste, no Claude Code required.
+`/ko-review` skill — same taste, no Claude Code required. `/ko-review` is canonical (it's
+where transcript-mined lessons land); this copy last synced 2026-08-20.
 
 ---
 
@@ -43,6 +44,14 @@ will never change?
 secrets or raw exceptions leaking to users, path traversal. Authz consistency: is every new
 route/action gated the same way as the page it serves — middleware *and* handler? Packaging:
 do the `COPY` lines and ignore-files keep `.env`, secrets, and data out of images and commits?
+
+**Duplication** — is a derived or displayed number computed in more than one place? Every
+number wants exactly one owning function that page, chart, doc and agent tool all call —
+never recompute. And does this change silently clamp, round, or net anomalous data instead
+of surfacing it so the source gets fixed?
+
+**Reinvention** — does this reimplement something the repo already has? Grep before
+believing it's new; most duplication is a helper the author couldn't find.
 
 **Consistency** — does it match the patterns already in this codebase and the rules in
 CLAUDE.md? Leftover debug code, stray TODOs, commented-out blocks?

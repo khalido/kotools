@@ -1,8 +1,10 @@
 """Google Calendar reader/writer — a small agenda + quick-add over the Calendar v3 API.
 
-Read your agenda across calendars, add an event, list calendars. Reads use the read-only scope,
-writes the read+write one (one `ko gsheets auth` covers both). Times render in your local zone
-(config `[cal] timezone`, default Australia/Sydney).
+Read your agenda across calendars — and across every signed-in Google account, merged (`merged`);
+add an event, list calendars. Reads use the read-only scope, writes the read+write one (one
+`ko google auth` covers both). Times render in your local zone (config `[cal] timezone`, default
+Australia/Sydney). New events go to the `ko cal use` target (`add_target`), which is set apart
+from the default Google account: switching mail accounts doesn't move where events land.
 
 Deliberately minimal: editing/deleting events, RSVPs, Meet links, recurrence rules — the web UI
 wins at those. This is "what's on" and "put this on my calendar".
@@ -17,7 +19,16 @@ from zoneinfo import ZoneInfo
 from googleapiclient.errors import HttpError
 
 from ko import config
-from ko.google_auth import GoogleError, get_calendar_service, raise_for_status
+from ko.google_auth import (
+    NETWORK_ERRORS,
+    AuthError,
+    GoogleError,
+    active_account,
+    list_accounts,
+    raise_for_status,
+    sa_file,
+    service,
+)
 
 DEFAULT_TZ = "Australia/Sydney"
 
@@ -41,6 +52,8 @@ class CalEvent:
     calendar_name: str
     location: str | None = None
     html_link: str | None = None
+    account: str = ""  # the ko account tag(s) it came from — "kd, sfl" when an invite is on both
+    ical_uid: str = ""  # same across attendees' copies of one event — the cross-account dedupe key
 
 
 class CalError(GoogleError):
@@ -49,7 +62,7 @@ class CalError(GoogleError):
 
 def _handle(e: HttpError, context: str) -> None:
     raise_for_status(
-        e, context, not_found=CalError, permission=CalError, hint="Did you `ko cal auth` (read+write)?"
+        e, context, not_found=CalError, permission=CalError, hint="Did you `ko google auth` (read+write)?"
     )
 
 
@@ -90,9 +103,9 @@ def _inclusive_end_date(exclusive: str) -> str:
         return exclusive
 
 
-def list_calendars() -> list[Calendar]:
+def list_calendars(account: str | None = None) -> list[Calendar]:
     """Every calendar on the account (primary, shared, subscribed)."""
-    svc = get_calendar_service()
+    svc = service("calendar", account=account)
     out: list[Calendar] = []
     token = None
     while True:
@@ -151,7 +164,7 @@ def _start_key(ev: CalEvent) -> datetime:
         return datetime.max.replace(tzinfo=UTC)
 
 
-def _event(raw: dict, cal_id: str, cal_name: str) -> CalEvent:
+def _event(raw: dict, cal_id: str, cal_name: str, account: str = "") -> CalEvent:
     s, e = raw.get("start", {}), raw.get("end", {})
     all_day = "date" in s
     if all_day:
@@ -170,6 +183,8 @@ def _event(raw: dict, cal_id: str, cal_name: str) -> CalEvent:
         calendar_name=cal_name,
         location=raw.get("location"),
         html_link=raw.get("htmlLink"),
+        account=account,
+        ical_uid=raw.get("iCalUID", ""),
     )
 
 
@@ -189,13 +204,15 @@ def list_events(
     calendar_ids: list[str] | None = None,
     time_min: datetime | None = None,
     time_max: datetime | None = None,
+    account: str | None = None,
 ) -> list[CalEvent]:
-    """Events over the next `days` (default: from the start of today in the configured zone),
-    across all calendars (or calendar_ids), sorted by start. `time_min`/`time_max` override the
-    window ends. Recurring events are expanded (singleEvents=True)."""
-    svc = get_calendar_service()
+    """One account's events over the next `days` (default: from the start of today in the
+    configured zone), across all its calendars (or calendar_ids), sorted by start.
+    `time_min`/`time_max` override the window ends. Recurring events are expanded."""
+    account = account or active_account()
+    svc = service("calendar", account=account)
     tmin, tmax = _window(days, time_min, time_max)
-    cals = {c.id: c.name for c in list_calendars()}
+    cals = {c.id: c.name for c in list_calendars(account)}
     ids = calendar_ids or list(cals)
     events: list[CalEvent] = []
     for cid in ids:
@@ -218,7 +235,7 @@ def list_events(
             except HttpError as e:
                 _handle(e, cid)
             for raw in resp.get("items", []):
-                events.append(_event(raw, cid, cals.get(cid, cid)))
+                events.append(_event(raw, cid, cals.get(cid, cid), account))
             token = resp.get("nextPageToken")
             if not token:
                 break
@@ -227,7 +244,11 @@ def list_events(
 
 
 def search_events(
-    query: str, days: int = 60, past: bool = False, calendar_ids: list[str] | None = None
+    query: str,
+    days: int = 60,
+    past: bool = False,
+    calendar_ids: list[str] | None = None,
+    account: str | None = None,
 ) -> list[CalEvent]:
     """Events whose summary contains `query` (case-insensitive substring), within `days` of now.
     Forward by default ("when's the next X"); past=True searches backward and returns most-recent
@@ -238,12 +259,107 @@ def search_events(
     if past:
         now = _now()
         events = list_events(
-            time_min=now - timedelta(days=days), time_max=now, calendar_ids=calendar_ids
+            time_min=now - timedelta(days=days), time_max=now, calendar_ids=calendar_ids, account=account
         )
         matches = [e for e in events if q in e.summary.lower()]
         matches.reverse()  # list_events sorts ascending; most recent first for "last X"
         return matches
-    return [e for e in list_events(days=days, calendar_ids=calendar_ids) if q in e.summary.lower()]
+    return [
+        e for e in list_events(days=days, calendar_ids=calendar_ids, account=account) if q in e.summary.lower()
+    ]
+
+
+# --- across accounts: the merged view, and where new events go ---
+
+
+def calendar_accounts() -> list[str]:
+    """Signed-in OAuth accounts — service-account profiles have no calendars of their own."""
+    return [a for a in list_accounts() if not sa_file(a).exists()]
+
+
+def _match_ids(names: list[str], cals: list[Calendar]) -> tuple[list[str], set[str]]:
+    """(ids of `names` found in `cals`, the names that matched) — lenient per account."""
+    ids, hit = [], set()
+    for name in names:
+        for c in cals:
+            if name.strip() == c.id or name.strip().lower() == c.name.lower():
+                ids.append(c.id)
+                hit.add(name)
+                break
+    return ids, hit
+
+
+def _dedupe(events: list[CalEvent]) -> list[CalEvent]:
+    """One row per (iCalUID, start): a meeting invited to two of your accounts shows once,
+    tagged with both."""
+    seen: dict[tuple[str, str], CalEvent] = {}
+    out = []
+    for ev in events:
+        key = (ev.ical_uid, ev.start)
+        if ev.ical_uid and key in seen:
+            first = seen[key]
+            if ev.account not in first.account.split(", "):
+                first.account += f", {ev.account}"
+            continue
+        seen[key] = ev
+        out.append(ev)
+    return out
+
+
+def merged(fetch, accounts: list[str], calendars: list[str] | None = None) -> tuple[list[CalEvent], list[str]]:
+    """Run `fetch(account, calendar_ids)` for each account → (events sorted + deduped, warnings).
+    One account failing (dead token, admin revoked) is a warning, not the end of the agenda —
+    unless it's the only one asked for, or they all failed. `calendars` (names or ids) must
+    each match in at least one account."""
+    events: list[CalEvent] = []
+    warnings: list[str] = []
+    matched: set[str] = set()
+    for acct in accounts:
+        try:
+            ids = None
+            if calendars:
+                ids, hit = _match_ids(calendars, list_calendars(acct))
+                matched |= hit
+                if not ids:
+                    continue
+            events += fetch(acct, ids)
+        except (GoogleError, AuthError, HttpError, *NETWORK_ERRORS) as e:
+            if len(accounts) == 1:
+                raise
+            warnings.append(f"{acct}: {e}")
+    if calendars and (missing := [c for c in calendars if c not in matched]):
+        if not warnings:
+            raise CalError(f"no calendar named {missing} in {', '.join(accounts)} — `ko cal cals` lists them")
+        warnings.append(f"no calendar named {missing} in the accounts that answered")
+    if accounts and len(warnings) == len(accounts):
+        raise CalError("every account failed — " + "; ".join(warnings))
+    return _dedupe(sorted(events, key=_start_key)), warnings
+
+
+def add_target(account: str | None = None) -> tuple[str, str]:
+    """(account, calendar id) for a new event: `-a` → the `ko cal use` account → the default
+    Google account; the `ko cal use` calendar applies only to its own account, else primary."""
+    saved = config.local_get("cal", "account")
+    acct = account or saved or active_account()
+    cal = config.local_get("cal", "calendar") if acct == saved else None
+    return acct, cal or "primary"
+
+
+def set_add_target(account: str, calendar: str | None = None) -> Calendar | None:
+    """Point `cal add` at an account (+ optionally one of its calendars, by name or id)."""
+    if account not in calendar_accounts():
+        raise CalError(f"no signed-in Google account {account!r} — `ko google accounts` lists them")
+    cal = None
+    if calendar:
+        cals = list_calendars(account)
+        ids, _ = _match_ids([calendar], cals)
+        if not ids:
+            avail = ", ".join(sorted(c.name for c in cals))
+            raise CalError(f"no calendar {calendar!r} in {account}. Available: {avail}")
+        cal = next(c for c in cals if c.id == ids[0])
+    config.local_set("cal", "account", account)
+    config.local_set("cal", "calendar", cal.id if cal else None)
+    return cal
 
 
 def parse_when(s: str) -> tuple[bool, date | datetime]:
@@ -291,17 +407,18 @@ def create_event(
     end: str | None = None,
     calendar_id: str = "primary",
     minutes: int = 60,
+    account: str | None = None,
 ) -> CalEvent:
     """Create an event. `when`/`end` per parse_when; a timed event with no end defaults to
     +`minutes`. All-day when -> all-day event. Returns the created CalEvent."""
     body = _event_body(summary, when, end, minutes)
     try:
         raw = (
-            get_calendar_service(readonly=False)
+            service("calendar", readonly=False, account=account)
             .events()
             .insert(calendarId=calendar_id, body=body)
             .execute(num_retries=3)
         )
     except HttpError as e:
         _handle(e, f"insert event on {calendar_id}")
-    return _event(raw, calendar_id, calendar_id)
+    return _event(raw, calendar_id, calendar_id, account or active_account())

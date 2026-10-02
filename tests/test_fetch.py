@@ -1,6 +1,6 @@
 """Offline tests for ko.fetch — routing logic + extraction, no network."""
 
-import httpx
+import httpx2 as httpx
 import pytest
 from typer.testing import CliRunner
 
@@ -30,27 +30,40 @@ def test_arxiv_id_detection():
 
 
 def test_reddit_mirror_rewrites_known_hosts():
-    # straight host swap, path + query preserved
-    assert (
-        fetch._reddit_mirror("https://www.reddit.com/r/Python/comments/abc/title/?x=1")
-        == "https://reddit.synth.download/r/Python/comments/abc/title/?x=1"
-    )
+    # straight host swap per mirror, path + query preserved, ladder order
+    out = fetch._reddit_mirrors("https://www.reddit.com/r/Python/comments/abc/title/?x=1")
+    assert out == [
+        "https://safereddit.com/r/Python/comments/abc/title/?x=1",
+        "https://reddit.synth.download/r/Python/comments/abc/title/?x=1",
+    ]
     for host in ("reddit.com", "old.reddit.com", "np.reddit.com", "m.reddit.com"):
-        out = fetch._reddit_mirror(f"https://{host}/r/x/comments/1/t/")
-        assert out == "https://reddit.synth.download/r/x/comments/1/t/"
+        out = fetch._reddit_mirrors(f"https://{host}/r/x/comments/1/t/")
+        assert out[0] == "https://safereddit.com/r/x/comments/1/t/"
 
 
-def test_reddit_mirror_passes_through_non_reddit_and_short_links():
+def test_reddit_mirrors_pass_through_non_reddit_and_short_links():
     # non-reddit, redd.it short links, and /s/ share links are left for the normal path
-    assert fetch._reddit_mirror("https://example.com/r/Python/comments/abc/") is None
-    assert fetch._reddit_mirror("https://redd.it/abc123") is None
-    assert fetch._reddit_mirror("https://www.reddit.com/r/Python/s/xYz123") is None
+    assert fetch._reddit_mirrors("https://example.com/r/Python/comments/abc/") is None
+    assert fetch._reddit_mirrors("https://redd.it/abc123") is None
+    assert fetch._reddit_mirrors("https://www.reddit.com/r/Python/s/xYz123") is None
+
+
+def test_reddit_mirror_ladder_is_config_overridable(monkeypatch):
+    # instance churn is THE failure mode — a dead ladder must be swappable without a release
+    monkeypatch.setenv("KO_REDDIT_MIRRORS", "mine.example, other.example")
+    out = fetch._reddit_mirrors("https://www.reddit.com/r/x/comments/1/t/")
+    assert out == [
+        "https://mine.example/r/x/comments/1/t/",
+        "https://other.example/r/x/comments/1/t/",
+    ]
 
 
 def test_reddit_route_sets_source_and_note(monkeypatch):
-    # a live reddit fetch routes through the mirror; source + note make the swap observable
+    # a live reddit fetch routes through the ladder; source + note name WHICH mirror
+    # served — a rotation makes the note load-bearing for debugging
     def fake_get(url, **kw):
-        assert url.startswith("https://reddit.synth.download/")  # never hits reddit itself
+        assert url.startswith(("https://safereddit.com/", "https://reddit.synth.download/"))
+        assert not url.startswith("https://www.reddit.com")  # never reddit itself
         html = (
             "<html><head><title>T</title></head><body><article><h1>Thread</h1>"
             "<p>A long enough comment body that trafilatura keeps it as real content "
@@ -62,11 +75,35 @@ def test_reddit_route_sets_source_and_note(monkeypatch):
     monkeypatch.setattr(fetch.httpx, "get", fake_get)
     r = fetch.fetch("https://www.reddit.com/r/Python/comments/abc/title/")
     assert r.source == "reddit-mirror"
-    assert "reddit.synth.download" in r.note  # substitution is visible/debuggable
+    assert "safereddit.com" in r.note  # substitution is visible/debuggable
+
+
+def test_reddit_ladder_falls_through_a_dead_first_mirror(monkeypatch):
+    # first mirror up-but-empty (churned/blocked/challenge page), second serves —
+    # first non-empty EXTRACT wins, not first 200
+    def fake_get(url, **kw):
+        if url.startswith("https://safereddit.com/"):
+            # a challenge page: 200, but nothing extractable (script-only body)
+            return httpx.Response(
+                200, html="<html><body><script>var x=1;</script></body></html>",
+                request=httpx.Request("GET", url),
+            )
+        html = (
+            "<html><head><title>T</title></head><body><article><h1>Thread</h1>"
+            "<p>A long enough comment body that trafilatura keeps it as real content "
+            "rather than discarding it as boilerplate navigation or footer noise.</p>"
+            "</article></body></html>"
+        )
+        return httpx.Response(200, html=html, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(fetch.httpx, "get", fake_get)
+    r = fetch.fetch("https://www.reddit.com/r/Python/comments/abc/title/")
+    assert r.source == "reddit-mirror"
+    assert "reddit.synth.download" in r.note  # the SECOND mirror served this one
 
 
 def test_reddit_mirror_dead_falls_back_to_wayback_of_original(monkeypatch):
-    # mirror 404s → recover via Wayback of the ORIGINAL reddit url, not the mirror
+    # every mirror down → recover via Wayback of the ORIGINAL reddit url, never a mirror
     def dead_get(url, **kw):
         return httpx.Response(404, request=httpx.Request("GET", url))
 
@@ -149,15 +186,49 @@ def test_archive_is_detects_captcha_block(monkeypatch):
         fetch._archive_is("https://example.com/paywalled")
 
 
-def test_paywall_fallback_cascades_to_wayback(monkeypatch):
-    monkeypatch.setattr(
-        fetch, "_archive_is", lambda url: (_ for _ in ()).throw(RuntimeError("blocked"))
-    )
-    monkeypatch.setattr(
-        fetch, "_wayback", lambda url, date: fetch.Fetched("recovered", "wayback")
-    )
-    result = fetch._paywall_fallback("https://example.com/x", None)
-    assert result.source == "wayback" and result.text == "recovered"
+def test_rescue_prefers_the_browser_even_when_an_archive_answers_first(monkeypatch):
+    import time
+
+    monkeypatch.setattr(fetch.shutil, "which", lambda name: "/bin/agent-browser")
+    monkeypatch.setenv("EXA_API_KEY", "k")
+
+    def slow_browser(url):
+        time.sleep(0.2)
+        return fetch.Fetched("live page", "browser")
+
+    monkeypatch.setattr(fetch, "_browser", slow_browser)
+    monkeypatch.setattr(fetch, "_exa", lambda url: fetch.Fetched("exa copy", "exa"))
+    monkeypatch.setattr(fetch, "_archive_is", lambda url: fetch.Fetched("old capture", "archive.is"))
+    monkeypatch.setattr(fetch, "_wayback", lambda url, date: fetch.Fetched("older", "wayback"))
+    r = fetch._rescue("https://example.com/x", None, dead=False, why="refused (403)")
+    assert r.source == "browser"
+
+
+def test_rescue_falls_through_failures_and_names_them_all(monkeypatch):
+    monkeypatch.setattr(fetch.shutil, "which", lambda name: None)  # no agent-browser
+    monkeypatch.delenv("EXA_API_KEY", raising=False)
+    monkeypatch.setattr(fetch, "_archive_is", lambda url: (_ for _ in ()).throw(RuntimeError("captcha")))
+    monkeypatch.setattr(fetch, "_wayback", lambda url, date: fetch.Fetched("recovered", "wayback"))
+    assert fetch._rescue("https://example.com/x", None, dead=False, why="w").source == "wayback"
+    monkeypatch.setattr(fetch, "_wayback", lambda url, date: (_ for _ in ()).throw(RuntimeError("no capture")))
+    with pytest.raises(RuntimeError, match=r"refused \(403\).*archive.today: captcha; wayback: no capture"):
+        fetch._rescue("https://example.com/x", None, dead=False, why="refused (403)")
+
+
+def test_fetch_cache_reuses_then_fresh_refetches(monkeypatch):
+    calls = []
+
+    def fake_get(url, **kw):
+        calls.append(url)
+        html = "<html><body><article><p>a page body long enough to extract.</p></article></body></html>"
+        return httpx.Response(200, html=html, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(fetch.httpx, "get", fake_get)
+    first = fetch.fetch("https://example.com/c")
+    again = fetch.fetch("https://example.com/c")
+    assert len(calls) == 1 and again.text == first.text and again.note.startswith("cached 0m ago")
+    fetch.fetch("https://example.com/c", fresh=True)
+    assert len(calls) == 2
 
 
 def test_extract_html_to_markdown():
@@ -250,3 +321,88 @@ def test_wikipedia_ref_rejects_non_article_hosts_and_paths():
     assert fetch._wikipedia_ref("https://en.wikipedia.org/w/index.php?title=Dog") is None  # not /wiki/
     assert fetch._wikipedia_ref("https://en.wikipedia.org/wiki/") is None  # empty title
     assert fetch._wikipedia_ref("https://en.wikipedia.beevil.org/wiki/Dog") is None  # lookalike host
+
+
+def test_live_fetch_sends_the_navigation_header_bundle(monkeypatch):
+    # The whole bot-wall fix is these headers — a silent drop would 403 again with no test failing.
+    seen = {}
+
+    def fake_get(url, **kw):
+        seen.update(kw.get("headers") or {})
+        html = "<html><body><article><p>a page body long enough to extract.</p></article></body></html>"
+        return httpx.Response(200, html=html, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(fetch.httpx, "get", fake_get)
+    fetch.fetch("https://example.com/page")
+    assert seen["Sec-Fetch-Mode"] == "navigate"
+    assert seen["Sec-Fetch-User"] == "?1"  # load-bearing: dropping it re-403s drive.com.au
+    assert seen["Upgrade-Insecure-Requests"] == "1"
+    assert seen["User-Agent"].startswith("kotools/")  # our own UA, not a spoofed Chrome
+    assert "markdown" not in seen["Accept"]  # we no longer negotiate for it
+
+
+def test_volunteered_markdown_passes_through_unextracted(monkeypatch):
+    # We stopped ASKING for markdown; a server that sends it anyway has already extracted,
+    # and trafilatura returns None on short markdown bodies (would fake a paywall).
+    body = "# Title\n\nA short markdown doc, well under trafilatura's floor.\n"
+
+    def fake_get(url, **kw):
+        return httpx.Response(
+            200,
+            text=body,
+            headers={"content-type": "text/markdown; charset=utf-8", "x-markdown-tokens": "17"},
+            request=httpx.Request("GET", url),
+        )
+
+    monkeypatch.setattr(fetch.httpx, "get", fake_get)
+    r = fetch.fetch("https://llmstxt.org/index.md")
+    assert r.text == body and r.source == "live" and "17 tokens" in r.note
+
+
+@pytest.mark.parametrize(
+    "status,expect_archive_is",
+    [(403, True), (429, True), (401, True), (503, True), (404, False), (410, False)],
+)
+def test_refused_tries_archive_is_first_but_gone_goes_straight_to_wayback(
+    monkeypatch, status, expect_archive_is
+):
+    # A 403 means the page EXISTS and a wall said no — archive.today's JS capture is the
+    # right first try. A 404 means gone, and Wayback is the historical archive.
+    tried = []
+
+    def fake_get(url, **kw):
+        if "archive.ph" in url:
+            tried.append("archive.is")
+            raise httpx.ConnectError("nope")
+        if "archive.org" in url:
+            tried.append("wayback")
+            raise httpx.ConnectError("nope")
+        tried.append("live")
+        return httpx.Response(status, text="blocked", request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(fetch.httpx, "get", fake_get)
+    with pytest.raises(RuntimeError):
+        fetch.fetch("https://www.drive.com.au/reviews/some-car/")
+    assert ("archive.is" in tried) is expect_archive_is
+    assert "wayback" in tried  # either way we still end at Wayback
+
+
+def test_cli_fetch_json_keeps_order_and_reports_failures(monkeypatch):
+    import json
+
+    from typer.testing import CliRunner
+
+    from ko import cli_web
+    from ko.cli import app
+
+    def fake(u, **kw):
+        if "bad" in u:
+            raise RuntimeError("unreachable")
+        return cli_web.fetch_mod.Fetched(text="x" * 40, source="live")
+
+    monkeypatch.setattr(cli_web.fetch_mod, "fetch", fake)
+    r = CliRunner().invoke(app, ["fetch", "https://a.com", "https://bad.com", "--json"])
+    assert r.exit_code == 0, r.output
+    rows = json.loads(r.stdout)
+    assert rows[0] == {"url": "https://a.com", "source": "live", "tokens": 10, "note": "", "text": "x" * 40}
+    assert rows[1] == {"url": "https://bad.com", "error": "unreachable"}

@@ -11,13 +11,6 @@ from pathlib import Path
 
 import typer
 
-from . import billing as billing_mod
-from . import brief as brief_mod
-from . import llm as llm_mod
-from . import mcp_client as mcp_client_mod
-from . import prompt as prompt_mod
-from . import publish as publish_mod
-from . import ticktick as ticktick_mod
 from ._cli_shared import (
     _die,
     _emit_json,
@@ -25,17 +18,17 @@ from ._cli_shared import (
     _reject_group_flags,
     _tsv_cell,
     app,
+    lazy,
 )
-from .agents import (
-    ai_repl,
-    ai_run,
-    repo_repl,
-    repo_run,
-    research_repl,
-    research_run,
-    tv_repl,
-    tv_run,
-)
+
+billing_mod = lazy("billing")
+brief_mod = lazy("brief")
+llm_mod = lazy("llm")
+mcp_client_mod = lazy("mcp_client")
+prompt_mod = lazy("prompt")
+publish_mod = lazy("publish")
+ticktick_mod = lazy("ticktick")
+agents = lazy("agents")  # pydantic-ai + every toolset: the bulk of the old startup
 
 # --- sub-apps ---
 
@@ -102,7 +95,7 @@ def _read_media(inp: str, guessed: str) -> tuple[bytes, str, str]:
     if p.is_file():
         return p.read_bytes(), guessed, p.name
     if inp.startswith(("http://", "https://")):
-        import httpx
+        import httpx2 as httpx
 
         r = httpx.get(inp, timeout=30, follow_redirects=True)
         r.raise_for_status()
@@ -382,9 +375,9 @@ def ai_cmd(
     + its own memory. One-shot or REPL; sessions saved; capped at 30 model requests/run."""
     try:
         if prompt:
-            ai_run(prompt, model=model, resume=resume)
+            agents.ai_run(prompt, model=model, resume=resume)
         else:
-            ai_repl(model=model, resume=resume)
+            agents.ai_repl(model=model, resume=resume)
     except FileNotFoundError:
         _die(f"no saved session {resume!r} — see `ko agent sessions`")
     except typer.Exit:
@@ -417,11 +410,11 @@ def agent_research(
     """Research agent across web (exa), papers (arxiv, hf), and HN. No prompt = interactive REPL."""
     try:
         if prompt:
-            research_run(
+            agents.research_run(
                 prompt, model=model, resume=resume
             )  # prints itself; resume continues a session
         else:
-            research_repl(model=model, resume=resume)
+            agents.research_repl(model=model, resume=resume)
     except FileNotFoundError:
         _die(f"no saved session {resume!r} — see `ko agent sessions`")
     except typer.Exit:
@@ -451,9 +444,9 @@ def agent_repo(
     refs/ reference clones; knows the refs/CLAUDE.md map). Cheap model, cites file:line."""
     try:
         if prompt:
-            repo_run(prompt, model=model, resume=resume)
+            agents.repo_run(prompt, model=model, resume=resume)
         else:
-            repo_repl(model=model, resume=resume)
+            agents.repo_repl(model=model, resume=resume)
     except FileNotFoundError:
         _die(f"no saved session {resume!r} — see `ko agent sessions`")
     except typer.Exit:
@@ -478,9 +471,9 @@ def agent_tv(
     """TV/movie agent — what to watch in Australia, tuned to Ko. No prompt = interactive REPL."""
     try:
         if prompt:
-            tv_run(prompt, model=model, resume=resume)
+            agents.tv_run(prompt, model=model, resume=resume)
         else:
-            tv_repl(model=model, resume=resume)
+            agents.tv_repl(model=model, resume=resume)
     except FileNotFoundError:
         _die(f"no saved session {resume!r} — see `ko agent sessions`")
     except typer.Exit:
