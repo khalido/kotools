@@ -2,6 +2,8 @@
 uses a minimal hand-built PDF (PDFium reconstructs the missing xref table).
 """
 
+from pathlib import Path
+
 import pytest
 
 from ko import doc
@@ -153,3 +155,61 @@ def test_docx_keeps_word_list_numbers_and_text_inside_fields(tmp_path):
     d.save(f)
     body = doc.docx_markdown(f)[1]
     assert body.split("\n\n") == ["Federal Court of Australia", "1. First reason.\n2. Second reason."]
+
+
+def _fake_worker(monkeypatch, out, assets_files=()):
+    """Stand in for the docling subprocess: drop `assets_files` into the assets dir it was
+    given and return `out` as its JSON."""
+    import json
+    import subprocess
+    from types import SimpleNamespace as NS
+
+    def run(cmd, **kw):
+        args = json.loads(cmd[-1])
+        if args["assets_dir"]:
+            d = Path(args["assets_dir"])
+            d.mkdir(parents=True, exist_ok=True)
+            for name, data in assets_files:
+                (d / name).write_bytes(data)
+        return NS(returncode=0, stdout=json.dumps(out), stderr="")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(doc, "pages_needing_ocr", lambda p: set())
+
+
+def test_deep_renames_figures_by_page_and_keeps_one_copy_of_a_repeat(tmp_path, monkeypatch):
+    f = tmp_path / "m.pdf"
+    f.write_bytes(b"%PDF-")
+    logo, chart = b"logo-bytes", b"chart-bytes"
+    out = {
+        "total": 72, "figures": 3, "described": {"tried": 0, "got": 0, "errors": []},
+        "pages": [
+            {"num": 17, "md": "![Image](a/image_000_x.png)\n\n![Image](a/image_001_y.png)"},
+            {"num": 18, "md": "## 1-62\n\n![Image](a/image_002_x.png)"},
+        ],
+    }
+    _fake_worker(monkeypatch, out, [("image_000_x.png", logo), ("image_001_y.png", chart), ("image_002_x.png", logo)])
+    assets = tmp_path / "m_assets"
+    d, figures = doc.deep(f, assets_dir=assets)
+    assert figures == 3 and d.total == 72 and d.markdown
+    assert sorted(p.name for p in assets.iterdir()) == ["p017-fig1.png", "p017-fig2.png"]
+    assert d.pages[0].text == "![p017-fig1](m_assets/p017-fig1.png)\n\n![p017-fig2](m_assets/p017-fig2.png)"
+    assert d.pages[1].text == "## 1-62\n\n![p017-fig1](m_assets/p017-fig1.png)"  # the repeat links the kept copy
+    assert doc.marked(d).startswith("<!-- source: m.pdf · 72 pages · md5 ")
+
+
+def test_deep_describe_fails_loud_when_descriptions_come_back_empty(tmp_path, monkeypatch):
+    f = tmp_path / "m.pdf"
+    f.write_bytes(b"%PDF-")
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    out = {"total": 1, "figures": 2, "pages": [{"num": 1, "md": "x"}],
+           "described": {"tried": 2, "got": 0, "errors": ["Error calling the API. status=402"]}}
+    _fake_worker(monkeypatch, out)
+    with pytest.raises(RuntimeError, match=r"described 0 of 2 figures — Error calling the API. status=402"):
+        doc.deep(f, describe=True)
+
+
+def test_deep_page_range_is_one_contiguous_span():
+    assert doc._page_range("5") == [5, 5] and doc._page_range("5-9") == [5, 9]
+    with pytest.raises(ValueError, match="one page range"):
+        doc._page_range("1,3")

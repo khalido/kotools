@@ -63,7 +63,7 @@ class Doc:
 
 @dataclass
 class Page:
-    num: int  # 1-based position in the document
+    num: int | None  # 1-based position in the document; None for a pageless format
     label: str | None  # the PDF's own page label ("iv", "A-1") when it defines one
     text: str
 
@@ -130,8 +130,10 @@ def marked(doc: Doc) -> str:
     `<!-- page N -->` line: invisible when rendered, trivially greppable, what lets a reader
     trace a claim to its page. Plain-text pages sit in a ```text fence; --md pages don't."""
     def mark(pg: Page) -> str:
+        if pg.num is None:  # a pageless format (.docx/.pptx via docling): no marker to give
+            return ""
         label = f" · {pg.label}" if pg.label and pg.label != str(pg.num) else ""
-        return f"<!-- page {pg.num}{label} -->"
+        return f"<!-- page {pg.num}{label} -->\n\n"
 
     def body(pg: Page) -> str:
         text = pg.text.strip("\n")
@@ -143,7 +145,114 @@ def marked(doc: Doc) -> str:
     empty = sum(1 for pg in doc.pages if not pg.text.strip())
     blank = f" · {empty} without text" if empty else ""
     head = f"<!-- source: {doc.path.name} · {doc.total} pages{blank} · md5 {md5} -->"
-    return "\n\n".join([head, *(f"{mark(pg)}\n\n{body(pg)}" for pg in doc.pages)])
+    return "\n\n".join([head, *(f"{mark(pg)}{body(pg)}" for pg in doc.pages)])
+
+
+# --- deep: docling, for layouts liteparse can't read (two-column prose) and figures ---
+
+_WORKER = Path(__file__).with_name("_docling_worker.py")
+_DESCRIBE_PROMPT = (
+    "This figure is from a technical document. Describe it for someone who cannot see it: what "
+    "it shows, and every label, value, terminal and connection that is visible. Transcribe any "
+    "text exactly. No preamble. Under 120 words."
+)
+
+
+def _page_range(pages: str | None) -> list[int] | None:
+    """`--pages` for docling, which takes one contiguous range: "5" or "5-9"."""
+    if not pages:
+        return None
+    first, _, last = pages.partition("-")
+    if not (first.strip().isdigit() and (not last or last.strip().isdigit())):
+        raise ValueError(f"--deep takes one page range like '5' or '5-9', not {pages!r}")
+    return [int(first), int(last or first)]
+
+
+def deep(
+    path: str | Path,
+    pages: str | None = None,
+    assets_dir: Path | None = None,
+    describe: bool = False,
+) -> tuple[Doc, int]:
+    """Convert with docling — layout model + TableFormer, so two-column pages read in order —
+    run in its own uv environment (torch + ~1 GB of models never enter ko's). Figures go to
+    `assets_dir` and are linked in place (else a `<!-- figure -->` placeholder); `describe`
+    adds a Gemini description under each (GEMINI_API_KEY, `[doc] describe_model`).
+    Returns (Doc, figure count). Slow: ~3–4 s a page, and the first run downloads models."""
+    import json
+    import shutil
+    import subprocess
+
+    from . import config
+
+    p = Path(path)
+    if not p.is_file():
+        raise FileNotFoundError(p)
+    uv = shutil.which("uv")
+    if not uv:
+        raise RuntimeError("--deep runs docling via uv, which isn't on PATH — https://docs.astral.sh/uv/")
+    args = {
+        "path": str(p.resolve()),
+        "pages": _page_range(pages),
+        "ocr": p.suffix.lower() != ".pdf" or bool(pages_needing_ocr(p)),  # ko's rule: OCR only if a page lacks text
+        "assets_dir": str(assets_dir.resolve()) if assets_dir else None,
+        "describe": None,
+    }
+    if describe:
+        config.require_key("GEMINI_API_KEY", "Get one at https://aistudio.google.com/apikey (figure descriptions use Gemini).")
+        args["describe"] = {
+            "model": config.get("doc", "describe_model", "gemini-3.8-flash"),
+            "prompt": _DESCRIBE_PROMPT,
+        }
+    r = subprocess.run(
+        [uv, "run", "--no-project", "--quiet", "--with", "docling>=2.133", "python", str(_WORKER), json.dumps(args)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if r.returncode != 0:
+        tail = "\n".join(r.stderr.strip().splitlines()[-6:])
+        raise RuntimeError(f"docling failed on {p.name}:\n{tail}")
+    out = json.loads(r.stdout)
+    if describe:
+        d = out["described"]
+        if d["tried"] and d["got"] < d["tried"]:
+            why = f" — {d['errors'][0]}" if d["errors"] else ""
+            raise RuntimeError(f"Gemini described {d['got']} of {d['tried']} figures{why}")
+    doc_pages = [Page(pg["num"], None, pg["md"]) for pg in out["pages"]]
+    if assets_dir is not None:
+        _tidy_figures(doc_pages, assets_dir)
+    return Doc(p, out["total"], doc_pages, markdown=True), out["figures"]
+
+
+_FIG_REF = re.compile(r"!\[[^\]]*\]\(([^)\s]+\.png)\)")
+
+
+def _tidy_figures(pages: list[Page], assets_dir: Path) -> None:
+    """docling names figures by content hash (`image_000004_00358c…png`). Rename each to its
+    page — `p018-fig1.png`, so a reader knows where it came from — and keep ONE file per
+    distinct image: a logo repeated on every page is saved once and linked from each."""
+    first_of: dict[str, str] = {}  # image md5 → the name its first appearance got
+    for pg in pages:
+        n = 0
+
+        def rename(m: re.Match, pg: Page = pg) -> str:
+            nonlocal n
+            src = assets_dir / Path(m.group(1)).name
+            if not src.is_file():
+                return m.group(0)
+            digest = hashlib.md5(src.read_bytes()).hexdigest()
+            if digest in first_of:
+                src.unlink()  # a repeat (header logo): link the copy already kept
+                name = first_of[digest]
+            else:
+                n += 1
+                name = f"p{pg.num or 0:03d}-fig{n}.png"
+                src.rename(assets_dir / name)
+                first_of[digest] = name
+            return f"![{Path(name).stem}]({assets_dir.name}/{name})"
+
+        pg.text = _FIG_REF.sub(rename, pg.text)
 
 
 # --- .docx, read directly: Word has no pages until something lays it out ---

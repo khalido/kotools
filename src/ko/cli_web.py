@@ -684,10 +684,32 @@ def doc(
     ),
     md: bool = typer.Option(False, "--md", help="markdown per page (tables as pipe tables)"),
     as_json: bool = typer.Option(False, "--json", help="emit [{page, label, text}]"),
+    deep: bool = typer.Option(
+        False, "--deep", help="docling: reads multi-column layouts in order; figures saved beside -o (slow, ~3 s a page)"
+    ),
+    describe: bool = typer.Option(False, "--describe", help="with --deep: a Gemini description under each figure (paid)"),
 ) -> None:
     """Document → text via liteparse, each page under a `<!-- page N -->` line so claims can cite
     it. A .docx reads directly as markdown (no pages); `--pages`/`--json` lay it out via
     LibreOffice instead. Local + fast, no models. Shortcut: `ko <file>`."""
+    if describe and not deep:
+        _die("--describe needs --deep", code="usage")
+    if deep:
+        if as_json or md:
+            _die("--deep already writes markdown; drop --json/--md", code="usage")
+        assets = out.with_name(out.stem + "_assets") if out else None
+        typer.echo(f"docling: converting {file.name} (first run downloads ~1 GB of models)…", err=True)
+        try:
+            parsed, figures = doc_mod.deep(file, pages=pages, assets_dir=assets, describe=describe)
+        except Exception as e:
+            _die(str(e))
+        _write_doc(doc_mod.marked(parsed), out)
+        if figures and assets:
+            kept = len(list(assets.glob("*.png")))
+            typer.echo(f"{figures} figure(s), {kept} distinct, saved to {assets}", err=True)
+        elif figures:
+            typer.echo(f"{figures} figure(s) left as placeholders — pass -o to save them", err=True)
+        return
     if file.suffix.lower() == ".docx" and pages is None and not as_json:
         try:
             head, body = doc_mod.docx_markdown(file)

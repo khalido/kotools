@@ -2,6 +2,34 @@
 
 Newest first. Big picture only — git commits have the detail; candidate ideas and decisions live in `docs/ideas.md`.
 
+## 2026-10-05 — doc --deep: docling for layouts liteparse can't read
+
+- **Why.** liteparse `--md` turns two-column prose (the Danfoss parameter descriptions) into a
+  fake table mixing both columns, and its layout stats report one column there, so no
+  per-page fallback is possible. Measured on the same pages: docling reads page 18 in order
+  (each parameter whole), keeps the page-63 register table exact (`16-13 | Frequency | 0 |
+  1 set-up | TRUE | -1 | Uint16`), ~3 s a page warm. Local marker kept columns but took 91 s
+  a page on CPU; Gemini via OpenRouter aborted mid-page; Anthropic's own pdf skill is
+  pypdf/pdfplumber/pdftotext — nothing layout-aware.
+- **Shape.** `ko doc --deep file [-o out.md]` runs `_docling_worker.py` in docling's own uv
+  environment (`uv run --no-project --with docling`): torch + ~1 GB of models never enter
+  ko's deps, and the first run's setup is one-off (later runs: 8 s for 3 pages). The worker
+  returns per-page markdown (compact tables); ko adds the source line + `<!-- page N -->`.
+  OCR only when ko's own check says a page lacks text.
+- **Figures.** With `-o`, saved to `<name>_assets/`, renamed `p018-fig1.png` by first page,
+  one file per distinct image (the logo on every page is kept once, linked from each).
+  Without `-o`, `<!-- figure -->` placeholders. Agents view the PNG when they need it — the
+  same move Anthropic's skills make (render, then look) rather than describing everything.
+- **`--describe`:** Gemini (`[doc] describe_model`, default gemini-3.8-flash) via its
+  OpenAI-compatible endpoint, from docling's API picture describer. docling reports SUCCESS
+  when every call failed (a 402 only reaches its log, descriptions come back empty), so the
+  worker counts tried vs got and captures error logs; ko raises on any shortfall. Not yet
+  run against a funded key.
+- **docling's Office readers:** fine but no reason to switch .docx (ko's direct reader now
+  matches content at 0.2 s vs 4–8 s); its .xlsx output was 10 MB of padded tables before
+  `compact_tables`. LibreOffice isn't installed here, so liteparse's Office route can't run;
+  it's also the weakest path (Office → PDF → re-guess structure).
+
 ## 2026-10-02 — doc: .docx read directly (python-docx), no LibreOffice
 
 - **Why.** `ko doc` on a .docx shelled out to LibreOffice (liteparse converts Office → PDF), so it
