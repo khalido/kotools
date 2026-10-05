@@ -149,6 +149,7 @@ def marked(doc: Doc) -> str:
 # --- .docx, read directly: Word has no pages until something lays it out ---
 
 _HEADING = {"Title": 1, "Subtitle": 2}
+_LIST_ITEM = re.compile(r"\s*(?:-|\d+\.|[a-zA-Z]\.|[ivxlcdmIVXLCDM]+\.) ")
 
 
 def _cell(text: str) -> str:
@@ -157,17 +158,17 @@ def _cell(text: str) -> str:
 
 def _docx_table(table) -> str:
     """A pipe table. A merged cell is written once: python-docx repeats the same cell for
-    every grid column (gridSpan) and row (vMerge) it covers, so a repeat is left blank."""
+    every grid column (gridSpan) and row (vMerge) it covers, so any repeat — whatever the
+    merge's shape — is left blank."""
     rows: list[list[str]] = []
-    above: list = []
+    seen: set = set()
     for row in table.rows:
-        cells, tcs = [], [c._tc for c in row.cells]
-        for j, tc in enumerate(tcs):
-            merged = (j and tcs[j - 1] is tc) or (j < len(above) and above[j] is tc)
-            cells.append("" if merged else _cell(row.cells[j].text))
+        cells = []
+        for cell in row.cells:
+            cells.append("" if cell._tc in seen else _cell(cell.text))
+            seen.add(cell._tc)
         if any(cells):  # an all-blank row is Word spacing, not data
             rows.append(cells)
-        above = tcs
     if not rows:
         return ""
     width = max(len(r) for r in rows)
@@ -177,8 +178,87 @@ def _docx_table(table) -> str:
     return "\n".join(lines)
 
 
-def _docx_paragraph(par) -> str:
-    text = par.text.strip()
+_W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+
+
+def _par_text(par) -> str:
+    """Paragraph text from every w:t — python-docx's `.text` skips runs inside fields
+    (w:fldSimple), which is where Word templates keep things like a judgment's title.
+    Deleted text (w:delText) and field codes (w:instrText) stay out."""
+    out = []
+    for el in par._p.iter(f"{_W}t", f"{_W}tab", f"{_W}br", f"{_W}cr"):
+        out.append(el.text or "" if el.tag == f"{_W}t" else "\t" if el.tag == f"{_W}tab" else "\n")
+    return "".join(out)
+
+
+def _roman(n: int) -> str:
+    out = ""
+    for v, r in ((1000, "m"), (900, "cm"), (500, "d"), (400, "cd"), (100, "c"), (90, "xc"),
+                 (50, "l"), (40, "xl"), (10, "x"), (9, "ix"), (5, "v"), (4, "iv"), (1, "i")):
+        while n >= v:
+            out, n = out + r, n - v
+    return out
+
+
+class _Numbering:
+    """Word's list numbers, resolved: a paragraph's numPr (its own, or inherited from its
+    style chain) → numbering.xml's format and start → a running count per list. A judgment's
+    "1." "2." are citable; flattening them to bullets loses the reference."""
+
+    def __init__(self, document):
+        self.fmt: dict[tuple[str, int], tuple[str, int]] = {}
+        try:
+            root = document.part.numbering_part.element
+        except (KeyError, NotImplementedError, AttributeError):
+            root = None
+        if root is not None:
+            abstract = {a.get(f"{_W}abstractNumId"): a for a in root.iter(f"{_W}abstractNum")}
+            for num in root.iter(f"{_W}num"):
+                ref = num.find(f"{_W}abstractNumId")
+                a = abstract.get(ref.get(f"{_W}val")) if ref is not None else None
+                for lvl in a.iter(f"{_W}lvl") if a is not None else []:
+                    fmt = lvl.find(f"{_W}numFmt")
+                    start = lvl.find(f"{_W}start")
+                    self.fmt[(num.get(f"{_W}numId"), int(lvl.get(f"{_W}ilvl")))] = (
+                        fmt.get(f"{_W}val") if fmt is not None else "decimal",
+                        int(start.get(f"{_W}val")) if start is not None else 1,
+                    )
+        self.count: dict[str, list[int]] = {}
+
+    @staticmethod
+    def _num_pr(par):
+        if par._p.pPr is not None and par._p.pPr.numPr is not None:
+            return par._p.pPr.numPr
+        style = par.style
+        while style is not None:  # numbering set on the style (e.g. "ParaNumbering")
+            ppr = style.element.pPr
+            if ppr is not None and ppr.numPr is not None:
+                return ppr.numPr
+            style = style.base_style
+        return None
+
+    def prefix(self, par) -> str | None:
+        """"1. " / "a. " / "- " for a list paragraph (indented by level), None otherwise."""
+        num_pr = self._num_pr(par)
+        if num_pr is None or num_pr.numId is None:
+            return None
+        num_id, ilvl = str(num_pr.numId.val), num_pr.ilvl.val if num_pr.ilvl is not None else 0
+        if num_id == "0":  # numId 0 = numbering explicitly switched off
+            return None
+        fmt, start = self.fmt.get((num_id, ilvl), ("bullet", 1))
+        levels = self.count.setdefault(num_id, [0] * 9)
+        levels[ilvl] += 1
+        levels[ilvl + 1 :] = [0] * (8 - ilvl)  # a new item resets the levels under it
+        n = start + levels[ilvl] - 1
+        mark = {
+            "decimal": f"{n}.", "lowerLetter": f"{chr(96 + n)}.", "upperLetter": f"{chr(64 + n)}.",
+            "lowerRoman": f"{_roman(n)}.", "upperRoman": f"{_roman(n).upper()}.",
+        }.get(fmt, "-" if fmt != "none" else "")
+        return "  " * ilvl + (f"{mark} " if mark else "")
+
+
+def _docx_paragraph(par, numbering: _Numbering) -> str:
+    text = _par_text(par).strip()
     if not text:
         return ""
     style = par.style.name if par.style is not None else ""
@@ -186,10 +266,10 @@ def _docx_paragraph(par) -> str:
         return "#" * min(int(style[8:]), 6) + " " + text
     if style in _HEADING:
         return "#" * _HEADING[style] + " " + text
-    if style.startswith("List Number"):
-        return f"1. {text}"
-    numbered = par._p.pPr is not None and par._p.pPr.numPr is not None  # Word list numbering
-    if style.startswith("List") or numbered:
+    prefix = numbering.prefix(par)
+    if prefix is not None:
+        return prefix + text
+    if style.startswith("List"):
         return f"- {text}"
     return text
 
@@ -202,8 +282,9 @@ def docx_markdown(path: str | Path) -> tuple[str, str]:
 
     p = Path(path)
     d = docx.Document(str(p))
+    numbering = _Numbering(d)
     blocks = [
-        _docx_table(item) if isinstance(item, Table) else _docx_paragraph(item)
+        _docx_table(item) if isinstance(item, Table) else _docx_paragraph(item, numbering)
         for item in d.iter_inner_content()
     ]
     cp = d.core_properties
@@ -219,8 +300,8 @@ def docx_markdown(path: str | Path) -> tuple[str, str]:
     bits += [f"{len(data) / 1024:,.0f} KB", f"md5 {hashlib.md5(data).hexdigest()}"]
     out: list[str] = []
     for b in filter(None, blocks):
-        is_item = b.startswith(("- ", "1. "))
-        if is_item and out and out[-1].split("\n")[-1].startswith(("- ", "1. ")):
+        is_item = bool(_LIST_ITEM.match(b))
+        if is_item and out and _LIST_ITEM.match(out[-1].split("\n")[-1]):
             out[-1] += "\n" + b  # consecutive list items: one tight list, not a blank line each
         else:
             out.append(b)

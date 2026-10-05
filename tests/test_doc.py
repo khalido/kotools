@@ -135,3 +135,21 @@ def test_docx_reads_in_order_with_merged_cells_once_and_a_provenance_line(tmp_pa
         "After | the table.",
     ]
     assert doc.parse(f) == body  # llm -f / fetch get the same body, no LibreOffice
+
+
+def test_docx_keeps_word_list_numbers_and_text_inside_fields(tmp_path):
+    import docx
+    from docx.oxml import parse_xml
+
+    d = docx.Document()
+    title = d.add_paragraph()
+    title._p.append(parse_xml(
+        '<w:fldSimple xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
+        'w:instr=" DOCPROPERTY Title "><w:r><w:t>Federal Court of Australia</w:t></w:r></w:fldSimple>'
+    ))
+    d.add_paragraph("First reason.", style="List Number")  # numbering comes from the style
+    d.add_paragraph("Second reason.", style="List Number")
+    f = tmp_path / "j.docx"
+    d.save(f)
+    body = doc.docx_markdown(f)[1]
+    assert body.split("\n\n") == ["Federal Court of Australia", "1. First reason.\n2. Second reason."]

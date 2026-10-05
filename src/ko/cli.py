@@ -51,6 +51,11 @@ def _startup(
     # pydantic-ai ≥2.51 prints an ASCII-art Logfire ad before the first agent run; stderr is
     # for notes an agent can act on, so ko opts out (a real env var still wins).
     os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")
+    # google-genai (≥2.25) warns once per process about "automatic function calling" on every
+    # pydantic-ai Gemini call — advice to a library author, not to whoever ran `ko llm`.
+    import logging
+
+    logging.getLogger("google_genai.models").setLevel(logging.ERROR)
     config.load_keys_into_env()
     telemetry.setup()
 
