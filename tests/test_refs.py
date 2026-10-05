@@ -137,3 +137,10 @@ def test_sizes_biggest_first(tmp_path: Path) -> None:
     result = refs.sizes(tmp_path)
     assert [n for n, _ in result] == ["big", "small"]
     assert all(b > 0 for _, b in result)
+
+
+def test_http_status_parses_git_transport_errors():
+    msg = "    fatal: unable to access 'https://github.com/vercel/ai.git/': The requested URL returned error: 403"
+    assert refs.http_status(msg) == 403
+    assert refs.http_status("fatal: ... The requested URL returned error: 429") == 429
+    assert refs.http_status("fatal: Not possible to fast-forward, aborting.") is None

@@ -14,6 +14,7 @@ Pull logic ported from dotfiles/gitupdateall.py: parallel `git pull --ff-only
 
 from __future__ import annotations
 
+import re
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -179,11 +180,28 @@ def pull_one(base: Path, repo: str) -> Result:
     label = describe(base, repo)
     proc = _git(base, repo, "pull", "--ff-only", "--prune")
     if proc.returncode != 0:
-        lines = (proc.stdout + proc.stderr).strip().splitlines()[:5]
+        lines = (proc.stdout + proc.stderr).strip().splitlines()[-5:]  # the cause is at the end;
+        # the start is fetch progress ("From https://…", "* branch main")
         return Result(repo, False, error="\n".join(f"    {ln}" for ln in lines))
     if _git(base, repo, "rev-parse", "HEAD").stdout.strip() == head:
         return Result(repo, True)  # up to date — a fetched tag alone is not an update
     return Result(repo, True, change=f"{label} -> {describe(base, repo)}")
+
+
+def http_status(error: str) -> int | None:
+    """HTTP status from a git transport error ("The requested URL returned error: 403"),
+    or None for non-HTTP failures (conflicts, local errors)."""
+    m = re.search(r"returned error: (\d{3})", error)
+    return int(m.group(1)) if m else None
+
+
+GITHUB_403_HINT = (
+    "GitHub refused git over HTTPS (403 \"Access to this site has been restricted\") — an IP/"
+    "network block on anonymous git, not a ko or token bug. git only sends credentials after "
+    "a 401, so send them up front:\n"
+    "  git config --global http.https://github.com/.proactiveAuth basic\n"
+    "or use SSH: git config --global url.\"git@github.com:\".insteadOf https://github.com/"
+)
 
 
 def pull_all(base: Path, repos: list[str], jobs: int = DEFAULT_JOBS):

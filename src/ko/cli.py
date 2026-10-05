@@ -26,6 +26,7 @@ from .cli_ai import publish_app, tt_app  # needed by main()'s bare-arg dispatche
 # Re-export group-local helpers that tests import via ko.cli
 from .cli_google import _norm_block, _parse_cells, _short_from  # noqa: F401
 from .cli_web import x_app  # needed by main()'s bare-arg dispatcher
+from .refs import DEFAULT_JOBS as REFS_JOBS
 
 
 def _version_callback(value: bool) -> None:
@@ -415,8 +416,12 @@ def _refs_pull(yes: bool, jobs: int) -> None:
         if res.change:
             typer.echo(f"{res.repo}: {res.change}")  # stdout: what actually moved
         elif not res.ok:
-            typer.echo(f"{res.repo}: FAILED", err=True)
-            typer.echo(res.error, err=True)
+            status = refs_mod.http_status(res.error)
+            if status:  # one line; the transport error is identical across repos
+                typer.echo(f"{res.repo}: FAILED (HTTP {status})", err=True)
+            else:
+                typer.echo(f"{res.repo}: FAILED", err=True)
+                typer.echo(res.error, err=True)
         results.append(res)
     updated = sum(1 for r in results if r.change)
     failed = [r.repo for r in results if not r.ok]
@@ -424,6 +429,9 @@ def _refs_pull(yes: bool, jobs: int) -> None:
     if failed:
         parts.append(f"{len(failed)} failed ({', '.join(failed)})")
     typer.echo(", ".join(parts), err=True)
+    forbidden = [r for r in results if not r.ok and refs_mod.http_status(r.error) == 403]
+    if forbidden:
+        typer.echo(f"{len(forbidden)} repo(s) got 403. {refs_mod.GITHUB_403_HINT}", err=True)
     if skipped:
         typer.echo(f"Skipped {len(skipped)} non-git dir(s): {', '.join(skipped)}", err=True)
     if failed:
@@ -434,7 +442,7 @@ def _refs_pull(yes: bool, jobs: int) -> None:
 def refs_main(
     ctx: typer.Context,
     yes: bool = typer.Option(False, "--yes", "-y", help="skip the confirm prompt (TTY only; pipes never prompt)"),
-    jobs: int = typer.Option(8, "--jobs", "-j", help="max concurrent pulls"),
+    jobs: int = typer.Option(REFS_JOBS, "--jobs", "-j", help="max concurrent pulls"),
 ) -> None:
     """Bare `ko refs` = pull all reference repos (same as `ko refs pull`)."""
     if ctx.invoked_subcommand:
@@ -446,7 +454,7 @@ def refs_main(
 @refs_app.command("pull")
 def refs_pull(
     yes: bool = typer.Option(False, "--yes", "-y", help="skip the confirm prompt (TTY only; pipes never prompt)"),
-    jobs: int = typer.Option(8, "--jobs", "-j", help="max concurrent pulls"),
+    jobs: int = typer.Option(REFS_JOBS, "--jobs", "-j", help="max concurrent pulls"),
 ) -> None:
     """Update all clones: parallel `git pull --ff-only --prune`; prints only repos whose
     HEAD actually moved (`repo: old -> new` via git describe). Exit 1 if any failed."""
