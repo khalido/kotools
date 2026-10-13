@@ -50,7 +50,7 @@ This file is a stub, not a manual — same rule as agent-browser/herdr: **the in
 - **One file per domain.** No shared `utils/` until three callers exist.
 
 ## Stack
-Python 3.14, `uv`, `ruff`, `pytest`, `typer`. Module-local dataclasses; `@lru_cache` singletons.
+Python 3.15, `uv`, `ruff`, `pytest`, `typer`. Module-local dataclasses; `@lru_cache` singletons.
 
 ## Adding a subcommand
 1. `src/ko/<thing>.py` — thin SDK wrapper + dataclass results

@@ -272,7 +272,7 @@ uv run pytest          # offline by default; KO_LIVE_TESTS=1 enables live-API te
 uv run ko --help
 ```
 
-Python 3.14, `uv`, `ruff`, `pytest`, `typer`. Candidate subcommands and design notes: [docs/ideas.md](docs/ideas.md).
+Python 3.15, `uv`, `ruff`, `pytest`, `typer`. Candidate subcommands and design notes: [docs/ideas.md](docs/ideas.md).
 
 ## License
 

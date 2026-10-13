@@ -71,7 +71,7 @@ No browser? Destructive/outward commands (`gsheets delete-tab`, `gmail draft sen
 
 ## Working on the code
 
-- Python 3.14, `uv`, `ruff`, `pytest`, `typer`.
+- Python 3.15, `uv`, `ruff`, `pytest`, `typer`.
 - Install/run: `uv run ko ...`. Test: `uv run pytest -q`. Lint: `uv run ruff check`.
 - One module per domain under `src/ko/`; `cli.py` registers the Typer subapps. See
   `CLAUDE.md` for the full design principles and how to add a subcommand.

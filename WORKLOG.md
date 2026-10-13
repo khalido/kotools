@@ -2,6 +2,14 @@
 
 Newest first. Big picture only — git commits have the detail; candidate ideas and decisions live in `docs/ideas.md`.
 
+## 2026-10-13 — Python 3.15
+
+- **Why.** PEP 810 `lazy import` can replace `_cli_shared.lazy()` and the in-function SDK imports
+  that keep startup at ~0.2 s. Not done yet; this is the version bump only.
+- **Measured.** Same lockfile installs on 3.15.0; 601 tests pass; `ko --help` ~0.23 s, as on 3.14.
+- **uvx / tool installs.** `requires-python >=3.15` makes uv fetch a managed 3.15 on its own.
+- **Not moved:** ops/.venv is still 3.14 with kotools installed editable by hand.
+
 ## 2026-10-05 — doc --deep: docling for layouts liteparse can't read
 
 - **Why.** liteparse `--md` turns two-column prose (the Danfoss parameter descriptions) into a

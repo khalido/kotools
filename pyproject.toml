@@ -3,7 +3,7 @@ name = "kotools"
 version = "2026.7.27"
 description = "Ko's personal opinionated CLI — thin wrappers around SDKs I use often, built so both I and AI agents can lean on it."
 readme = "README.md"
-requires-python = ">=3.14"
+requires-python = ">=3.15"
 license = "GPL-3.0-or-later"
 license-files = ["LICENSE"]
 authors = [{ name = "Ko", email = "khalid.omar@gmail.com" }]
@@ -13,7 +13,7 @@ classifiers = [
     "Environment :: Console",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
-    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
     "Topic :: Utilities",
 ]
 dependencies = [

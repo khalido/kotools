@@ -9,7 +9,7 @@ How I build a personal opinionated CLI with Python + Typer. Reference implementa
 `src/ko/` is the canonical pattern for everything below.
 
 ## Stack
-- Python 3.14, **uv** (never pip — `uv add`, `uv sync`, `uv run ko …`), **ruff**, **pytest**, **typer**
+- Python 3.15, **uv** (never pip — `uv add`, `uv sync`, `uv run ko …`), **ruff**, **pytest**, **typer**
 - Module-local `@dataclass` for structured return types — one per domain, never dict soup
 - `@lru_cache` for credential/service singletons (SDK clients, OAuth tokens)
 - `hatchling` build backend; console-script entry in `pyproject.toml`: `ko = "ko.cli:main"`
