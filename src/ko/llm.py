@@ -157,6 +157,117 @@ def run_cost(messages: list) -> RunCost:
     return RunCost(model=model, input_tokens=tin, output_tokens=tout, usd=usd, source=source)
 
 
+# --- decision models (Jev): typed answers with probabilities, not text ---------------------
+
+# `-m jev` is TypeSafe's Jev through OpenRouter, on the key ko already has; TYPESAFE_API_KEY, when
+# set, goes direct instead. `system-one:` and `openai-decisions:` strings pass to pydantic-ai as is.
+DECISION_PREFIXES = ("typesafe:", "system-one:", "openai-decisions:")
+_OPENROUTER_SYSTEMONE = "https://openrouter.ai/api"  # OpenRouter's /v1/systemone, TypeSafe's API shape
+
+
+def is_decision_model(model: str | None) -> bool:
+    return bool(model) and (model == "jev" or model.startswith(DECISION_PREFIXES))
+
+
+def _resolve(model: str | None):
+    """A model string → what Agent.run takes. Only `jev` / `typesafe:` need building."""
+    model = model or default_model()
+    if model != "jev" and not model.startswith("typesafe:"):
+        return model
+    from pydantic_ai.models.typesafe import TypeSafeModel
+    from pydantic_ai.providers.typesafe import TypeSafeProvider
+
+    name = "jev-latest" if model == "jev" else model.removeprefix("typesafe:")
+    if os.environ.get("TYPESAFE_API_KEY"):
+        return TypeSafeModel(name)
+    key = config.require_key("OPENROUTER_API_KEY", "Jev runs through OpenRouter: https://openrouter.ai/keys")
+    return TypeSafeModel(name, provider=TypeSafeProvider(api_key=key, base_url=_OPENROUTER_SYSTEMONE))
+
+
+@dataclass
+class Decision:
+    """One judgement. A decision model fills `probabilities` (every option, or every score level
+    by index) and `confidence`; a language model asked the same question leaves them empty."""
+
+    kind: str  # "yes_no" | "choice" | "score" | "tags"
+    answer: float | str | list[str]  # P(yes); the pick; the position on the scale (0 = first level); or the tags that apply
+    probabilities: dict[str, float]
+    confidence: float | None
+    level: str | None  # score only: the nearest level's name
+    model: str
+
+
+def parse_options(spec: str, *, kind: str) -> list[tuple[str, str]]:
+    """`"reply=needs an answer,read,archive"` → [(name, meaning)], meaning "" when not given.
+    Fails before any call: too few/many options, a blank or repeated name."""
+    opts = [(n.strip(), d.strip()) for n, _, d in (part.partition("=") for part in spec.split(","))]
+    names = [n for n, _ in opts]
+    lo, hi = {"choice": (2, 255), "score": (2, 10), "tags": (1, 255)}[kind]
+    if not lo <= len(opts) <= hi:
+        raise ValueError(f"--{kind} needs {lo} to {hi} comma-separated options, got {len(opts)}")
+    if any(not n or " " in n for n in names) or len(set(names)) != len(names):
+        raise ValueError(
+            f"--{kind}: names must be single words and differ, and a meaning can't contain a comma: {spec!r}"
+        )
+    return opts
+
+
+def decide(
+    question: str,
+    text: str,
+    *,
+    model: str | None = None,
+    choice: list[tuple[str, str]] | None = None,
+    score: list[tuple[str, str]] | None = None,
+    tags: list[tuple[str, str]] | None = None,
+) -> Decision:
+    """Ask one typed question about `text`: yes/no by default; else pick one of `choice`, place it
+    on the ordered `score` levels (lowest first), or ask yes/no of each of `tags`. On a decision
+    model every option comes back with its probability; any other model answers the same type
+    without them."""
+    global last_cost
+    from typing import Annotated
+
+    from pydantic import Field
+    from pydantic_ai import Agent, StructuredDict
+    from pydantic_ai.output import Choices
+
+    if choice:
+        kind, instructions = "choice", None
+        output = Choices({n: d or n for n, d in choice}, description=question)
+    elif score:
+        kind, instructions = "score", None
+        levels = [{"const": i, "description": d or n} for i, (n, d) in enumerate(score)]
+        output = StructuredDict(
+            {"type": "object", "properties": {"level": {"description": question, "anyOf": levels}}, "required": ["level"]},
+            name="Score",
+        )
+    elif tags:
+        kind, instructions = "tags", None
+        items = [{"const": n, "description": d or n} for n, d in tags]
+        output = StructuredDict(
+            {"type": "object", "properties": {"tags": {"type": "array", "description": question, "items": {"anyOf": items}}}, "required": ["tags"]},
+            name="Tags",
+        )
+    else:
+        kind, instructions = "yes_no", question
+        output = Annotated[float, Field(ge=0, le=1, description="probability that the answer is yes")]
+    result = Agent(_resolve(model), output_type=output, instructions=instructions).run_sync(text)
+    last_cost = run_cost(result.all_messages())
+    details = result.response.provider_details or {}
+    field = {"score": "level", "tags": "tags"}.get(kind, "response")
+    probs = (details.get("probabilities") or {}).get(field, {})
+    confidence = (details.get("confidence") or {}).get(field)
+    name = result.response.model_name or str(model)
+    if kind == "score":
+        position = (details.get("scores") or {}).get("level", result.output["level"])
+        nearest = score[result.output["level"]][0]  # pydantic-ai's rounding of the position, not ours
+        return Decision(kind, round(float(position), 2), probs, confidence, nearest, name)
+    if kind == "tags":
+        return Decision(kind, result.output["tags"], probs, confidence, None, name)
+    return Decision(kind, result.output, probs, confidence, None, name)
+
+
 def default_model() -> str:
     """One-shot default: KO_DEFAULT_MODEL → `[llm] model` → the basic tier."""
     return config.setting("KO_DEFAULT_MODEL", "llm", "model", model_for("basic"))
@@ -204,6 +315,8 @@ def run(
     video) sent alongside the prompt; the model must support the media type, which is its
     error to raise, not ours to predict. The cost note (last_cost) is set on every path."""
     global last_cost
+    if is_decision_model(model) and schema is None:
+        raise ValueError(f"{model} answers typed questions, not prose: use `ko judge`")
     if stdin:
         # Input BEFORE the prompt — simonw-llm's fragment convention (and what the -f help
         # promises): the stable prefix (documents) ahead of the variable suffix (the question)
@@ -216,12 +329,12 @@ def run(
         from pydantic_ai import StructuredDict
 
         agent = Agent(instructions=system or SCHEMA_SYSTEM, output_type=StructuredDict(schema))
-        result = agent.run_sync(user_prompt, model=model or default_model())
+        result = agent.run_sync(user_prompt, model=_resolve(model))
         last_cost = run_cost(result.all_messages())
         _raise_if_cut_short(result.all_messages(), model or default_model())
         return json.dumps(result.output, separators=(",", ":"), default=str)
     agent = Agent(instructions=system) if system else _default_agent()
-    result = agent.run_sync(user_prompt, model=model or default_model())
+    result = agent.run_sync(user_prompt, model=_resolve(model))
     last_cost = run_cost(result.all_messages())
     _raise_if_cut_short(result.all_messages(), model or default_model())
     return str(result.output)

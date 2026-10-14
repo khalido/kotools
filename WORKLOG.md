@@ -2,6 +2,14 @@
 
 Newest first. Big picture only — git commits have the detail; candidate ideas and decisions live in `docs/ideas.md`.
 
+## 2026-10-14 — `ko judge`: decision models (Jev)
+
+- **What.** `ko judge "<question>" [-f x | stdin]` returns a typed answer with probabilities: P(yes) by default, `--choice` (one of many, every option's probability), `--score` (ordered levels, nearest level + exact position), `--tags` (yes/no per tag). Default model Jev; `-m` takes any `ko llm` model, which answers the same type bare — the way to compare. Guide: `ko prompt judge`.
+- **Route.** Jev through OpenRouter's `/v1/systemone` on the existing `OPENROUTER_API_KEY` (pydantic-ai `TypeSafeModel` + `TypeSafeProvider(base_url="https://openrouter.ai/api")`) — one key, one bill; `TYPESAFE_API_KEY` goes direct when set. Needs the `typesafe` extra (the SDK is imported either way). Measured: ~350 tokens, <$0.0001, a call.
+- **Why its own command, not `ko llm -m jev`** (built that first; ko-review pushed back): a decision needs input, takes no system prompt, schema or `-x`, and needs `--json` for its numbers — `ko llm` was heading to 8 flags with an exclusion matrix. `ko llm -m jev` now errors toward `ko judge`.
+- **How each kind maps.** yes/no = a bounded float (the raw probability, no threshold); choice = pydantic-ai `Choices`; score and tags = `StructuredDict` with `anyOf` const+description (pydantic-ai has no run-time rubric helper; `UseEnumMemberDocstrings` reads source docstrings, so a dynamic IntEnum can't carry level meanings). Score rounding is pydantic-ai's, not ours.
+- **Later, not built:** `SelectModel` routing in `ko ai` (Jev picks the tier per step) and a Jev tool-call guard — both in pydantic-ai's decision docs.
+
 ## 2026-10-13 — Python 3.15
 
 - **Why.** PEP 810 `lazy import` can replace `_cli_shared.lazy()` and the in-function SDK imports

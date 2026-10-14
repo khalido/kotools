@@ -19,6 +19,7 @@ This file is a stub, not a manual — same rule as agent-browser/herdr: **the in
 | `fetch <url>...` | URL→markdown, deterministic routing (arxiv/yt/pdf/doi/reddit/wikipedia/walls→archives); alias `webfetch` |
 | `sum [url\|file...]` | fetch + summarize in one move; stdin-aware |
 | `llm "<prompt>"` | one-shot LLM; `-f` attaches anything, `-x` extracts code, `--schema` constrains JSON |
+| `judge "<question>"` | typed answer with probabilities (Jev): yes/no, `--choice`, `--score`, `--tags`; guide `ko prompt judge` |
 | `models` | model strings usable with `-m` |
 | `doc <file>` | PDF/Office/image → text (liteparse, local) |
 | `pdf <file.md>` (`md-to-pdf`) | markdown → print-ready PDF; styles + brand.yml |

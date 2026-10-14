@@ -339,3 +339,114 @@ def test_a_response_cut_short_raises_instead_of_passing_as_an_answer():
     with pytest.raises(llm.TruncatedOutput, match="output-token limit"):
         llm._raise_if_cut_short([resp("length")], "m")
     llm._raise_if_cut_short([resp("stop")], "m")  # a finished answer passes
+
+
+# --- decision models (`-m jev`, --choice, --score) ---
+
+
+def test_parse_options_names_and_meanings():
+    assert llm.parse_options("reply=needs an answer, read ,archive", kind="choice") == [
+        ("reply", "needs an answer"), ("read", ""), ("archive", ""),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("spec", "kind"),
+    [("a", "choice"), ("a,a", "choice"), ("a,,b", "choice"), (",".join("abcdefghijk"), "score")],
+)
+def test_parse_options_rejects_before_any_call(spec, kind):
+    with pytest.raises(ValueError):
+        llm.parse_options(spec, kind=kind)
+
+
+def test_is_decision_model():
+    assert llm.is_decision_model("jev")
+    assert llm.is_decision_model("typesafe:jev-1.13")
+    assert llm.is_decision_model("openai-decisions:gpt-6-luna")
+    assert not llm.is_decision_model("openrouter:openai/gpt-6-luna")
+    assert not llm.is_decision_model(None)
+
+
+def test_jev_goes_through_openrouter_unless_typesafe_key(monkeypatch):
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+    m = llm._resolve("jev")
+    assert m.model_name == "jev-latest"
+    assert m.provider.base_url == "https://openrouter.ai/api"
+    assert llm._resolve("openrouter:x/y") == "openrouter:x/y"
+
+
+@pytest.mark.parametrize(
+    ("args", "stdin", "msg"),
+    [
+        (["judge", "q"], "", "nothing to judge"),
+        (["judge", "q", "--choice", "a,b", "--score", "x,y"], "t", "pick one"),
+        (["judge", "q", "--tags", "a", "--score", "x,y"], "t", "pick one"),
+        (["judge", "q", "--score", "only"], "t", "2 to 10"),
+        (["judge", "q", "--choice", "read=read it, take notes,skip"], "t", "single words"),
+        (["llm", "-m", "jev", "q"], "t", "ko judge"),
+    ],
+)
+def test_decision_usage_errors_cost_nothing(monkeypatch, args, stdin, msg):
+    monkeypatch.setattr(llm, "decide", lambda *a, **k: pytest.fail("spent a call"))
+    r = runner.invoke(app, args, input=stdin)
+    assert r.exit_code == 2 and msg in r.output
+
+
+class _FakeResult:
+    """What decide() reads off an agent run: output, response.provider_details, model name."""
+
+    def __init__(self, output, details):
+        self.output = output
+        self.response = type("R", (), {"provider_details": details, "model_name": "typesafe/jev-test"})()
+
+    def all_messages(self):
+        return []
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "output", "details", "want"),
+    [
+        ({}, 0.97, {"confidence": {}, "probabilities": {}, "scores": {}}, ("yes_no", 0.97, {}, None, None)),
+        (
+            {"choice": [("read", ""), ("archive", "")]},
+            "read",
+            {"confidence": {"response": 0.77}, "probabilities": {"response": {"read": 0.88, "archive": 0.12}}},
+            ("choice", "read", {"read": 0.88, "archive": 0.12}, 0.77, None),
+        ),
+        (
+            {"score": [("skip", ""), ("skim", ""), ("read", "")]},
+            {"level": 1},
+            {"confidence": {"level": 0.75}, "probabilities": {"level": {"0": 0.1, "1": 0.8, "2": 0.1}}, "scores": {"level": 1.024}},
+            ("score", 1.02, {"0": 0.1, "1": 0.8, "2": 0.1}, 0.75, "skim"),
+        ),
+        (
+            {"tags": [("coding", ""), ("cooking", "")]},
+            {"tags": ["coding"]},
+            {"confidence": {"tags": 0.4}, "probabilities": {"tags": {"coding": 0.97, "cooking": 0.01}}},
+            ("tags", ["coding"], {"coding": 0.97, "cooking": 0.01}, 0.4, None),
+        ),
+    ],
+)
+def test_decide_reads_provider_details(monkeypatch, kwargs, output, details, want):
+    import pydantic_ai
+
+    monkeypatch.setattr(pydantic_ai.Agent, "run_sync", lambda self, text: _FakeResult(output, details))
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+    d = llm.decide("q?", "text", model="jev", **kwargs)
+    assert (d.kind, d.answer, d.probabilities, d.confidence, d.level) == want
+    assert d.model == "typesafe/jev-test"
+
+
+def test_run_refuses_prose_from_a_decision_model():
+    with pytest.raises(ValueError, match="ko judge"):
+        llm.run("summarize", stdin="x", model="jev")
+
+
+def test_judge_json_carries_everything(monkeypatch):
+    d = llm.Decision("choice", "read", {"read": 0.88, "archive": 0.12}, 0.77, None, "typesafe/jev-test")
+    monkeypatch.setattr(llm, "decide", lambda *a, **k: d)
+    monkeypatch.setattr(llm, "last_cost", llm.RunCost("typesafe/jev-test", 1, 1))
+    r = runner.invoke(app, ["judge", "q", "--choice", "read,archive", "--json"], input="text")
+    assert r.exit_code == 0
+    assert json.loads(r.stdout.splitlines()[0])["probabilities"] == {"read": 0.88, "archive": 0.12}

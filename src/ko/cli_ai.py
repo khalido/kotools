@@ -167,6 +167,8 @@ def llm_cmd(
     for everything, an image is just a file that happens to need a vision model.
     `--schema extract.json` returns structured JSON instead of prose: the file is a JSON
     Schema for the response (`{"type": "object", ...}`), printed compact to stdout."""
+    if llm_mod.is_decision_model(model) and schema is None:
+        _die(f"{model} answers typed questions, not prose: use `ko judge` (or give it a --schema)", code="usage")
     llm_mod.refresh_openrouter_models()  # keeps -m autocomplete catalog fresh (once/day)
     schema_obj = None
     if schema is not None:
@@ -174,6 +176,26 @@ def llm_cmd(
             schema_obj = llm_mod.load_schema(schema)
         except ValueError as e:
             _die(str(e), code="usage")
+    stdin, attachments = _inputs(files)
+    try:
+        out = llm_mod.run(
+            prompt,
+            stdin=stdin,
+            model=model,
+            system=system,
+            schema=schema_obj,
+            attachments=attachments or None,
+        )
+        typer.echo(_first_fence(out) if extract else out)
+        if llm_mod.last_cost:
+            typer.echo(llm_mod.last_cost.note, err=True)
+    except Exception as e:
+        _die(str(e))
+
+
+def _inputs(files: list[str] | None) -> tuple[str | None, list]:
+    """`-f` inputs then piped stdin → (text, media attachments). Text-extractable inputs route
+    like `ko sum`; images/audio/video come back as pydantic-ai BinaryContent."""
     parts, attachments = [], []
     for f in files or []:
         # An explicitly named input that can't be read is fatal — a prompt silently missing
@@ -199,21 +221,66 @@ def llm_cmd(
         parts.append(text)
     if not sys.stdin.isatty():
         parts.append(sys.stdin.read())
-    stdin = "\n\n".join(p for p in parts if p.strip()) or None
+    return "\n\n".join(p for p in parts if p.strip()) or None, attachments
+
+
+@app.command("judge")
+def judge_cmd(
+    question: str = typer.Argument(..., help="the question; piped stdin or -f is what gets judged"),
+    files: list[str] = typer.Option(
+        None, "--file", "-f", help="judge a file or URL, read like `ko llm -f` (repeatable)"
+    ),
+    choice: str = typer.Option(None, "--choice", help="pick one: `a,b,c`, or `a=what a means,b` (no commas inside a meaning)"),
+    score: str = typer.Option(None, "--score", help="ordered levels, lowest first: `skip,skim,read=read it properly`"),
+    tags: str = typer.Option(None, "--tags", help="yes/no for each tag: `coding,ai,cars=vehicles and EVs`"),
+    model: str = typer.Option(
+        "jev",
+        "--model",
+        "-m",
+        help="jev (default) gives every answer a probability; any `ko llm` model answers the same question bare",
+        autocompletion=llm_mod.available_models,
+    ),
+    as_json: bool = typer.Option(False, "--json", help="emit the full answer: probabilities, confidence, model"),
+) -> None:
+    """Typed answer to one question, with probabilities: `ko judge "is this a paywall page?" -f page.md`.
+    How to word questions: `ko prompt judge`."""
+    try:  # bad options are a usage error, before we spend a call
+        if sum(bool(x) for x in (choice, score, tags)) > 1:
+            raise ValueError("--choice, --score and --tags are different kinds of question; pick one")
+        choice_opts = llm_mod.parse_options(choice, kind="choice") if choice else None
+        score_opts = llm_mod.parse_options(score, kind="score") if score else None
+        tag_opts = llm_mod.parse_options(tags, kind="tags") if tags else None
+    except ValueError as e:
+        _die(str(e), as_json=as_json, code="usage")
+    text, attachments = _inputs(files)
+    if attachments:
+        _die("judge reads text: images/audio/video can't be the input", as_json=as_json, code="usage")
+    if not text:
+        _die("nothing to judge: pipe the text in or pass -f", as_json=as_json, code="usage")
     try:
-        out = llm_mod.run(
-            prompt,
-            stdin=stdin,
-            model=model,
-            system=system,
-            schema=schema_obj,
-            attachments=attachments or None,
-        )
-        typer.echo(_first_fence(out) if extract else out)
-        if llm_mod.last_cost:
-            typer.echo(llm_mod.last_cost.note, err=True)
+        d = llm_mod.decide(question, text, model=model, choice=choice_opts, score=score_opts, tags=tag_opts)
     except Exception as e:
-        _die(str(e))
+        _die(str(e), as_json=as_json)
+    if as_json:
+        typer.echo(json.dumps(asdict(d)))
+    else:
+        _print_decision(d)
+    typer.echo(llm_mod.last_cost.note, err=True)
+
+
+def _print_decision(d: llm_mod.Decision) -> None:
+    """Column 1 of line 1 is always the answer. yes/no → P(yes); choice and tags → option<TAB>
+    probability, likeliest first (a language model gives just the pick, or the tags that apply);
+    score → level<TAB>position on the scale."""
+    if d.kind == "yes_no":
+        typer.echo(f"{d.answer:.2f}")
+    elif d.kind == "score":
+        typer.echo(f"{d.level}\t{d.answer}")
+    elif d.probabilities:
+        for name, p in sorted(d.probabilities.items(), key=lambda kv: -kv[1]):
+            typer.echo(f"{name}\t{p:.2f}")
+    else:
+        typer.echo("\n".join(d.answer) if isinstance(d.answer, list) else d.answer)
 
 
 # Scheme-less inputs that are still a URL: hostname labels, then a mandatory path
