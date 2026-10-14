@@ -1200,17 +1200,22 @@ def yt_channel(
     ref: str = typer.Argument(..., help="@handle, channel id (UC…), or channel URL"),
     last: int = typer.Option(None, "--last", "-n", help="how many of the newest uploads (default 10; all of them with --since)"),
     since: str = typer.Option(None, "--since", help="only uploads from this date/time on: 2026-10-01 or 2026-10-01T09:00:00Z"),
+    shorts: bool = typer.Option(False, "--shorts", help="include Shorts (left out by default)"),
     as_json: bool = typer.Option(False, "--json", help="emit JSON with full descriptions"),
 ) -> None:
-    """A channel's newest uploads, newest first: publish time, duration, URL, title (TSV)."""
+    """A channel's newest uploads, newest first, Shorts left out: publish time, duration, URL, title (TSV)."""
     try:
-        ch = yt_mod.channel(ref, last, since)
+        ch = yt_mod.channel(ref, last, since, shorts=shorts)
     except ValueError as e:
         _die(str(e), as_json=as_json, code="usage")
     except (yt_mod.YtError, config.MissingKeyError) as e:
         _die(str(e), as_json=as_json, code=getattr(e, "code", "error"))
     if ch.hidden:
         typer.echo(f"[{ch.title}: skipped {ch.hidden} private, deleted or not-yet-live uploads]", err=True)
+    if ch.shorts_skipped:
+        typer.echo(f"[{ch.title}: left out {ch.shorts_skipped} Shorts — --shorts to include them]", err=True)
+    if ch.unchecked:
+        typer.echo(f"[{ch.title}: couldn't check {ch.unchecked} short uploads for being Shorts; kept them (is_short: null)]", err=True)
     if ch.more:
         typer.echo(f"[{ch.title}: showing the newest {len(ch.uploads)}; there are more — raise -n or use --since]", err=True)
     if as_json:

@@ -269,7 +269,8 @@ class Upload:
     title: str
     published_at: str  # the video's own publish time, not when it joined the uploads list
     description: str
-    duration: str = ""  # h:mm:ss, from one videos.list call per 50 uploads
+    duration: str = ""  # h:mm:ss
+    is_short: bool | None = False  # None: 3 minutes or less, and the Shorts check failed
 
     @property
     def url(self) -> str:
@@ -283,6 +284,8 @@ class Channel:
     uploads: list[Upload]
     hidden: int  # entries among those read with no publish time: private, deleted or not yet live
     more: bool = False  # stopped at `last` with more uploads still in range
+    shorts_skipped: int = 0
+    unchecked: int = 0  # short-length uploads kept because the Shorts check failed
 
 
 @lru_cache
@@ -311,13 +314,34 @@ def _call(request, context: str) -> dict:
         raise YtError(f"YouTube API error for {context}: {reason}", code) from None
 
 
-def _duration(iso: str) -> str:
-    """ISO 8601 duration (PT1H2M3S, P1DT2H) → h:mm:ss. Live streams report P0D → 0:00:00."""
+def _seconds(iso: str) -> int:
+    """ISO 8601 duration (PT1H2M3S, P1DT2H) → seconds. Live streams report P0D → 0."""
     m = _DURATION_RE.fullmatch(iso)
     if not m:
         raise YtError(f"unexpected duration format from YouTube: {iso!r}")
     d, h, mi, sec = (int(x or 0) for x in m.groups())
-    return f"{d * 24 + h}:{mi:02d}:{sec:02d}"
+    return ((d * 24 + h) * 60 + mi) * 60 + sec
+
+
+def _duration(iso: str) -> str:
+    """ISO 8601 duration → h:mm:ss."""
+    t = _seconds(iso)
+    return f"{t // 3600}:{t % 3600 // 60:02d}:{t % 60:02d}"
+
+
+SHORTS_MAX = 180  # seconds: a Short can't be longer (since 2024), so longer videos skip the check
+
+
+def _is_short(vid: str) -> bool | None:
+    """Exact, as YouTube itself decides: /shorts/<id> answers 200 for a Short and redirects to
+    /watch for anything else. The Data API has no Shorts field. None when the check fails."""
+    import httpx2 as httpx
+
+    try:
+        r = httpx.head(f"https://www.youtube.com/shorts/{vid}", follow_redirects=False, timeout=10)
+    except httpx.HTTPError:
+        return None
+    return {200: True}.get(r.status_code, False if r.is_redirect else None)
 
 
 def infos(urls_or_ids: list[str]) -> tuple[list[Video], list[str]]:
@@ -366,10 +390,11 @@ def _channel_lookup(ref: str) -> dict:
     return {"forHandle": part if part.startswith("@") else f"@{part}"}
 
 
-def channel(ref: str, last: int | None = None, since: str | None = None) -> Channel:
-    """A channel's newest uploads, newest first, each with its duration (3 quota units per 50).
-    `since` (an ISO date or time; a bare date is UTC midnight) drops older ones; `last` caps the
-    count — 10 by default, no cap when `since` is given."""
+def channel(ref: str, last: int | None = None, since: str | None = None, *, shorts: bool = False) -> Channel:
+    """A channel's newest uploads, newest first, each with its duration; Shorts left out unless
+    `shorts`. `since` (an ISO date or time; a bare date is UTC midnight) drops older ones; `last`
+    caps the count after both filters — 10 by default, no cap with `since`. 2 quota units per 50
+    uploads read, plus one request to youtube.com per upload of 3 minutes or less."""
     if last is None:
         last = 10_000 if since else 10
     if last < 1:
@@ -381,50 +406,43 @@ def channel(ref: str, last: int | None = None, since: str | None = None) -> Chan
     if not items:
         raise YtError(f"no such channel: {ref}")
     ch = items[0]
+    out = Channel(id=ch["id"], title=ch["snippet"]["title"], uploads=[], hidden=0)
     playlist = ch["contentDetails"]["relatedPlaylists"]["uploads"]
-    uploads: list[Upload] = []
-    hidden, token, more = 0, None, False
-    while len(uploads) < last:
+    token, done = None, False
+    while not done:
         page = _call(
-            api.playlistItems().list(
-                part="snippet,contentDetails", playlistId=playlist, maxResults=50, pageToken=token
-            ),
+            api.playlistItems().list(part="snippet,contentDetails", playlistId=playlist, maxResults=50, pageToken=token),
             ref,
         )
+        fresh: list[Upload] = []
         for it in page.get("items", []):
-            if len(uploads) >= last:
-                more = True
-                break
             published = it["contentDetails"].get("videoPublishedAt")
             if not published:
-                hidden += 1
+                out.hidden += 1
+            elif cutoff and _utc(published) < cutoff:
+                done = True  # the uploads list runs newest first: everything after is older
+            else:
+                fresh.append(Upload(it["contentDetails"]["videoId"], it["snippet"]["title"], published,
+                                    it["snippet"].get("description", "")))
+        if fresh:
+            resp = _call(api.videos().list(part="contentDetails", id=",".join(u.id for u in fresh)), ref)
+            secs = {it["id"]: _seconds(it["contentDetails"]["duration"]) for it in resp.get("items") or []}
+        for u in sorted(fresh, key=lambda u: u.published_at, reverse=True):
+            t = secs.get(u.id, 0)
+            u.duration = f"{t // 3600}:{t % 3600 // 60:02d}:{t % 60:02d}"
+            u.is_short = _is_short(u.id) if 0 < t <= SHORTS_MAX else False
+            if u.is_short and not shorts:
+                out.shorts_skipped += 1
                 continue
-            if cutoff and _utc(published) < cutoff:
-                continue
-            uploads.append(
-                Upload(
-                    id=it["contentDetails"]["videoId"],
-                    title=it["snippet"]["title"],
-                    published_at=published,
-                    description=it["snippet"].get("description", ""),
-                )
-            )
+            if u.is_short is None:
+                out.unchecked += 1
+            if len(out.uploads) >= last:
+                out.more, done = True, True
+                break
+            out.uploads.append(u)
         token = page.get("nextPageToken")
-        if not token:
-            break
-        # the uploads list runs newest first, so a page that ends before the cutoff ends the walk
-        last_seen = (page.get("items") or [{}])[-1].get("contentDetails", {}).get("videoPublishedAt")
-        if cutoff and last_seen and _utc(last_seen) < cutoff:
-            break
-    uploads.sort(key=lambda u: u.published_at, reverse=True)
-    uploads = uploads[:last]
-    for i in range(0, len(uploads), 50):
-        chunk = uploads[i : i + 50]
-        resp = _call(api.videos().list(part="contentDetails", id=",".join(u.id for u in chunk)), ref)
-        durations = {it["id"]: _duration(it["contentDetails"]["duration"]) for it in resp.get("items") or []}
-        for u in chunk:
-            u.duration = durations.get(u.id, "")
-    return Channel(id=ch["id"], title=ch["snippet"]["title"], uploads=uploads, hidden=hidden, more=more or bool(token and len(uploads) >= last))
+        done = done or not token
+    return out
 
 
 def _utc(value: str) -> datetime:

@@ -11,7 +11,8 @@ Newest first. Big picture only — git commits have the detail; candidate ideas 
 - **Error codes**: ip_blocked, no_captions, private, not_found, quota, network. A blocked transcript's message names `-s` and its price but sets no `fix` field: agents run `fix` blind, and that would be a paid fallback by another name. No automatic Gemini fallback: free stays free (Gemini's review agreed).
 - **Spend guards** (ko-review): `info -s` refuses more than 5 uncached write-ups per call; a failed or cut-short write-up still reports what it cost. Each `info` fetches every video's free transcript — fine for a few, the IP-block pattern for 50.
 - **`channel --since`** lifts the default cap of 10; a capped list says there's more on stderr.
-- **`channel --since`** stops paging once past the cutoff; every upload gets its duration (+1 unit per 50) — no `is_short` flag, since YouTube doesn't say and a length cutoff is a guess.
+- **`channel --since`** stops paging once past the cutoff; every upload gets its duration (+1 unit per 50).
+- **Shorts left out by default** (KO via koevguide: 11 of 25 inbox videos were Shorts or clips; `--shorts` brings them back). The Data API has no Shorts field and a ≤3:00 cutoff also catches ordinary clips, so it's exact instead: uploads of 3 minutes or less get a HEAD to `youtube.com/shorts/<id>` — 200 is a Short, a redirect isn't. A failed check keeps the video with `is_short: null` and says so. `-n` counts after the filter.
 - **Direct Gemini key** (`GEMINI_API_KEY`, `~/.zshrc.local`) is out of AI Studio prepay credit (402); OpenRouter is the path.
 
 ## 2026-10-14 — `ko judge`: decision models (Jev)

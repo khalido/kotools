@@ -218,6 +218,7 @@ def test_channel_skips_private_and_keeps_newest_first(monkeypatch) -> None:
     ]
     monkeypatch.setattr(yt, "_api", lambda: _Fake())
     monkeypatch.setattr(yt, "_call", lambda request, context: pages.pop(0))
+    monkeypatch.setattr(yt, "_is_short", lambda vid: False)
     ch = yt.channel("@chan", last=5)
     assert [(u.id, u.duration) for u in ch.uploads] == [("new", "0:01:00"), ("old", "0:02:00")]
     assert ch.hidden == 1
@@ -261,6 +262,7 @@ def test_channel_since_drops_older(monkeypatch) -> None:
     ]
     monkeypatch.setattr(yt, "_api", lambda: _Fake())
     monkeypatch.setattr(yt, "_call", lambda request, context: pages.pop(0))
+    monkeypatch.setattr(yt, "_is_short", lambda vid: False)
     ch = yt.channel("@chan", last=10, since="2026-10-01")
     assert [u.id for u in ch.uploads] == ["new"]
     assert pages == []  # stopped paging once a page reached the cutoff
@@ -351,3 +353,26 @@ def test_info_refuses_a_big_paid_batch(monkeypatch) -> None:
     ids = [f"{i:011d}" for i in range(6)]
     r = CliRunner().invoke(app, ["yt", "info", *ids, "-s"])
     assert r.exit_code == 2 and "6 new write-ups" in r.output
+
+
+def test_channel_leaves_out_shorts_and_counts_after(monkeypatch) -> None:
+    def item(vid, published):
+        return {"snippet": {"title": vid, "description": ""}, "contentDetails": {"videoId": vid, "videoPublishedAt": published}}
+
+    def dur(vid, iso):
+        return {"id": vid, "contentDetails": {"duration": iso}}
+
+    pages = [
+        {"items": [{"id": "UC1", "snippet": {"title": "Chan"}, "contentDetails": {"relatedPlaylists": {"uploads": "UU1"}}}]},
+        {"items": [item("s1", "2026-10-05T00:00:00Z"), item("long", "2026-10-04T00:00:00Z"),
+                   item("clip", "2026-10-03T00:00:00Z"), item("long2", "2026-10-02T00:00:00Z")]},
+        {"items": [dur("s1", "PT45S"), dur("long", "PT20M"), dur("clip", "PT2M30S"), dur("long2", "PT12M")]},
+    ]
+    checked = []
+    monkeypatch.setattr(yt, "_api", lambda: _Fake())
+    monkeypatch.setattr(yt, "_call", lambda request, context: pages.pop(0))
+    monkeypatch.setattr(yt, "_is_short", lambda vid: checked.append(vid) or vid == "s1")
+    ch = yt.channel("@chan", last=2)
+    assert [u.id for u in ch.uploads] == ["long", "clip"]  # -n counts after the Shorts are gone
+    assert ch.shorts_skipped == 1 and ch.more
+    assert checked == ["s1", "clip"]  # only uploads of 3 minutes or less get the check
