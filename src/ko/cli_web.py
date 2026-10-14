@@ -1158,7 +1158,7 @@ def yt_info(
     url_or_id: str = typer.Argument(..., help="YouTube URL or 11-char video id"),
     as_json: bool = typer.Option(False, "--json", help="emit a JSON object"),
 ) -> None:
-    """A video's title, channel, exact publish time, duration, views, captions and description."""
+    """A video's title, channel, publish time, duration, views, language, chapters and description."""
     try:
         v = yt_mod.info(url_or_id)
     except ValueError as e:
@@ -1171,7 +1171,8 @@ def yt_info(
     views = f"{v.views:,}" if v.views is not None else "hidden"
     typer.echo(
         f"{v.title}\n{v.channel}  ·  {v.published_at}  ·  {v.duration}  ·  {views} views  ·  "
-        f"captions {'yes' if v.captions else 'no'}\n{v.url}\n\n{v.description}"
+        f"{v.language or 'language not set'}  ·  uploaded captions {'yes' if v.uploaded_captions else 'no'}"
+        f"\n{v.url}\n\n{v.description}"
     )
 
 

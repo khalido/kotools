@@ -168,6 +168,32 @@ _DURATION_RE = re.compile(r"P(?:(\d+)D)?T?(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?")
 
 
 @dataclass
+class Chapter:
+    start: str  # as written in the description, e.g. "1:02:03"
+    seconds: int
+    title: str
+
+
+# A chapter line starts with a timestamp: "0:00 Intro", "1:02:03 - Verdict". YouTube only makes
+# chapters when the first is 0:00 and there are at least three, so anything else isn't chapters.
+_CHAPTER_RE = re.compile(r"^\s*\(?((?:\d+:)?\d{1,2}:\d{2})\)?\s*[-–—:|]?\s*(.+?)\s*$")
+
+
+def chapters(description: str) -> list[Chapter]:
+    """Chapters from a description, by YouTube's own rule (first at 0:00, three or more)."""
+    found = []
+    for line in description.splitlines():
+        m = _CHAPTER_RE.match(line)
+        if m:
+            parts = [int(p) for p in m.group(1).split(":")]
+            secs = sum(p * 60**i for i, p in enumerate(reversed(parts)))
+            found.append(Chapter(start=m.group(1), seconds=secs, title=m.group(2)))
+    if len(found) < 3 or found[0].seconds != 0:
+        return []
+    return found
+
+
+@dataclass
 class Video:
     id: str
     title: str
@@ -176,7 +202,9 @@ class Video:
     published_at: str  # RFC 3339, UTC, exact to the second
     duration: str  # h:mm:ss
     views: int | None  # None when the channel hides the count
-    captions: bool
+    uploaded_captions: bool  # captions the uploader added; auto-generated ones don't count, so False ≠ no transcript
+    language: str | None  # defaultAudioLanguage (e.g. "en", "en-AU"), None when the uploader didn't set it
+    chapters: list[Chapter]
     description: str
 
     @property
@@ -256,7 +284,9 @@ def info(url_or_id: str) -> Video:
         published_at=sn["publishedAt"],
         duration=_duration(cd["duration"]),
         views=int(st["viewCount"]) if "viewCount" in st else None,
-        captions=cd.get("caption") == "true",
+        uploaded_captions=cd.get("caption") == "true",
+        language=sn.get("defaultAudioLanguage"),
+        chapters=chapters(sn.get("description", "")),
         description=sn.get("description", ""),
     )
 

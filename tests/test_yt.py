@@ -227,3 +227,13 @@ class _Fake:
 
     def __getattr__(self, name):
         return lambda *a, **k: self
+
+
+def test_chapters_follow_youtube_rule() -> None:
+    desc = "Review of the car.\n\n0:00 Intro\n1:30 - Range\n(12:05) Charging\n1:02:03 Verdict\nThanks!"
+    got = yt.chapters(desc)
+    assert [(c.start, c.seconds, c.title) for c in got] == [
+        ("0:00", 0, "Intro"), ("1:30", 90, "Range"), ("12:05", 725, "Charging"), ("1:02:03", 3723, "Verdict"),
+    ]
+    assert yt.chapters("1:00 a\n2:00 b\n3:00 c") == []  # must start at 0:00
+    assert yt.chapters("0:00 a\n2:00 b") == []  # fewer than three
