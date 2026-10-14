@@ -55,7 +55,7 @@ SCOPES_READONLY = [
     "https://www.googleapis.com/auth/calendar.readonly",
     "https://www.googleapis.com/auth/gmail.readonly",
     "https://www.googleapis.com/auth/drive.readonly",  # list/read any Drive file (ko drive ls/pull)
-    "https://www.googleapis.com/auth/youtube.readonly",  # your own subscriptions/playlists (public data uses YOUTUBE_API_KEY)
+    "https://www.googleapis.com/auth/youtube.readonly",  # your own subscriptions/playlists (public data uses GOOGLE_CLOUD_API_KEY)
 ]
 SCOPES_READWRITE = [
     "https://www.googleapis.com/auth/spreadsheets",

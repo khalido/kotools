@@ -239,6 +239,11 @@ none urgent:
 - [ ] **`ko scholar`** — **OpenAlex REST** (250M works, free, no key) for breadth + **semanticscholar** PyPI for TLDRs/citation graph. Partially covered by `ko hf` for AI papers; still the pick for citation graphs / non-AI fields.
 - [ ] Later: `ko clip`, `ko note`, `ko standup`, `ko schema`, `ko embed`.
 
+## Stubs (2026-10-14, researched, not built)
+
+- [ ] **`ko weather [place] [--days N] [--json]`** — one command, three backends, as KO's home repo does (`~/code/home/src/connectors/weather/`, `docs/weather-probe.md`). Open-Meteo (free, keyless, free geocoding, model data) for anywhere; BOM anonymous FTP via stdlib `ftplib` (`IDN10064.xml` Sydney forecast, `IDN60920.xml` NSW observations — the only *observed* source) for Sydney; Google Weather (`weather.googleapis.com/v1`, on `GOOGLE_CLOUD_API_KEY`, 10k free/month then billed — set a daily quota cap) only on `--source google`. Default place from `[weather]` in config, never IP-guessed. Every answer names its source and whether it's observed or modelled. Lessons to copy from home: flag odd units, never convert; don't pass Open-Meteo `models=bom_access_global` (all nulls).
+- [ ] **`ko books <query|isbn|id> [-n] [--json]`** — Google Books v1 through `googleapiclient` (`build("books","v1")`, bundled discovery doc) on `GOOGLE_CLOUD_API_KEY`; keyless calls are dead (429). **Blocked 2026-10-14:** fielded queries (`isbn:`, `intitle:`, `inauthor:`) return 0 for known books — Google forum thread 2026-10-05. Re-test before building; when built, check the returned volume's `industryIdentifiers` really holds the asked ISBN. `printType="BOOKS"` must be uppercase in the SDK; descriptions are HTML.
+
 ## New candidates (HN scan, 2026-06-11 — gap-verified, not committed to)
 
 HN consensus 2025–26: CLI beats MCP for agent tooling (~10–32× lower token cost) — ko's exact thesis. These had confirmed gaps (no decent CLI exists) + ready SDKs:

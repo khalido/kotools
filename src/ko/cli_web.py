@@ -60,7 +60,7 @@ x_app = typer.Typer(
 app.add_typer(x_app, name="x")
 
 yt_app = typer.Typer(
-    help="YouTube: transcripts (no auth) and video/channel metadata (YOUTUBE_API_KEY). "
+    help="YouTube: transcripts (no auth) and video/channel metadata (GOOGLE_CLOUD_API_KEY). "
     "`ko yt <url>` is the transcript.",
     no_args_is_help=True,
 )

@@ -1,5 +1,5 @@
 """YouTube → transcript via youtube-transcript-api (no auth, no download), plus video and
-channel metadata via the YouTube Data API v3 (`YOUTUBE_API_KEY`: public data only, 1–2 quota
+channel metadata via the YouTube Data API v3 (`GOOGLE_CLOUD_API_KEY`: public data only, 1–2 quota
 units a call out of 10,000 a day).
 
 Hits YouTube's transcript endpoint directly — fast, no yt-dlp, no ffmpeg.
@@ -16,6 +16,7 @@ For --json: each snippet is {"start": float, "text": str, "duration": float}.
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass
 from functools import lru_cache
@@ -159,7 +160,7 @@ def transcript(vid: str, languages: tuple[str, ...] = ("en",)) -> str:
 # --- metadata: YouTube Data API v3 (public data, API key) ---------------------------------
 
 _KEY_HINT = (
-    "Create an API key restricted to YouTube Data API v3 in your Google Cloud project "
+    "Create an API key with YouTube Data API v3 enabled in your Google Cloud project "
     "(console.cloud.google.com/apis/credentials) and set it in ~/.config/ko/config.toml [keys]."
 )
 _CHANNEL_ID_RE = re.compile(r"UC[A-Za-z0-9_-]{22}")
@@ -207,7 +208,8 @@ class Channel:
 def _api():
     from googleapiclient.discovery import build
 
-    key = config.require_key("YOUTUBE_API_KEY", _KEY_HINT)
+    # one Cloud key serves every public-data Google API; YOUTUBE_API_KEY is its first name (2026-10-14)
+    key = os.environ.get("YOUTUBE_API_KEY") or config.require_key("GOOGLE_CLOUD_API_KEY", _KEY_HINT)
     return build("youtube", "v3", developerKey=key, cache_discovery=False)
 
 
