@@ -2,6 +2,18 @@
 
 Newest first. Big picture only — git commits have the detail; candidate ideas and decisions live in `docs/ideas.md`.
 
+## 2026-10-14 — `ko yt`: write-ups by Gemini watching, batch info, cache
+
+- **`-s` now watches the video.** Gemini Flash through OpenRouter (`video_url`, pydantic-ai `VideoUrl` via `llm.run`), prompt `src/ko/prompts/yt-condense.md` (KO's brief via koevguide: every point with its detail, on-screen text marked, filler cut, length follows content). Works when transcripts are IP-blocked and sees on-screen prices/readouts. Model: `-m`, `KO_YT_MODEL` or `[yt] model`.
+- **Flash, not Flash-Lite** (31-min test video, same v2 prompt): Lite 898 words, $0.05, but thin and wrong on the drive events (missed the solid-line crossing and the 70 sign misread, called a no-indicator exit "a disengagement"); Flash 1,364 words, $0.29, every event with its timestamp. Cost ranged 8.5–33c per run on the same input.
+- **Cache** `~/.cache/ko/yt/`: transcripts by id; write-ups by id + model + sha of the prompt (editing the prompt re-runs). `--refresh` bypasses. Metadata isn't cached (views move).
+- **`info <url>...`**: one videos.list per 50, JSON is always a list; each video carries `transcript` = excerpt (100 words from start, middle, end) / `text` (`--full`) / `{available: false, code}`. Missing ids come back as `{id, code: not_found}` entries.
+- **Error codes**: ip_blocked, no_captions, private, not_found, quota, network. A blocked transcript's message names `-s` and its price but sets no `fix` field: agents run `fix` blind, and that would be a paid fallback by another name. No automatic Gemini fallback: free stays free (Gemini's review agreed).
+- **Spend guards** (ko-review): `info -s` refuses more than 5 uncached write-ups per call; a failed or cut-short write-up still reports what it cost. Each `info` fetches every video's free transcript — fine for a few, the IP-block pattern for 50.
+- **`channel --since`** lifts the default cap of 10; a capped list says there's more on stderr.
+- **`channel --since`** stops paging once past the cutoff; every upload gets its duration (+1 unit per 50) — no `is_short` flag, since YouTube doesn't say and a length cutoff is a guess.
+- **Direct Gemini key** (`GEMINI_API_KEY`, `~/.zshrc.local`) is out of AI Studio prepay credit (402); OpenRouter is the path.
+
 ## 2026-10-14 — `ko judge`: decision models (Jev)
 
 - **What.** `ko judge "<question>" [-f x | stdin]` returns a typed answer with probabilities: P(yes) by default, `--choice` (one of many, every option's probability), `--score` (ordered levels, nearest level + exact position), `--tags` (yes/no per tag). Default model Jev; `-m` takes any `ko llm` model, which answers the same type bare — the way to compare. Guide: `ko prompt judge`.

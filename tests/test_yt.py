@@ -214,11 +214,12 @@ def test_channel_skips_private_and_keeps_newest_first(monkeypatch) -> None:
     pages = [
         {"items": [{"id": "UC1", "snippet": {"title": "Chan"}, "contentDetails": {"relatedPlaylists": {"uploads": "UU1"}}}]},
         {"items": [item("old", "2026-01-01T00:00:00Z"), item("gone", None), item("new", "2026-02-01T00:00:00Z")]},
+        {"items": [{"id": "new", "contentDetails": {"duration": "PT1M"}}, {"id": "old", "contentDetails": {"duration": "PT2M"}}]},
     ]
     monkeypatch.setattr(yt, "_api", lambda: _Fake())
     monkeypatch.setattr(yt, "_call", lambda request, context: pages.pop(0))
     ch = yt.channel("@chan", last=5)
-    assert [u.id for u in ch.uploads] == ["new", "old"]
+    assert [(u.id, u.duration) for u in ch.uploads] == [("new", "0:01:00"), ("old", "0:02:00")]
     assert ch.hidden == 1
 
 
@@ -237,3 +238,116 @@ def test_chapters_follow_youtube_rule() -> None:
     ]
     assert yt.chapters("1:00 a\n2:00 b\n3:00 c") == []  # must start at 0:00
     assert yt.chapters("0:00 a\n2:00 b") == []  # fewer than three
+
+
+def test_utc_reads_dates_and_refuses_naive_times() -> None:
+    assert yt._utc("2026-10-01").isoformat() == "2026-10-01T00:00:00+00:00"
+    assert yt._utc("2026-10-01T09:00:00Z").hour == 9
+    assert yt._utc("2026-10-01T19:00:00+10:00").hour == 9
+    with pytest.raises(ValueError, match="time zone"):
+        yt._utc("2026-10-01T09:00:00")
+    with pytest.raises(ValueError, match="ISO"):
+        yt._utc("last week")
+
+
+def test_channel_since_drops_older(monkeypatch) -> None:
+    def item(vid, published):
+        return {"snippet": {"title": vid, "description": ""}, "contentDetails": {"videoId": vid, "videoPublishedAt": published}}
+
+    pages = [
+        {"items": [{"id": "UC1", "snippet": {"title": "Chan"}, "contentDetails": {"relatedPlaylists": {"uploads": "UU1"}}}]},
+        {"items": [item("new", "2026-10-05T00:00:00Z"), item("old", "2026-09-01T00:00:00Z")], "nextPageToken": "more"},
+        {"items": [{"id": "new", "contentDetails": {"duration": "PT1M"}}]},
+    ]
+    monkeypatch.setattr(yt, "_api", lambda: _Fake())
+    monkeypatch.setattr(yt, "_call", lambda request, context: pages.pop(0))
+    ch = yt.channel("@chan", last=10, since="2026-10-01")
+    assert [u.id for u in ch.uploads] == ["new"]
+    assert pages == []  # stopped paging once a page reached the cutoff
+
+
+def test_transcript_status_excerpt_and_codes(monkeypatch) -> None:
+    long = " ".join(f"w{i}" for i in range(1000))
+    monkeypatch.setattr(yt, "transcript", lambda vid, refresh=False: long)
+    st = yt.transcript_status("abcdefghijk")
+    assert st["available"] and st["words"] == 1000
+    start, mid, end = st["excerpt"].split(" … ")
+    assert start.split()[0] == "w0" and end.split()[-1] == "w999" and "w500" in mid
+    assert yt.transcript_status("abcdefghijk", full=True)["text"] == long
+
+    def blocked(vid, refresh=False):
+        raise yt.YtError("no transcript available (ip blocked)", "ip_blocked")
+
+    monkeypatch.setattr(yt, "transcript", blocked)
+    assert yt.transcript_status("abcdefghijk") == {"available": False, "code": "ip_blocked", "reason": "no transcript available (ip blocked)"}
+
+
+def test_transcript_is_cached(monkeypatch) -> None:
+    calls = []
+    monkeypatch.setattr(yt, "_fetch_snippets", lambda vid, langs: calls.append(vid) or [yt.Snippet(0.0, "hi", 1.0)])
+    assert yt.transcript("abcdefghijk") == "hi"
+    assert yt.transcript("abcdefghijk") == "hi"
+    assert calls == ["abcdefghijk"]
+    yt.snippets("abcdefghijk", refresh=True)
+    assert len(calls) == 2
+
+
+def test_condense_caches_by_video_model_and_prompt(monkeypatch) -> None:
+    from ko import llm
+
+    runs = []
+
+    def fake_run(prompt, *, model, system, attachments):
+        runs.append((model, attachments[0].url))
+        llm.last_cost = llm.RunCost("google/gemini-3.5-flash", 100, 20, 0.01, "actual")
+        return "write-up"
+
+    monkeypatch.setattr(llm, "run", fake_run)
+    a = yt.condense("https://youtu.be/abcdefghijk")
+    b = yt.condense("abcdefghijk")
+    assert (a.text, a.cached, b.cached) == ("write-up", False, True)
+    assert runs == [("openrouter:google/gemini-3.5-flash", "https://www.youtube.com/watch?v=abcdefghijk")]
+    yt.condense("abcdefghijk", model="openrouter:other/model")  # another model is another entry
+    assert len(runs) == 2
+
+
+def test_infos_batches_and_reports_missing(monkeypatch) -> None:
+    def vid(i):
+        return {"id": i, "snippet": {"title": i, "channelTitle": "c", "channelId": "UC", "publishedAt": "2026-01-01T00:00:00Z"},
+                "contentDetails": {"duration": "PT1M"}}
+
+    seen = []
+
+    def call(request, context):
+        seen.append(context)
+        return {"items": [vid("aaaaaaaaaaa")]}
+
+    monkeypatch.setattr(yt, "_api", lambda: _Fake())
+    monkeypatch.setattr(yt, "_call", call)
+    found, missing = yt.infos(["aaaaaaaaaaa", "https://youtu.be/bbbbbbbbbbb", "aaaaaaaaaaa"])
+    assert [v.id for v in found] == ["aaaaaaaaaaa"] and missing == ["bbbbbbbbbbb"]
+    assert len(seen) == 1
+
+
+def test_condense_failure_says_what_it_cost(monkeypatch) -> None:
+    from ko import llm
+
+    def cut_short(prompt, *, model, system, attachments):
+        llm.last_cost = llm.RunCost("google/gemini-3.5-flash", 168000, 9000, 0.31, "actual")
+        raise llm.TruncatedOutput("hit the output-token limit")
+
+    monkeypatch.setattr(llm, "run", cut_short)
+    with pytest.raises(yt.YtError, match=r"\$0\.31"):
+        yt.condense("abcdefghijk")
+    assert not yt.is_condensed("abcdefghijk")
+
+
+def test_info_refuses_a_big_paid_batch(monkeypatch) -> None:
+    from typer.testing import CliRunner
+
+    from ko.cli import app
+
+    monkeypatch.setattr(yt, "infos", lambda urls: pytest.fail("looked up before refusing"))
+    ids = [f"{i:011d}" for i in range(6)]
+    r = CliRunner().invoke(app, ["yt", "info", *ids, "-s"])
+    assert r.exit_code == 2 and "6 new write-ups" in r.output

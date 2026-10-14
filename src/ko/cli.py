@@ -131,7 +131,7 @@ def doctor(
     rows: list[tuple[str, str, str, tuple[str, str]]] = [
         ("hn", "Hacker News top/search/comments", "—", ("✓ no auth", "green")),
         ("hf", "HF papers: daily feed, search, metadata", "—", ("✓ no auth", "green")),
-        ("yt", "YouTube transcripts; video + channel metadata", "GOOGLE_CLOUD_API_KEY (info/channel)", env("GOOGLE_CLOUD_API_KEY")),
+        ("yt", "YouTube transcripts; video + channel metadata", "GOOGLE_CLOUD_API_KEY (info/channel); -s via OpenRouter", env("GOOGLE_CLOUD_API_KEY")),
         (
             "brief",
             "morning brief (cal+gmail+hn+hf → LLM)",

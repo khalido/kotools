@@ -1094,108 +1094,130 @@ def _yt_models() -> list[str]:
     return llm_mod.available_models()
 
 
+_REFRESH_HELP = "ignore the cache: fetch the transcript again (and re-run -s, which costs again)"
+
+
+def _say_condensed(c) -> None:
+    """stderr: who wrote it, from what, what it cost — or that it came from the cache."""
+    cost = f"${c.usd:.4f}" if c.usd is not None else "cost unknown"
+    when = f"cached {c.created[:10]}" if c.cached else cost
+    typer.echo(f"[condensed by {c.model} from the {c.input} · {c.input_tokens:,}→{c.output_tokens:,} tok · {when}]", err=True)
+
+
 @yt_app.command("transcript")
 def yt_transcript(
     url_or_id: str = typer.Argument(..., help="YouTube URL or 11-char video id"),
-    summarize: bool = typer.Option(
-        False, "--summarize", "-s", help="pipe the transcript through the LLM (key points, who should watch)"
+    condense: bool = typer.Option(
+        False, "--summarize", "-s", help="a model watches the video and writes up every point, filler cut (costs; cached)"
     ),
-    model: str = typer.Option(
-        None,
-        "--model",
-        "-m",
-        help="model for --summarize (ignored without -s)",
-        autocompletion=_yt_models,
-    ),
-    as_json: bool = typer.Option(
-        False, "--json", help="emit [{start, text, duration}] snippets instead of plain text"
-    ),
+    model: str = typer.Option(None, "--model", "-m", help="model for -s (default Gemini Flash)", autocompletion=_yt_models),
+    as_json: bool = typer.Option(False, "--json", help="emit [{start, text, duration}] snippets (with -s: the write-up and its cost)"),
+    refresh: bool = typer.Option(False, "--refresh", help=_REFRESH_HELP),
 ) -> None:
-    """Video → transcript as plain text (`ko yt <url>` is short for this). No auth, no download."""
+    """Video → transcript as plain text (`ko yt <url>` is short for this). Free, cached; `-s` for a write-up."""
     try:
         vid = yt_mod.video_id(url_or_id)
     except ValueError as e:
         _die(str(e), as_json=as_json, code="usage")
-
-    if as_json:
+    if condense:
         try:
-            segs = yt_mod.snippets(vid)
-        except yt_mod.YtError as e:
-            _die(str(e), as_json=as_json)
-        typer.echo(json.dumps([{"start": s.start, "text": s.text, "duration": s.duration} for s in segs]))
-        return
-
-    try:
-        text = yt_mod.transcript(vid)
-    except yt_mod.YtError as e:
-        _die(str(e), as_json=as_json)
-
-    # Rough token estimate: ~4 chars/token is the heuristic used across the codebase.
-    token_est = len(text) // 4
-    typer.echo(f"[{vid}  ~{token_est:,} tokens]", err=True)
-
-    if summarize:
-        from . import llm as llm_mod
-
-        prompt = (
-            "Summarize this video transcript: key points, notable claims, who should watch. "
-            "Concise bullets, no preamble."
-        )
-        try:
-            result = llm_mod.run(prompt, stdin=text, model=model)
+            c = yt_mod.condense(vid, model=model, refresh=refresh)
         except Exception as e:
-            _die(str(e))
-        typer.echo(result)
-        if llm_mod.last_cost:
-            typer.echo(llm_mod.last_cost.note, err=True)
+            _die(str(e), as_json=as_json)
+        _say_condensed(c)
+        typer.echo(json.dumps(asdict(c), ensure_ascii=False) if as_json else c.text)
         return
-
+    try:
+        segs = yt_mod.snippets(vid, refresh=refresh)
+    except yt_mod.YtError as e:
+        paid = " — `-s` has a model watch the video instead (~10–30c)" if e.code in ("ip_blocked", "no_captions") else ""
+        _die(f"{e}{paid}", as_json=as_json, code=e.code)
+    text = yt_mod.join(segs)
+    if as_json:
+        typer.echo(json.dumps([asdict(s) for s in segs]))
+        return
+    typer.echo(f"[{vid}  ~{len(text) // 4:,} tokens]", err=True)
     typer.echo(text)
+
+
+_MAX_WRITEUPS = 5  # `info -s` pays per uncached video; past this, ask again on purpose
 
 
 @yt_app.command("info")
 def yt_info(
-    url_or_id: str = typer.Argument(..., help="YouTube URL or 11-char video id"),
-    as_json: bool = typer.Option(False, "--json", help="emit a JSON object"),
+    urls: list[str] = typer.Argument(..., help="YouTube URLs or 11-char video ids (many in one call)"),
+    full: bool = typer.Option(False, "--full", help="the whole transcript instead of an excerpt"),
+    condense: bool = typer.Option(False, "--summarize", "-s", help="add the `-s` write-up for each video (costs; cached)"),
+    as_json: bool = typer.Option(False, "--json", help="emit a JSON list, one object per video"),
 ) -> None:
-    """A video's title, channel, publish time, duration, views, language, chapters and description."""
+    """Videos' metadata plus their transcript (fetched free per video): an excerpt, --full, or why there's none."""
     try:
-        v = yt_mod.info(url_or_id)
+        uncached = [u for u in urls if condense and not yt_mod.is_condensed(u)]
+        if len(uncached) > _MAX_WRITEUPS:
+            raise ValueError(
+                f"-s would pay for {len(uncached)} new write-ups (~10–30c each); ask for {_MAX_WRITEUPS} or fewer "
+                "at a time, or one by one with `ko yt <url> -s`"
+            )
+        videos, missing = yt_mod.infos(urls)
     except ValueError as e:
         _die(str(e), as_json=as_json, code="usage")
     except (yt_mod.YtError, config.MissingKeyError) as e:
-        _die(str(e), as_json=as_json)
+        _die(str(e), as_json=as_json, code=getattr(e, "code", "error"))
+    out = []
+    for v in videos:
+        row = asdict(v) | {"url": v.url, "transcript": yt_mod.transcript_status(v.id, full=full)}
+        if condense:
+            try:
+                c = yt_mod.condense(v.id)
+                _say_condensed(c)
+                row["condensed"] = c.text
+            except Exception as e:
+                row["condensed"] = None
+                typer.echo(f"[{v.id}: write-up failed: {e}]", err=True)
+        out.append(row)
+    if not videos:
+        _die("none of those videos exist or are public", as_json=as_json, code="not_found")
+    out += [{"id": m, "error": "no such video, or it is private", "code": "not_found"} for m in missing]
+    if missing:
+        typer.echo(f"[not found or private: {', '.join(missing)}]", err=True)
     if as_json:
-        typer.echo(json.dumps(asdict(v) | {"url": v.url}, ensure_ascii=False))
+        typer.echo(json.dumps(out, ensure_ascii=False))
         return
-    views = f"{v.views:,}" if v.views is not None else "hidden"
-    typer.echo(
-        f"{v.title}\n{v.channel}  ·  {v.published_at}  ·  {v.duration}  ·  {views} views  ·  "
-        f"{v.language or 'language not set'}  ·  uploaded captions {'yes' if v.uploaded_captions else 'no'}"
-        f"\n{v.url}\n\n{v.description}"
-    )
+    for i, r in enumerate(row for row in out if "error" not in row):
+        views = f"{r['views']:,}" if r["views"] is not None else "hidden"
+        t = r["transcript"]
+        tx = (t.get("text") or t.get("excerpt")) if t["available"] else f"(none: {t['code']})"
+        typer.echo(
+            ("\n---\n" if i else "")
+            + f"{r['title']}\n{r['channel']}  ·  {r['published_at']}  ·  {r['duration']}  ·  {views} views  ·  "
+            f"{r['language'] or 'language not set'}  ·  uploaded captions {'yes' if r['uploaded_captions'] else 'no'}\n{r['url']}\n\n{r['description']}\n\n## Transcript\n{tx}"
+            + (f"\n\n## Write-up\n{r['condensed']}" if r.get("condensed") else "")
+        )
 
 
 @yt_app.command("channel")
 def yt_channel(
     ref: str = typer.Argument(..., help="@handle, channel id (UC…), or channel URL"),
-    last: int = typer.Option(10, "--last", "-n", help="how many of the newest uploads"),
+    last: int = typer.Option(None, "--last", "-n", help="how many of the newest uploads (default 10; all of them with --since)"),
+    since: str = typer.Option(None, "--since", help="only uploads from this date/time on: 2026-10-01 or 2026-10-01T09:00:00Z"),
     as_json: bool = typer.Option(False, "--json", help="emit JSON with full descriptions"),
 ) -> None:
-    """A channel's newest uploads, newest first: exact publish time, URL, title (TSV)."""
+    """A channel's newest uploads, newest first: publish time, duration, URL, title (TSV)."""
     try:
-        ch = yt_mod.channel(ref, last)
+        ch = yt_mod.channel(ref, last, since)
     except ValueError as e:
         _die(str(e), as_json=as_json, code="usage")
     except (yt_mod.YtError, config.MissingKeyError) as e:
-        _die(str(e), as_json=as_json)
+        _die(str(e), as_json=as_json, code=getattr(e, "code", "error"))
     if ch.hidden:
         typer.echo(f"[{ch.title}: skipped {ch.hidden} private, deleted or not-yet-live uploads]", err=True)
+    if ch.more:
+        typer.echo(f"[{ch.title}: showing the newest {len(ch.uploads)}; there are more — raise -n or use --since]", err=True)
     if as_json:
         uploads = [asdict(u) | {"url": u.url} for u in ch.uploads]
         typer.echo(json.dumps({"id": ch.id, "title": ch.title, "uploads": uploads}, ensure_ascii=False))
         return
     if not ch.uploads:
-        _no_results(f"{ch.title} has no public uploads", as_json=False)
+        _no_results(f"{ch.title} has no public uploads" + (f" since {since}" if since else ""), as_json=False)
     for u in ch.uploads:
-        typer.echo(f"{u.published_at}\t{u.url}\t{_tsv_cell(u.title)}")
+        typer.echo(f"{u.published_at}\t{u.duration}\t{u.url}\t{_tsv_cell(u.title)}")
