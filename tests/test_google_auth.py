@@ -178,10 +178,10 @@ def test_cli_registers_and_unregisters_a_service_account(monkeypatch, tmp_path):
 
 def test_describe_scopes_reads_the_grant_back():
     assert g.describe_scopes(g.SCOPES_READWRITE) == (
-        "read+write: sheets, docs, calendar, gmail (read + drafts), drive"
+        "read+write: sheets, docs, calendar, gmail (read + drafts), drive · read-only: youtube"
     )
     ro = g.describe_scopes(g.SCOPES_READONLY)
-    assert ro.startswith("read-only: sheets, docs, calendar, gmail, drive")
+    assert ro.startswith("read-only: sheets, docs, calendar, gmail, drive, youtube")
     assert "re-consent" in ro  # a read-only token can't write: say so up front
     # a pre-widen token: per-file drive, flagged as stale rather than reported as "drive"
     old = [s.replace("/drive", "/drive.file") for s in g.SCOPES_READWRITE]
@@ -190,7 +190,10 @@ def test_describe_scopes_reads_the_grant_back():
     # a token missing an API entirely
     partial = [s for s in g.SCOPES_READWRITE if "gmail" not in s]
     assert "missing: gmail" in g.describe_scopes(partial)
-    assert g.describe_scopes([]).startswith("missing: sheets, docs, calendar, gmail, drive")
+    # a write token from before YouTube was added: still writes, says how to add the new API
+    pre_yt = [s for s in g.SCOPES_READWRITE if "youtube" not in s]
+    assert g.describe_scopes(pre_yt).endswith("missing: youtube · re-consent with `ko google auth` to add them")
+    assert g.describe_scopes([]).startswith("missing: sheets, docs, calendar, gmail, drive, youtube")
 
 
 def test_account_status_reads_local_files_only(monkeypatch, tmp_path):

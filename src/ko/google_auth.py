@@ -15,7 +15,7 @@ single client can't authorize the account (e.g. a Workspace "Internal" consent s
 authorize a personal Gmail; give that account its own `google_client_<name>.json`).
 
 Scopes are per-API: `ko` requests Sheets + Docs + Calendar (read or read+write) + Gmail (read
-+ `gmail.compose` for drafts, no `gmail.modify`) + Drive (`drive.readonly` on the read token,
++ `gmail.compose` for drafts, no `gmail.modify`) + YouTube (read-only) + Drive (`drive.readonly` on the read token,
 `drive` on the write token — widened from the per-file `drive.file` on 2026-09-10 so `ko drive`
 can mirror folders ko didn't create; WORKLOG has the trade). Per-folder scoping is a
 service-account profile: share the folder with its client_email, run with `-a <name>`. One token
@@ -55,6 +55,7 @@ SCOPES_READONLY = [
     "https://www.googleapis.com/auth/calendar.readonly",
     "https://www.googleapis.com/auth/gmail.readonly",
     "https://www.googleapis.com/auth/drive.readonly",  # list/read any Drive file (ko drive ls/pull)
+    "https://www.googleapis.com/auth/youtube.readonly",  # your own subscriptions/playlists (public data uses YOUTUBE_API_KEY)
 ]
 SCOPES_READWRITE = [
     "https://www.googleapis.com/auth/spreadsheets",
@@ -64,6 +65,7 @@ SCOPES_READWRITE = [
     "https://www.googleapis.com/auth/gmail.readonly",  # read Gmail (compose alone can't read)
     "https://www.googleapis.com/auth/gmail.compose",  # create/update/send drafts (NOT gmail.modify)
     "https://www.googleapis.com/auth/drive",  # full Drive (ko drive push, gdocs push into any folder)
+    "https://www.googleapis.com/auth/youtube.readonly",  # read-only on both tokens: ko never writes to YouTube
 ]
 
 DEFAULT_ACCOUNT = "default"
@@ -119,6 +121,7 @@ _API_SCOPES = {
     "calendar": ("calendar.readonly", "calendar.events"),
     "gmail": ("gmail.readonly", "gmail.compose"),
     "drive": ("drive.readonly", "drive"),
+    "youtube": ("youtube.readonly", "youtube"),  # write scope never requested: always reads as read-only
 }
 
 
@@ -139,8 +142,10 @@ def describe_scopes(scopes: list[str]) -> str:
         parts.append("drive: per-file only (pre-2026-09 token)")
     if missing:
         parts.append("missing: " + ", ".join(missing))
-    if not rw or missing or "drive.file" in have:
+    if not rw or "drive.file" in have:
         parts.append("re-consent with `ko google auth` before writes")
+    elif missing:
+        parts.append("re-consent with `ko google auth` to add them")
     return " · ".join(parts) or "no scopes"
 
 
