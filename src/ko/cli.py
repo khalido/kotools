@@ -25,7 +25,7 @@ from .cli_ai import publish_app, tt_app  # needed by main()'s bare-arg dispatche
 
 # Re-export group-local helpers that tests import via ko.cli
 from .cli_google import _norm_block, _parse_cells, _short_from  # noqa: F401
-from .cli_web import x_app  # needed by main()'s bare-arg dispatcher
+from .cli_web import x_app, yt_app  # needed by main()'s bare-arg dispatcher
 from .refs import DEFAULT_JOBS as REFS_JOBS
 
 
@@ -131,7 +131,7 @@ def doctor(
     rows: list[tuple[str, str, str, tuple[str, str]]] = [
         ("hn", "Hacker News top/search/comments", "—", ("✓ no auth", "green")),
         ("hf", "HF papers: daily feed, search, metadata", "—", ("✓ no auth", "green")),
-        ("yt", "YouTube → transcript (no auth, no download)", "—", ("✓ no auth", "green")),
+        ("yt", "YouTube transcripts; video + channel metadata", "YOUTUBE_API_KEY (info/channel)", env("YOUTUBE_API_KEY")),
         (
             "brief",
             "morning brief (cal+gmail+hn+hf → LLM)",
@@ -620,7 +620,7 @@ def _route(args: list[str]) -> list[str]:
     takes the args after the program name, returns the rewritten list. Shortcuts:
     trailing `help` == `--help` at group level only; `ko <url>` -> `fetch <url>`;
     `ko <file>` -> `doc <file>`; `ko x <name>` -> `x list <name>`; `ko tt <name>` ->
-    `tt items <name>`; `ko publish [dir]` -> `publish up [dir]`."""
+    `tt items <name>`; `ko yt <url>` -> `yt transcript <url>`; `ko publish [dir]` -> `publish up [dir]`."""
     args = list(args)
     groups = {g.name for g in app.registered_groups}
     # `help` as a trailing word == --help, but only at *group* level (`ko help`, `ko exa
@@ -654,6 +654,10 @@ def _route(args: list[str]) -> list[str]:
             args.insert(1, "lists")  # bare `ko tt` -> your lists (house style: do the useful thing)
         elif not args[1].startswith("-") and args[1] not in tt_known:
             args.insert(1, "items")  # `ko tt Shopping` -> `ko tt items Shopping`
+    elif args[0] == "yt" and args[1:] and args[1] not in ("--help", "-h"):
+        # `ko yt <url> [-s]` -> `ko yt transcript <url> [-s]`; subcommands pass through
+        if args[1] not in {c.name for c in yt_app.registered_commands}:
+            args.insert(1, "transcript")
     elif args[0] == "publish":
         pub_known = {c.name for c in publish_app.registered_commands}
         # `ko publish` / `ko publish ./dir` / `ko publish -n foo` -> `... up ...`,

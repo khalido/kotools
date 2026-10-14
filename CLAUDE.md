@@ -28,6 +28,7 @@ This file is a stub, not a manual — same rule as agent-browser/herdr: **the in
 | `cal ...` | agenda merged across all Google accounts; `cal use` sets where `cal add` lands (apart from the mail default) |
 | `google auth\|use\|accounts\|rename\|logout` | the one way to sign in / pick Google accounts (short tags, `-a <tag>`) |
 | `gmail ...` | thread-first read + attachments + drafts; replies go to a thread (send opt-in, gated) |
+| `yt <url>\|info\|channel` | transcript (no auth); video + channel metadata (`YOUTUBE_API_KEY`) |
 | `hn` / `hf` / `papers` | HN · HF papers · OpenAlex literature scouting |
 | `x search\|list\|user\|lists` | X search/lists/timelines (pay-per-read) |
 | `tt ...` (`todo`) | TickTick read+write |

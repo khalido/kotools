@@ -8,6 +8,7 @@ from pathlib import Path
 
 import typer
 
+from . import config
 from ._cli_shared import _die, _emit_json, _fmt_day, _no_results, _tsv_cell, app, lazy
 
 arxiv_mod = lazy("arxiv")
@@ -57,6 +58,13 @@ x_app = typer.Typer(
     no_args_is_help=True,
 )
 app.add_typer(x_app, name="x")
+
+yt_app = typer.Typer(
+    help="YouTube: transcripts (no auth) and video/channel metadata (YOUTUBE_API_KEY). "
+    "`ko yt <url>` is the transcript.",
+    no_args_is_help=True,
+)
+app.add_typer(yt_app, name="yt")
 
 
 # --- arxiv commands ---
@@ -1086,8 +1094,8 @@ def _yt_models() -> list[str]:
     return llm_mod.available_models()
 
 
-@app.command("yt")
-def yt_cmd(
+@yt_app.command("transcript")
+def yt_transcript(
     url_or_id: str = typer.Argument(..., help="YouTube URL or 11-char video id"),
     summarize: bool = typer.Option(
         False, "--summarize", "-s", help="pipe the transcript through the LLM (key points, who should watch)"
@@ -1103,15 +1111,7 @@ def yt_cmd(
         False, "--json", help="emit [{start, text, duration}] snippets instead of plain text"
     ),
 ) -> None:
-    """YouTube → transcript (plain text, pipeable). No auth, no download.
-
-    `ko yt <url>` → transcript to stdout (pipe to `ko llm` or redirect to a file).
-    `ko yt <url> -s` → one-shot LLM summary (key points, notable claims, who should watch).
-    `ko yt <url> --json` → [{start, text, duration}] snippet array.
-
-    Shortcut: `ko <youtube-url>` routes here via bare-url dispatch in fetch.
-    Fails cleanly when captions are disabled (no silent fall-through to the description page).
-    """
+    """Video → transcript as plain text (`ko yt <url>` is short for this). No auth, no download."""
     try:
         vid = yt_mod.video_id(url_or_id)
     except ValueError as e:
@@ -1151,3 +1151,50 @@ def yt_cmd(
         return
 
     typer.echo(text)
+
+
+@yt_app.command("info")
+def yt_info(
+    url_or_id: str = typer.Argument(..., help="YouTube URL or 11-char video id"),
+    as_json: bool = typer.Option(False, "--json", help="emit a JSON object"),
+) -> None:
+    """A video's title, channel, exact publish time, duration, views, captions and description."""
+    try:
+        v = yt_mod.info(url_or_id)
+    except ValueError as e:
+        _die(str(e), as_json=as_json, code="usage")
+    except (yt_mod.YtError, config.MissingKeyError) as e:
+        _die(str(e), as_json=as_json)
+    if as_json:
+        typer.echo(json.dumps(asdict(v) | {"url": v.url}, ensure_ascii=False))
+        return
+    views = f"{v.views:,}" if v.views is not None else "hidden"
+    typer.echo(
+        f"{v.title}\n{v.channel}  ·  {v.published_at}  ·  {v.duration}  ·  {views} views  ·  "
+        f"captions {'yes' if v.captions else 'no'}\n{v.url}\n\n{v.description}"
+    )
+
+
+@yt_app.command("channel")
+def yt_channel(
+    ref: str = typer.Argument(..., help="@handle, channel id (UC…), or channel URL"),
+    last: int = typer.Option(10, "--last", "-n", help="how many of the newest uploads"),
+    as_json: bool = typer.Option(False, "--json", help="emit JSON with full descriptions"),
+) -> None:
+    """A channel's newest uploads, newest first: exact publish time, URL, title (TSV)."""
+    try:
+        ch = yt_mod.channel(ref, last)
+    except ValueError as e:
+        _die(str(e), as_json=as_json, code="usage")
+    except (yt_mod.YtError, config.MissingKeyError) as e:
+        _die(str(e), as_json=as_json)
+    if ch.hidden:
+        typer.echo(f"[{ch.title}: skipped {ch.hidden} private, deleted or not-yet-live uploads]", err=True)
+    if as_json:
+        uploads = [asdict(u) | {"url": u.url} for u in ch.uploads]
+        typer.echo(json.dumps({"id": ch.id, "title": ch.title, "uploads": uploads}, ensure_ascii=False))
+        return
+    if not ch.uploads:
+        _no_results(f"{ch.title} has no public uploads", as_json=False)
+    for u in ch.uploads:
+        typer.echo(f"{u.published_at}\t{u.url}\t{_tsv_cell(u.title)}")

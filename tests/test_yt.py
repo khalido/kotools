@@ -168,3 +168,62 @@ def test_snippets_prefers_manual_over_generated(monkeypatch) -> None:
     result = yt.snippets("dQw4w9WgXcQ")
     assert calls == ["manual"]
     assert result[0].text == "Manual."
+
+
+# --- metadata (YouTube Data API) ---
+
+
+@pytest.mark.parametrize(
+    ("iso", "expected"),
+    [("PT3M34S", "0:03:34"), ("PT1H2M3S", "1:02:03"), ("PT45S", "0:00:45"), ("P1DT2H", "26:00:00"), ("P0D", "0:00:00")],
+)
+def test_duration(iso: str, expected: str) -> None:
+    assert yt._duration(iso) == expected
+
+
+def test_duration_rejects_unknown_format() -> None:
+    with pytest.raises(yt.YtError):
+        yt._duration("3 minutes")
+
+
+@pytest.mark.parametrize(
+    ("ref", "query"),
+    [
+        ("@mkbhd", {"forHandle": "@mkbhd"}),
+        ("mkbhd", {"forHandle": "@mkbhd"}),
+        ("https://www.youtube.com/@mkbhd/videos", {"forHandle": "@mkbhd"}),
+        ("UCBJycsmduvYEL83R_U4JriQ", {"id": "UCBJycsmduvYEL83R_U4JriQ"}),
+        ("https://www.youtube.com/channel/UCBJycsmduvYEL83R_U4JriQ", {"id": "UCBJycsmduvYEL83R_U4JriQ"}),
+        ("https://www.youtube.com/user/marquesbrownlee", {"forUsername": "marquesbrownlee"}),
+    ],
+)
+def test_channel_lookup(ref: str, query: dict) -> None:
+    assert yt._channel_lookup(ref) == query
+
+
+def test_channel_lookup_refuses_custom_url() -> None:
+    with pytest.raises(yt.YtError, match="@handle"):
+        yt._channel_lookup("https://www.youtube.com/c/Something")
+
+
+def test_channel_skips_private_and_keeps_newest_first(monkeypatch) -> None:
+    def item(vid, published):
+        cd = {"videoId": vid} | ({"videoPublishedAt": published} if published else {})
+        return {"snippet": {"title": vid, "description": ""}, "contentDetails": cd}
+
+    pages = [
+        {"items": [{"id": "UC1", "snippet": {"title": "Chan"}, "contentDetails": {"relatedPlaylists": {"uploads": "UU1"}}}]},
+        {"items": [item("old", "2026-01-01T00:00:00Z"), item("gone", None), item("new", "2026-02-01T00:00:00Z")]},
+    ]
+    monkeypatch.setattr(yt, "_api", lambda: _Fake())
+    monkeypatch.setattr(yt, "_call", lambda request, context: pages.pop(0))
+    ch = yt.channel("@chan", last=5)
+    assert [u.id for u in ch.uploads] == ["new", "old"]
+    assert ch.hidden == 1
+
+
+class _Fake:
+    """Any attribute chain returns itself, so `api.channels().list(...)` builds a dummy request."""
+
+    def __getattr__(self, name):
+        return lambda *a, **k: self

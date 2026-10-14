@@ -21,7 +21,7 @@ Full docs: **[kotools.khalido.dev](https://kotools.khalido.dev/)**.
 | `ko fetch` | any URL → clean markdown (PDF, arxiv, Wayback fallback) | `ko <url>` — read a page or PDF as text |
 | `ko doc` | PDF/Office/image → text, fully local (no models) | `ko report.pdf` — no upload, no key |
 | `ko pdf` | markdown → print-ready PDF (A4, styles, code highlighting) | `ko pdf notes.md`; `--style report` for the letterhead + Contents look |
-| `ko yt` | YouTube → transcript (free, no key); `-s` summarizes | "what does this 40-min talk actually say" |
+| `ko yt` | YouTube → transcript (free, no key), `-s` summarizes; `info` / `channel` for video and upload metadata (`YOUTUBE_API_KEY`) | "what does this 40-min talk actually say" |
 | `ko tv` | movie/TV rating + where to stream ([TMDB](https://developer.themoviedb.org), AU) | "worth watching, and where can I?" |
 | `ko tt` | TickTick lists + tasks, read **& write** (Open API v1) | `ko tt today` — my open tasks; `ko tt add "…" --due tomorrow` |
 

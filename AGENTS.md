@@ -54,6 +54,7 @@ they're present. If a command fails with an auth/key error, `ko doctor` tells yo
 
 - `ko <url>` → `ko fetch <url>` (URL → markdown; YouTube URLs return the transcript, or fail cleanly when captions are off)
 - `ko <file>` → `ko doc <file>` (PDF/Office/image → text), when the arg is an existing file
+- `ko yt <url>` → `ko yt transcript <url>` (anything after `yt` that isn't `info`/`channel`/`transcript` is a video)
 - `ko x <name>` → `ko x list <name>` (anything after `x` that isn't an x subcommand is a list name)
 - `ko tt` (alias `ko todo`) → `ko tt lists`; `ko tt <name>` → `ko tt items <name>` (anything that isn't a tt subcommand — `lists`/`items`/`add`/`done`/`search` — is a list name)
 - `ko <group> help` → `ko <group> --help` (trailing `help` prints help at **group** level, nested groups included: `ko help`, `ko exa help`, `ko gmail draft help`). After a leaf command it's an ordinary argument, so `ko hn search help` searches for the word "help" — use `--help`, which works at every level, to get help there.
