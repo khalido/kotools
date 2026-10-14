@@ -1191,7 +1191,7 @@ def _fmt_events(events, window_start: str | None = None) -> None:
             dt = datetime.fromisoformat(ev.start).astimezone(zone)
             day, when = dt.date().isoformat(), dt.strftime("%H:%M")
         if day != last_day:
-            header = datetime.strptime(day, "%Y-%m-%d").strftime("%a %d %b")  # noqa: DTZ007 — date-only label
+            header = datetime.strptime(day, "%Y-%m-%d").strftime("%a %d %b")
             typer.echo(f"\n{header}")
             last_day = day
         loc = f"  @ {ev.location.replace(chr(10), ', ').replace(chr(13), '')}" if ev.location else ""

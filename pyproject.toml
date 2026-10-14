@@ -36,7 +36,7 @@ dependencies = [
     "opentelemetry-sdk>=1.44.0",
     # floor at 2.21: without it uv maximizes fastmcp-slim into a 4.x prerelease and pins
     # pydantic-ai back to 2.4 (2.21 caps fastmcp-slim<4, older versions don't cap at all).
-    "pydantic-ai-slim[google,openrouter,mcp]>=2.32,<3",
+    "pydantic-ai-slim[google,openrouter,mcp,typesafe]>=2.56,<3",
     "pygments>=2.20.0",
     "python-docx>=1.2",
     "pyyaml>=6.0.3",
