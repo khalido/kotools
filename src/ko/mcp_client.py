@@ -1,12 +1,13 @@
-"""Minimal MCP client for *inspecting / calling* servers, on the official `mcp` SDK (2.x).
-Backs `ko mcp inspect|call|servers`.
+"""Minimal MCP client for *inspecting / calling* servers, on pydantic-ai's MCP client (the same
+one ko's agents use; it wraps the `mcp` SDK, so SDK churn stays pydantic-ai's problem).
+Backs `ko mcp inspect|call|overview|servers`.
 
 Targets a server by **name or url**: names resolve from `~/.config/ko/mcp.json`, which holds the
 standard `{"mcpServers": {...}}` object (copy-paste-compatible with Claude Code / opencode / Cursor).
 Both transports the standard defines are supported — `url` (+`headers`, Streamable HTTP) and stdio
 (`command`/`args`/`env`). On an HTTP failure it falls back to a raw initialize POST so the error is
-the server's actual status + body (e.g. a 503 "MCP endpoint is not configured"), not an opaque SDK
-TaskGroup wrapper.
+the server's actual status + body (e.g. a 503 "MCP endpoint is not configured"), not the client's
+vague "Server returned an error response". A stdio server's stderr is captured, shown only on failure.
 """
 
 from __future__ import annotations
@@ -15,19 +16,18 @@ import asyncio
 import json
 import os
 import re
-from contextlib import asynccontextmanager
+import sys
+import tempfile
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
 import httpx2 as httpx
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
-from mcp.client.streamable_http import streamable_http_client
 
 from ko import dirs
 
-_TIMEOUT = 30.0  # seconds, per tool call
-_PROTOCOL = "2025-06-18"
+_TIMEOUT = 30.0  # seconds, per request
+_INIT_TIMEOUT = 120.0  # pydantic-ai's default is 5s; a first `uvx`/`npx -y` run downloads first
+_PROTOCOL = "2025-06-18"  # only for the raw diagnostic probe
 
 
 class MCPTestError(RuntimeError):
@@ -218,109 +218,122 @@ def auth_info(url: str, headers: dict | None = None) -> dict:
     return out
 
 
-@asynccontextmanager
-async def _session(spec: dict):
-    """Open a ClientSession to a server `spec` (http url or stdio command). Not yet initialized."""
+def _toolset(spec: dict, stderr=None, for_agent: bool = False):
+    """A pydantic-ai MCPToolset for a server `spec` (http url or stdio command). `stderr` takes a
+    stdio server's log output (old servers log a validation error for the client's first
+    `server/discover` probe, then work fine — noise unless something actually fails). A tool
+    error raises ToolError for direct calls; only an agent (`for_agent`) gets ModelRetry."""
+    from pydantic_ai.mcp import MCPToolset, StdioTransport, StreamableHttpTransport
+
     if spec.get("transport") == "stdio":
-        params = StdioServerParameters(
-            command=spec["command"], args=spec.get("args") or [], env=spec.get("env") or None
+        transport = StdioTransport(
+            spec["command"], spec.get("args") or [], env=spec.get("env") or None, log_file=stderr
         )
-        async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
-            yield session
     else:
-        # mcp 2.x takes headers/timeouts on the http client; read=300 keeps v1's SSE read window
-        client = httpx.AsyncClient(
-            headers=spec.get("headers") or None, timeout=httpx.Timeout(30, read=300)
-        )
-        async with (
-            client,
-            streamable_http_client(spec["url"], http_client=client) as (read, write),
-            ClientSession(read, write) as session,
-        ):
-            yield session
+        transport = StreamableHttpTransport(spec["url"], headers=spec.get("headers") or None)
+    return MCPToolset(
+        transport,
+        read_timeout=_TIMEOUT,
+        init_timeout=_INIT_TIMEOUT,
+        tool_error_behavior="retry" if for_agent else "error",
+    )
 
 
-async def _inspect(spec: dict) -> ServerInfo:
-    async with _session(spec) as session:
-        init = await session.initialize()
-        caps = [
-            name
-            for name, val in (
-                ("tools", init.capabilities.tools),
-                ("resources", init.capabilities.resources),
-                ("prompts", init.capabilities.prompts),
-            )
-            if val is not None
+async def _listed(what: str, fetch) -> list:
+    """One surface's listing; a failure is a stderr note, not a silent empty list."""
+    try:
+        return await fetch()
+    except Exception as e:
+        leaf = _unwrap(e)
+        print(f"note: listing {what} failed: {type(leaf).__name__}: {leaf}", file=sys.stderr)
+        return []
+
+
+async def _inspect(spec: dict, stderr=None) -> ServerInfo:
+    async with _toolset(spec, stderr) as ts:
+        c = ts.capabilities
+        caps = [name for name in ("tools", "resources", "prompts") if getattr(c, name)]
+        tools = []
+        for t in await _listed("tools", ts.list_tools) if c.tools else []:
+            schema = t.input_schema or {}
+            tools.append(ToolInfo(t.name, _first_line(t.description), list(schema.get("required") or []), schema))
+        resources = []
+        for r in await _listed("resources", ts.list_resources) if c.resources else []:
+            resources.append(ResourceInfo(str(r.uri), r.name or "", _first_line(r.description), r.mime_type or ""))
+        for t in await _listed("resource templates", ts.list_resource_templates) if c.resources else []:
+            resources.append(ResourceInfo(t.uri_template, t.name or "", _first_line(t.description), "", template=True))
+        prompts = [
+            PromptInfo(p.name, _first_line(p.description), [a.name for a in (p.arguments or [])])
+            for p in (await _listed("prompts", ts.list_prompts) if c.prompts else [])
         ]
-        tools: list[ToolInfo] = []
-        resources: list[ResourceInfo] = []
-        prompts: list[PromptInfo] = []
-        # Each surface is fetched only if advertised, and wrapped so a server that advertises
-        # a capability but errors listing it doesn't sink the whole inspect.
-        if init.capabilities.tools is not None:
-            try:
-                for t in (await session.list_tools()).tools:
-                    schema = t.input_schema or {}
-                    req = list(schema.get("required", []) or [])
-                    tools.append(ToolInfo(t.name, _first_line(t.description), req, schema))
-            except Exception:
-                pass
-        if init.capabilities.resources is not None:
-            try:
-                for r in (await session.list_resources()).resources:
-                    resources.append(
-                        ResourceInfo(str(r.uri), r.name or "", _first_line(r.description), r.mime_type or "")
-                    )
-                for tpl in (await session.list_resource_templates()).resource_templates:
-                    resources.append(
-                        ResourceInfo(tpl.uri_template, tpl.name or "", _first_line(tpl.description), "", template=True)
-                    )
-            except Exception:
-                pass
-        if init.capabilities.prompts is not None:
-            try:
-                for p in (await session.list_prompts()).prompts:
-                    args = [a.name for a in (p.arguments or [])]
-                    prompts.append(PromptInfo(p.name, _first_line(p.description), args))
-            except Exception:
-                pass
-        si = init.server_info
+        try:
+            si_name, si_version = ts.server_info.name, ts.server_info.version
+        except AttributeError:  # serverInfo is optional on newer protocols
+            si_name, si_version = spec.get("name") or "?", ""
         return ServerInfo(
-            si.name, si.version, init.protocol_version, (init.instructions or "").strip(),
+            si_name, si_version, ts.client.protocol_version or "", (ts.instructions or "").strip(),
             caps, tools, resources, prompts,
         )
 
 
-async def _call(spec: dict, tool: str, args: dict) -> str:
-    async with _session(spec) as session:
-        await session.initialize()
-        result = await session.call_tool(tool, args, read_timeout_seconds=_TIMEOUT)
-        parts = [getattr(c, "text", None) or str(c) for c in (result.content or [])]
-        return "\n".join(parts)
+async def _call(spec: dict, tool: str, args: dict, stderr=None) -> str:
+    async with _toolset(spec, stderr) as ts:
+        result = await ts.direct_call_tool(tool, args)
+    return _as_text(result)
 
 
-def _explain(spec: dict, exc: Exception) -> str:
-    """A useful failure line: the server's raw HTTP reply for http, the leaf exception for stdio."""
+def _as_text(result) -> str:
+    """A tool result as stdout text: strings as-is (several text parts one per line), JSON for
+    structured data, binary parts named by type instead of dumped."""
+    if isinstance(result, str):
+        return result
+    if isinstance(result, list) and all(isinstance(r, str) for r in result):
+        return "\n".join(result)
+    if isinstance(result, (dict, list, int, float, bool)) or result is None:
+        return json.dumps(result, indent=2, default=_describe)
+    return _describe(result)
+
+
+def _describe(obj) -> str:
+    media = getattr(obj, "media_type", None)
+    return f"[{type(obj).__name__}{f' {media}' if media else ''}]"
+
+
+def _run(spec: dict, make):
+    """Run one client coroutine `make(stderr)`; on failure raise MCPTestError with the real cause."""
+    with tempfile.TemporaryFile("w+", errors="replace") as stderr:
+        try:
+            return asyncio.run(make(stderr))
+        except Exception as e:
+            stderr.seek(0)
+            raise MCPTestError(_explain(spec, e, stderr.read())) from e
+
+
+def _explain(spec: dict, exc: Exception, stderr: str = "") -> str:
+    """A useful failure line: the server's raw HTTP reply for http (the client's own message is
+    often just "Server returned an error response"), the leaf exception + stderr tail for stdio."""
+    from pydantic_ai.mcp import ToolError
+
     leaf = _unwrap(exc)
+    if isinstance(leaf, ToolError):  # the server answered; its own message is the explanation
+        return f"ToolError: {leaf}"
     if spec.get("transport") == "stdio":
+        tail = " | ".join(stderr.strip().splitlines()[-5:])
+        return f"{type(leaf).__name__}: {leaf}" + (f"  |  server stderr: {tail}" if tail else "")
+    said = _probe(spec["url"], spec.get("headers") or {})
+    if said.startswith("HTTP 2"):  # the server is fine — the failure is ours (bad model, args…)
         return f"{type(leaf).__name__}: {leaf}"
-    return f"{type(leaf).__name__}. Server said: {_probe(spec['url'], spec.get('headers') or {})}"
+    return f"{type(leaf).__name__}. Server said: {said}"
 
 
 def inspect(spec: dict) -> ServerInfo:
     """Connect to a resolved server spec, initialize, and list all surfaces. Raises MCPTestError."""
-    try:
-        return asyncio.run(_inspect(spec))
-    except Exception as e:
-        raise MCPTestError(_explain(spec, e)) from e
+    return _run(spec, lambda err: _inspect(spec, err))
 
 
 def call(spec: dict, tool: str, args: dict) -> str:
-    """Call one tool on a resolved server spec; return its text content. Raises MCPTestError."""
-    try:
-        return asyncio.run(_call(spec, tool, args))
-    except Exception as e:
-        raise MCPTestError(_explain(spec, e)) from e
+    """Call one tool on a resolved server spec; return its result (text, or JSON). Raises MCPTestError."""
+    return _run(spec, lambda err: _call(spec, tool, args, err))
 
 
 _OVERVIEW_INSTRUCTIONS = (
@@ -332,45 +345,18 @@ _OVERVIEW_INSTRUCTIONS = (
 )
 
 
-def _spec_to_entry(spec: dict) -> dict:
-    """Internal spec -> a raw mcpServers entry (for pydantic-ai's load_mcp_toolsets)."""
-    if spec.get("transport") == "stdio":
-        entry: dict = {"command": spec["command"], "args": spec.get("args") or []}
-        if spec.get("env"):
-            entry["env"] = spec["env"]
-        return entry
-    entry = {"url": spec["url"]}
-    if spec.get("headers"):
-        entry["headers"] = spec["headers"]
-    return entry
-
-
 def overview(spec: dict, model: str, prompt: str | None = None) -> str:
     """Have a pydantic-ai agent connect to the server (as an MCP toolset), explore it, and summarize
-    what it's for. Uses pydantic-ai's load_mcp_toolsets (same mcpServers shape ko stores). Lazy
-    imports so plain inspect/call don't pull pydantic-ai."""
-    import os as _os
-    import tempfile
-
+    what it's for."""
     from pydantic_ai import Agent
-    from pydantic_ai.mcp import load_mcp_toolsets
 
-    name = "".join(c if c.isalnum() else "_" for c in spec.get("name", "server"))[:32] or "server"
-    cfg = {"mcpServers": {name: _spec_to_entry(spec)}}
-    fd, path = tempfile.mkstemp(suffix=".json", prefix="ko-mcp-")
-    try:
-        _os.write(fd, json.dumps(cfg).encode())
-        _os.close(fd)
-        toolsets = load_mcp_toolsets(path)
-        agent = Agent(model, toolsets=toolsets, instructions=_OVERVIEW_INSTRUCTIONS)
-        return asyncio.run(
-            agent.run(prompt or "Give me a concise overview of this MCP server.")
-        ).output
-    except Exception as e:
-        raise MCPTestError(_explain(spec, e)) from e
-    finally:
-        if _os.path.exists(path):
-            _os.unlink(path)
+    async def run(stderr):
+        agent = Agent(
+            model, toolsets=[_toolset(spec, stderr, for_agent=True)], instructions=_OVERVIEW_INSTRUCTIONS
+        )
+        return (await agent.run(prompt or "Give me a concise overview of this MCP server.")).output
+
+    return _run(spec, run)
 
 
 # --- server registry (~/.config/ko/mcp.json, standard `mcpServers` shape) ---

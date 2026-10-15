@@ -120,3 +120,32 @@ def test_load_and_resolve_by_name_with_header_override(monkeypatch, tmp_path):
     assert set(mcp_client.load_servers()) == {"dev"}
     spec = mcp_client.resolve("dev", {"B": "override"})  # -H overrides config
     assert spec["url"] == "http://x/mcp" and spec["headers"] == {"A": "1", "B": "override"}
+
+
+def test_explain_blames_server_only_when_it_failed(monkeypatch):
+    """A probe that comes back 2xx means the server is fine — show our own error, not 'Server said'."""
+    spec = {"transport": "http", "url": "https://x.test/mcp", "headers": {}}
+    monkeypatch.setattr(mcp_client, "_probe", lambda url, headers: "HTTP 200: {...}")
+    assert mcp_client._explain(spec, ValueError("Unknown model: basic")) == "ValueError: Unknown model: basic"
+    monkeypatch.setattr(mcp_client, "_probe", lambda url, headers: "HTTP 401: denied")
+    assert mcp_client._explain(spec, RuntimeError("vague")) == "RuntimeError. Server said: HTTP 401: denied"
+
+
+def test_explain_stdio_shows_stderr_tail():
+    spec = {"transport": "stdio", "command": "x"}
+    msg = mcp_client._explain(spec, RuntimeError("Connection closed"), "a\nb\nnot found in registry\n")
+    assert msg.startswith("RuntimeError: Connection closed") and "server stderr:" in msg
+    assert msg.endswith("a | b | not found in registry")
+    assert mcp_client._explain(spec, RuntimeError("boom")) == "RuntimeError: boom"
+
+
+def test_as_text_keeps_plain_output_plain():
+    assert mcp_client._as_text("hi") == "hi"
+    assert mcp_client._as_text(["line a", "line b"]) == "line a\nline b"  # not a JSON array
+    assert mcp_client._as_text({"a": 1}) == '{\n  "a": 1\n}'
+
+    class BinaryImage:
+        media_type = "image/png"
+
+    assert mcp_client._as_text(BinaryImage()) == "[BinaryImage image/png]"
+    assert mcp_client._as_text(["x", BinaryImage()]) == '[\n  "x",\n  "[BinaryImage image/png]"\n]'

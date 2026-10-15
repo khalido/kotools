@@ -28,7 +28,6 @@ dependencies = [
     "liteparse>=2.15",  # page_label, image_mode="none", is_complex (ko doc)
     "loguru~=0.7.3",
     "markdown-it-py>=4.2.0",  # gmail draft --md: markdown -> html (also arrives transitively via rich)
-    "mcp[cli]>=2.3",  # 2.x: streamable_http_client(url, http_client=…) — mcp_client.py
     "mdit-py-plugins>=0.6.1",
     "opentelemetry-exporter-otlp-proto-http>=1.44.0",
     "opentelemetry-sdk>=1.44.0",
