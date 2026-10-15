@@ -605,29 +605,25 @@ def hn_top(
 def hn_search(
     query: str = typer.Argument(..., help="search query"),
     n: int = typer.Option(hn_mod.DEFAULT_SEARCH_N, "--n", "-n", help="max results"),
-    since: int = typer.Option(
-        hn_mod.DEFAULT_SINCE_MONTHS,
-        "--since",
-        "-s",
-        help="only stories from the last N months (0 = all time)",
+    years: int = typer.Option(
+        hn_mod.DEFAULT_YEARS, "--years", "-y", help="only stories from the last N years (0 = all time)"
     ),
-    new: bool = typer.Option(
-        False, "--new", help="sort newest first instead of by relevance"
-    ),
+    new: bool = typer.Option(False, "--new", help="newest first instead of by points"),
     min_comments: int = typer.Option(
         0, "--min-comments", "-c", help="only stories with at least N comments"
     ),
     as_json: bool = typer.Option(False, "--json", help="emit JSON instead of text"),
 ) -> None:
-    """Search HN stories. Relevance order, last 12 months by default."""
+    """Search HN stories, highest points first, last year by default. A URL searches all time for its submissions."""
     try:
         results = hn_mod.search(
-            query, n=n, since_months=since, by_date=new, min_comments=min_comments
+            query, n=n, years=years, by_date=new, min_comments=min_comments
         )
     except Exception as e:
         _die(str(e), as_json=as_json)
     if not results:
-        window = f" in the last {since} months (use --since 0 for all time)" if since else ""
+        all_time = not years or hn_mod._is_url(query)
+        window = "" if all_time else f" in the last {years} year(s) (use -y 0 for all time)"
         _no_results(f"No results for '{query}'{window}.", as_json)
     _echo_stories(results, as_json)
 

@@ -48,39 +48,82 @@ def test_count_comments_is_full_total():
     assert hn._count_comments(tree) == 4
 
 
-def test_search_passes_numeric_filters_as_list(monkeypatch):
-    """Regression: Algolia 400s on a comma-joined numericFilters string once there's >1 filter;
-    httpx must send a list (repeated params). Guards the `created_at_i + num_comments` combo."""
-    captured = {}
+def _hit(id_: str, points: int, title_match: bool = True) -> dict:
+    level = "full" if title_match else "none"
+    return {
+        "objectID": id_,
+        "title": id_,
+        "points": points,
+        "created_at_i": 1750000000,
+        "_highlightResult": {"title": {"matchLevel": level}},
+    }
+
+
+def test_search_comma_joins_numeric_filters(monkeypatch):
+    """Regression: repeated numericFilters params make Algolia keep only the first filter
+    (min_comments silently ignored). Algolia documents a comma-joined string."""
+    calls = []
+    monkeypatch.setattr(hn, "_get", lambda path, params: calls.append(params) or {"hits": []})
+    hn.search("rust", n=0, years=1, min_comments=30)
+    nf = calls[0]["numericFilters"]
+    assert isinstance(nf, str)
+    assert nf.startswith("created_at_i>") and nf.endswith(",num_comments>=30,points>=20")
+
+
+def test_search_ranks_by_points_and_backfills_under_floor(monkeypatch):
+    """Algolia ranks word proximity above points; we re-rank by points. Title matches over the
+    floor come first; when they're fewer than n, the rest fill in — title matches before
+    body-only matches, whatever their points (niche topics)."""
+    calls = []
 
     def fake_get(path, params):
-        captured["path"] = path
-        captured["params"] = params
-        return {"hits": []}
+        calls.append(params)
+        first = "points>=" in params.get("numericFilters", "")
+        assert first == (params.get("restrictSearchableAttributes") == "title")
+        if first:
+            return {"hits": [_hit("a", 30), _hit("b", 900)]}
+        return {"hits": [_hit("b", 900), _hit("body", 50, title_match=False), _hit("c", 5)]}
 
     monkeypatch.setattr(hn, "_get", fake_get)
-    hn.search("rust", since_months=12, min_comments=30)
-    nf = captured["params"]["numericFilters"]
-    assert isinstance(nf, list) and len(nf) == 2  # NOT a comma-joined string
-    assert any(f.startswith("created_at_i>") for f in nf)
-    assert "num_comments>=30" in nf
+    assert [s.id for s in hn.search("x", n=4)] == ["b", "a", "c", "body"]
+    assert len(calls) == 2
+    calls.clear()
+    assert [s.id for s in hn.search("x", n=2)] == ["b", "a"]
+    assert len(calls) == 1  # floor already filled n — no second call
 
 
-def test_front_page_uses_live_tag(monkeypatch):
-    """front_page hits Algolia's `front_page` tag with no date filter — it's the live page,
-    not a points-per-window query (that's `top`)."""
-    captured = {}
+def test_search_url_is_all_time_lookup(monkeypatch):
+    calls = []
+    monkeypatch.setattr(hn, "_get", lambda path, params: calls.append(params) or {"hits": []})
+    hn.search("https://www.typeof.net/Iosevka/", years=1)
+    assert len(calls) == 1 and "numericFilters" not in calls[0]
+    # scheme and www stripped: Algolia matches them as words, so https:// misses http:// posts
+    assert calls[0]["query"] == "typeof.net/Iosevka/"
+    assert calls[0]["restrictSearchableAttributes"] == "url"
 
-    def fake_get(path, params):
-        captured["path"] = path
-        captured["params"] = params
-        return {"hits": []}
+
+def test_firebase_null_item_is_clean_not_found(monkeypatch):
+    monkeypatch.setattr(hn, "_get", lambda path, params=None, base=hn.ALGOLIA: None)
+    with pytest.raises(RuntimeError, match=r"HN item 42 not found"):
+        hn._firebase_story("42")
+
+
+def test_front_page_keeps_hn_rank(monkeypatch):
+    """Order comes from Firebase topstories; Algolia supplies the data; untagged stories
+    (Algolia lag) are fetched from Firebase."""
+
+    def fake_get(path, params=None, base=hn.ALGOLIA):
+        if path == "topstories.json":
+            return [3, 1, 2, 9]
+        if path == "item/2.json":
+            return {"id": 2, "title": "new", "score": 7, "descendants": 1, "time": 1750000000}
+        assert params["tags"] == "front_page"
+        return {"hits": [_hit("1", 500), _hit("3", 40)]}
 
     monkeypatch.setattr(hn, "_get", fake_get)
-    hn.front_page(n=15)
-    assert captured["params"]["tags"] == "front_page"
-    assert captured["params"]["hitsPerPage"] == 15
-    assert "numericFilters" not in captured["params"]
+    stories = hn.front_page(n=3)
+    assert [s.id for s in stories] == ["3", "1", "2"]
+    assert stories[2].points == 7
 
 
 def test_story_from_hit():
@@ -124,3 +167,17 @@ def test_get_non_404_raises_generic_error(monkeypatch):
     monkeypatch.setattr(httpx, "get", fake_get)
     with pytest.raises(RuntimeError, match=r"HN API error 503"):
         hn._get("search")
+
+
+def test_search_by_date_keeps_algolia_order(monkeypatch):
+    """Newest first, no points floor; title matches still lead the body-only fill."""
+
+    def fake_get(path, params):
+        assert path == "search_by_date" and "numericFilters" in params
+        assert "points>=" not in params["numericFilters"]
+        if params.get("restrictSearchableAttributes") == "title":
+            return {"hits": [_hit("new", 1), _hit("old", 900)]}
+        return {"hits": [_hit("newer-body", 3, title_match=False), _hit("new", 1)]}
+
+    monkeypatch.setattr(hn, "_get", fake_get)
+    assert [s.id for s in hn.search("x", by_date=True, n=3)] == ["new", "old", "newer-body"]

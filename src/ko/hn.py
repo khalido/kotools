@@ -3,27 +3,33 @@
 Four primitives matching how I actually read HN:
 - `top` — top stories by points in a day window (my hckrnews.com top-10/20 habit;
   top-by-points ≈ hckrnews's front-page filter, since stories can't score without front-paging)
-- `front_page` — what's on the front page *right now* (Algolia's `front_page` tag only
-  marks the current page, so it can't do past windows — that's `top`'s job)
-- `search` — relevance search, restricted to the last year by default
+- `front_page` — what's on the front page *right now*, in HN's rank order (Firebase's
+  `topstories` is the only source of rank; Algolia's `front_page` tag has the data but no order)
+- `search` — matches from the last year, ranked by points (Algolia ranks word proximity
+  above points, so its own order surfaces 2-point stories over 2000-point ones)
 - `item` — one story + its comment tree as readable text
 
-Algolia beats RSS here: points + comment counts + date filters, one JSON API.
+Algolia beats RSS and Firebase here: points + comment counts + date filters + whole comment
+trees in one JSON call (Firebase is one request per item, and has no search).
 """
 
 from __future__ import annotations
 
 import html
 import re
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 import httpx2 as httpx
 
 ALGOLIA = "https://hn.algolia.com/api/v1"
+FIREBASE = "https://hacker-news.firebaseio.com/v0"
 DEFAULT_TOP_N = 10
 DEFAULT_SEARCH_N = 10
-DEFAULT_SINCE_MONTHS = 12
+DEFAULT_YEARS = 1
+SEARCH_POOL = 30  # relevance hits fetched, then re-ranked by points
+SEARCH_MIN_POINTS = 20  # drops never-front-paged noise; retried without when it leaves < n
 DEFAULT_MAX_COMMENTS = 50
 
 
@@ -48,8 +54,8 @@ class Comment:
     depth: int  # 0 = top-level
 
 
-def _get(path: str, params: dict | None = None) -> dict:
-    resp = httpx.get(f"{ALGOLIA}/{path}", params=params, timeout=30)
+def _get(path: str, params: dict | None = None, base: str = ALGOLIA) -> dict | list:
+    resp = httpx.get(f"{base}/{path}", params=params, timeout=30)
     try:
         resp.raise_for_status()
     except httpx.HTTPStatusError as e:
@@ -80,7 +86,7 @@ def top(n: int = DEFAULT_TOP_N, days: int = 1) -> list[Story]:
         "search",  # no query + popularity ranking ≈ points; we re-sort to guarantee it
         {
             "tags": "story",
-            "numericFilters": [f"created_at_i>{cutoff}"],
+            "numericFilters": f"created_at_i>{cutoff}",
             "hitsPerPage": n,
         },
     )
@@ -89,37 +95,100 @@ def top(n: int = DEFAULT_TOP_N, days: int = 1) -> list[Story]:
 
 
 def front_page(n: int = DEFAULT_TOP_N) -> list[Story]:
-    """Stories on the HN front page *right now* (Algolia's `front_page` tag).
+    """Stories on the HN front page *right now*, in HN's own rank order.
 
-    Live only — the tag marks the current page, so past windows need `top`.
-    Ordering ≈ points (Algolia doesn't expose HN's actual rank).
+    Rank comes from Firebase `topstories`; story data from Algolia's `front_page` tag (one call
+    instead of one per item). Stories Algolia hasn't tagged yet are fetched from Firebase.
     """
-    data = _get("search", {"tags": "front_page", "hitsPerPage": n})
-    stories = [_story(h) for h in data["hits"]]
-    return sorted(stories, key=lambda s: s.points, reverse=True)
+    with ThreadPoolExecutor() as pool:
+        ranked = pool.submit(_get, "topstories.json", base=FIREBASE)
+        tagged = pool.submit(_get, "search", {"tags": "front_page", "hitsPerPage": 100})
+        ids = [str(i) for i in ranked.result()[:n]]
+        by_id = {h["objectID"]: _story(h) for h in tagged.result()["hits"]}
+        missing = [i for i in ids if i not in by_id]
+        for story in pool.map(_firebase_story, missing):
+            by_id[story.id] = story
+    return [by_id[i] for i in ids]
+
+
+def _firebase_story(item_id: str) -> Story:
+    d = _get(f"item/{item_id}.json", base=FIREBASE)
+    if not d or "time" not in d:  # Firebase answers an unknown id with 200 + null, not a 404
+        raise RuntimeError(f"HN item {item_id} not found")
+    return Story(
+        id=str(d["id"]),
+        title=d.get("title") or "",
+        url=d.get("url") or None,
+        points=d.get("score") or 0,
+        num_comments=d.get("descendants") or 0,
+        created_at=datetime.fromtimestamp(d["time"], tz=UTC),
+    )
+
+
+_URL_PREFIX_RE = re.compile(r"^https?://(www\.)?")
+
+
+def _is_url(query: str) -> bool:
+    return query.startswith(("http://", "https://"))
 
 
 def search(
     query: str,
     n: int = DEFAULT_SEARCH_N,
-    since_months: int = DEFAULT_SINCE_MONTHS,
+    years: int = DEFAULT_YEARS,
     by_date: bool = False,
     min_comments: int = 0,
 ) -> list[Story]:
-    """Search HN stories. Relevance order by default, last 12 months. `since_months=0` = all time."""
+    """Search HN stories from the last `years` years (0 = all time), highest points first.
+
+    Title matches with >= SEARCH_MIN_POINTS come first; if they're fewer than n, the rest fill in
+    after them (title matches at any points, then body/url matches). `by_date` = newest first
+    within the same tiers, no points floor. A URL query is a lookup ("was this on HN?"): all time,
+    every submission of it.
+    """
+    is_url = _is_url(query)
+    if is_url:  # Algolia matches scheme and www as words: https:// would miss the http:// posts
+        query = _URL_PREFIX_RE.sub("", query)
     filters = []
-    if since_months:
-        cutoff = datetime.now(UTC) - timedelta(days=30 * since_months)
+    if years and not is_url:
+        cutoff = datetime.now(UTC) - timedelta(days=365 * years)
         filters.append(f"created_at_i>{int(cutoff.timestamp())}")
     if min_comments:
         filters.append(f"num_comments>={min_comments}")
-    params = {"query": query, "tags": "story", "hitsPerPage": n}
-    if filters:
-        # Algolia wants numericFilters as repeated params (httpx encodes a list that way);
-        # a single comma-joined string 400s once there's more than one filter.
-        params["numericFilters"] = filters
-    data = _get("search_by_date" if by_date else "search", params)
-    return [_story(h) for h in data["hits"]]
+
+    def fetch(min_points: int = 0, field: str | None = None) -> list[dict]:
+        f = filters + ([f"points>={min_points}"] if min_points else [])
+        params = {
+            "query": query,
+            "tags": "story",
+            "hitsPerPage": max(n, SEARCH_POOL),
+            # typos let "trust"/"robust" match "rust" — harmless in Algolia's order (typos rank
+            # last), but our points/date re-ranking lifts them to the top
+            "typoTolerance": "false",
+        }
+        if f:
+            # comma-joined, as Algolia documents it: repeated params silently drop all but the first
+            params["numericFilters"] = ",".join(f)
+        if field:
+            params["restrictSearchableAttributes"] = field
+        return _get("search_by_date" if by_date else "search", params)["hits"]
+
+    def rank(hits: list[dict]) -> list[dict]:
+        # title matches before body/url matches; then points (or Algolia's newest-first order)
+        def key(h: dict) -> tuple[bool, int]:
+            title_hit = h.get("_highlightResult", {}).get("title", {}).get("matchLevel") == "full"
+            return title_hit, 0 if by_date else h.get("points") or 0
+
+        return sorted(hits, key=key, reverse=True)  # stable: by_date order survives ties
+
+    if is_url:
+        hits = sorted(fetch(field="url"), key=lambda h: h.get("points") or 0, reverse=True)
+    else:
+        hits = rank(fetch(0 if by_date else SEARCH_MIN_POINTS, field="title"))
+        if len(hits) < n:  # niche topic: its best stories sit under the floor or only in bodies
+            seen = {h["objectID"] for h in hits}
+            hits += rank([h for h in fetch() if h["objectID"] not in seen])
+    return [_story(h) for h in hits[:n]]
 
 
 _TAG_RE = re.compile(r"<[^>]+>")

@@ -214,7 +214,7 @@ none urgent:
     it's a heavy dep wrapping two GETs.
   - **`--months N`**: the API's `t=` granularity is hour/day/week/month/year/all — no
     "six months" — so `t=year` + client-side `created_utc` filter, the same shape as
-    `ko hn search`'s 12-month default. Output TSV in the hn pattern (date, score,
+    `ko hn search`'s 1-year default. Output TSV in the hn pattern (date, score,
     comments, sub, title, url) → composes with `ko fetch <url>` (mirror ladder) today
     and an OAuth thread route later.
   - UA best practice per reddit's guidance: keep our real `kotools/…` UA (identify,
@@ -231,7 +231,7 @@ none urgent:
 - [ ] **`ko rss <feed>`** — generic feed → TSV/markdown via feedparser. Likely absorbed into `ko news`'s engine (curated bundles + a `--feed <url>` escape hatch) rather than a standalone command.
 - [x] **`ko doc <file>`** — SHIPPED 2026-06-11 (was "ko pdf"). **liteparse** (LlamaIndex, v2, Rust): fully local, no models, spatial reading order, OCR fallback; PDF native, Office/images via LibreOffice/ImageMagick conversion (liteparse errors helpfully if missing). Plain-text output (`result.text` — no markdown mode; fine for agent consumption). Bare shortcut: `ko <file>` routes to doc. Quality escalation still available: marker (uv tool — shell out), Mistral OCR (~$0.001/page) for hard scans.
   - **Head-to-head vs arxiv2md** (2606.12412, 21pp/6 MB, 2026-06-11): arxiv2md wins decisively *for arxiv* — real markdown structure, clean LaTeX equations, refs stripped (65K chars) because it parses the LaTeX source, not the PDF. liteparse: 3.5 s, decent reading order, but two-column tables flatten messily, equations garble, layout artifacts (103K chars). **Keep both**: `ko arxiv fetch` for arxiv (source beats PDF every time), `ko doc` for everything that only exists as a PDF/scan/Office file.
-- [x] **`ko hn`** — SHIPPED 2026-06-11. Algolia REST via httpx: `top` (hckrnews top-10/20 habit — top-by-points per day window; Algolia's `front_page` tag only marks the *current* front page, useless for past days), `search` (relevance, 12-month default, `--min-comments`, `--new`), `item` (comment tree → indented text, hrefs expanded). RSS rejected: no points/comment counts. Composes with `ko fetch` when that ships.
+- [x] **`ko hn`** — SHIPPED 2026-06-11. Algolia REST via httpx: `top` (hckrnews top-10/20 habit — top-by-points per day window; Algolia's `front_page` tag only marks the *current* front page, useless for past days), `search` (points-ranked title matches, 1-year default `-y`, `--min-comments`, `--new`; reworked 2026-10-15), `item` (comment tree → indented text, hrefs expanded). RSS rejected: no points/comment counts. Composes with `ko fetch` when that ships.
 - [ ] **`ko prompt <path>`** — depend on **files-to-prompt** (simonw, v0.6) rather than rebuild: `-c` Claude XML, `-m` markdown fences, feature-stable.
 - [x] **`ko hf`** — SHIPPED 2026-06-11 (idea from HF's huggingface-papers skill). hf.co/papers REST, no auth: `top` (Daily Papers, trending = community upvotes), `search` (hybrid semantic), `info` (github + stars, AI summary, linked models/datasets/spaces), `get` (markdown, indexed papers only — else points at `ko arxiv fetch`). Covers the "what AI papers matter today" slice of `ko scholar`.
   - Discovered after shipping (2026-06-12): the official `hf` CLI has `papers ls|search|info|read` — same four ops, same endpoints. Strict Exa-rule reading says we'd have skipped; keeping ours anyway: trending-by-default, composes with `ko arxiv fetch` (cross-tool fallback hints), and no extra CLI install for agents. If `ko hf` ever drifts from the API, deleting it in favour of `hf papers` is fine.
@@ -258,7 +258,7 @@ HN consensus 2025–26: CLI beats MCP for agent tooling (~10–32× lower token 
 
 ## Research scan (2026-06-26) — agent-native patterns + `ko prompt` evolution
 
-Three Sonnet sub-agents swept HN + Exa + web for what builders are doing in 2026 (dogfooding `ko hn`/`ko exa` — which **found a real bug**: `ko hn search --min-comments` 400'd on a comma-joined Algolia `numericFilters`; fixed 2026-06-26, now a list). Curated to the most promising; the rest were generic or already-done (`--json`, exit codes, stderr, AGENTS.md, TTY-detection).
+Three Sonnet sub-agents swept HN + Exa + web for what builders are doing in 2026 (dogfooding `ko hn`/`ko exa` — which **found a real bug**: `ko hn search --min-comments` 400'd on a comma-joined Algolia `numericFilters`; fixed 2026-06-26 as a list — but a list silently keeps only the first filter; comma-joined again since 2026-10-15, verified live, see WORKLOG). Curated to the most promising; the rest were generic or already-done (`--json`, exit codes, stderr, AGENTS.md, TTY-detection).
 
 ### Agent-friendly CLI polish (small, do-soon — builds on the 2026-06-26 agent-friendliness pass)
 - [ ] **Enumerated errors** — when an arg is a fixed set, name the valid set in the error: `--sort must be one of points|date|relevance (got 'foo')`. Lets an agent self-correct without re-reading `--help`. One helper over the few enum flags. [trevinsays.com/p/10-principles-for-agent-native-clis](https://trevinsays.com/p/10-principles-for-agent-native-clis)

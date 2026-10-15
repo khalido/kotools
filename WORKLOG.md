@@ -2,6 +2,15 @@
 
 Newest first. Big picture only — git commits have the detail; candidate ideas and decisions live in `docs/ideas.md`.
 
+## 2026-10-15 — `ko hn`: search ranked by points, real front-page order
+
+- **Filters were silently dropped.** `numericFilters` went as repeated params, and Algolia keeps only the first, so `-c` never applied under the date window. Comma-joined now, as Algolia's docs show. The old comment and test claimed the comma form 400s; it doesn't.
+- **Search ranking.** Algolia ranks word proximity above points: "uv python" put a 2-pt story first and missed the 2,214-pt uv post. Now: title matches with 20+ points, 30 hits, sorted by points; under n, the rest fill in after (title matches at any points, then body/url matches). One call for common topics, two for niche ones ("sqlite vector search": best stories 2–8 pts). Title-only removes body-text noise (a 657-pt home-inventory app for "local llm").
+- **`typoTolerance=false`.** Typos made "trust"/"roasted"/"robust" match "rust". Algolia ranks typo matches last, so they didn't show before, but re-sorting by points or date lifts them to the top. Trade-off: a misspelled query gets weaker results.
+- **`--since <months>` → `-y/--years`, default 1** (KO: rarely want older; `-y 0` = all time). A URL query searches every submission of it, all time, no floor: scheme and `www.` stripped (Algolia matches them as words — `https://paulgraham.com/avg.html` found 2 of 24 submissions, the rest are `http://`), then matched against `url` only (else Ask HN posts quoting it come back too).
+- **`--now` = HN's real rank.** Algolia's `front_page` tag gets the members right (29/30) but has no order; we used to sort by points, which dropped rising stories (HN #2 and #3 missing). Order now comes from Firebase `topstories`; data from Algolia; stories Algolia hasn't tagged yet are fetched from Firebase. Two calls in parallel, ~0.7s; Firebase for every item took 1.5s for 30. Firebase is otherwise no use: no search, one request per item.
+- **Not built:** comment search (`tags=comment`). An sfl-mes research doc went around ko to Algolia for it, so it's the next flag if wanted.
+
 ## 2026-10-14 — `ko yt`: write-ups by Gemini watching, batch info, cache
 
 - **`-s` now watches the video.** Gemini Flash through OpenRouter (`video_url`, pydantic-ai `VideoUrl` via `llm.run`), prompt `src/ko/prompts/yt-condense.md` (KO's brief via koevguide: every point with its detail, on-screen text marked, filler cut, length follows content). Works when transcripts are IP-blocked and sees on-screen prices/readouts. Model: `-m`, `KO_YT_MODEL` or `[yt] model`.

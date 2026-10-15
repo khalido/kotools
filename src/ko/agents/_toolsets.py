@@ -195,7 +195,7 @@ def hn_top(n: int = 10, days: int = 1) -> list[Story]:
 
 @news.tool_plain
 def hn_front_page(n: int = 10) -> list[Story]:
-    """The HN front page *right now* (live). Use for 'on HN at this moment'; hn_top instead for a points-ranked window over past days."""
+    """The HN front page *right now* (live), in HN's rank order. Use for 'on HN at this moment'; hn_top instead for a points-ranked window over past days."""
     return _try("hn_front_page", hn_mod.front_page, n=n)
 
 
@@ -203,23 +203,25 @@ def hn_front_page(n: int = 10) -> list[Story]:
 def hn_search(
     query: str,
     n: int = 10,
-    since_months: int = 12,
+    years: int = 1,
     by_date: bool = False,
     min_comments: int = 0,
 ) -> list[Story]:
     """Search Hacker News stories by keyword. Returns title, url, points, comment count, date.
 
-    Covers the last 12 months by default — pass since_months for older topics (0 = all time);
+    Covers the last year by default — pass years for older topics (0 = all time);
     an empty result under the default window does NOT mean HN never discussed it.
-    Relevance order (by_date=True for newest first); min_comments skips stories with no discussion.
-    Algolia matches URLs and exact titles through plain search, so searching a URL/DOI/title
+    Title matches with 20+ points first, by points; if fewer than n, matches anywhere (body, url)
+    at any points fill in after them. by_date=True for newest first, any field, no floor.
+    min_comments skips stories with no discussion.
+    A query starting with http(s):// is a lookup: every submission of that URL (any scheme/www), all time —
     answers 'has this been discussed on HN?'."""
     return _try(
         "hn_search",
         hn_mod.search,
         query,
         n=n,
-        since_months=since_months,
+        years=years,
         by_date=by_date,
         min_comments=min_comments,
     )
