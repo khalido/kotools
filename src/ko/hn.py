@@ -128,8 +128,16 @@ def _firebase_story(item_id: str) -> Story:
 _URL_PREFIX_RE = re.compile(r"^https?://(www\.)?")
 
 
+def _bare_url(url: str) -> str:
+    return _URL_PREFIX_RE.sub("", url).rstrip("/")
+
+
 def _is_url(query: str) -> bool:
     return query.startswith(("http://", "https://"))
+
+
+def _under(url: str, prefix: str) -> bool:
+    return url == prefix or url.startswith((prefix + "/", prefix + "?", prefix + "#"))
 
 
 def search(
@@ -148,7 +156,7 @@ def search(
     """
     is_url = _is_url(query)
     if is_url:  # Algolia matches scheme and www as words: https:// would miss the http:// posts
-        query = _URL_PREFIX_RE.sub("", query)
+        query = _bare_url(query)
     filters = []
     if years and not is_url:
         cutoff = datetime.now(UTC) - timedelta(days=365 * years)
@@ -182,7 +190,10 @@ def search(
         return sorted(hits, key=key, reverse=True)  # stable: by_date order survives ties
 
     if is_url:
-        hits = sorted(fetch(field="url"), key=lambda h: h.get("points") or 0, reverse=True)
+        # Algolia matches url *words*: "example.com" also hits systemd-by-example.com — keep only
+        # this URL and pages under it
+        hits = [h for h in fetch(field="url") if _under(_bare_url(h.get("url") or ""), query)]
+        hits = sorted(hits, key=lambda h: h.get("points") or 0, reverse=True)
     else:
         hits = rank(fetch(0 if by_date else SEARCH_MIN_POINTS, field="title"))
         if len(hits) < n:  # niche topic: its best stories sit under the floor or only in bodies

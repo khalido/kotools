@@ -98,8 +98,17 @@ def test_search_url_is_all_time_lookup(monkeypatch):
     hn.search("https://www.typeof.net/Iosevka/", years=1)
     assert len(calls) == 1 and "numericFilters" not in calls[0]
     # scheme and www stripped: Algolia matches them as words, so https:// misses http:// posts
-    assert calls[0]["query"] == "typeof.net/Iosevka/"
+    assert calls[0]["query"] == "typeof.net/Iosevka"
     assert calls[0]["restrictSearchableAttributes"] == "url"
+
+
+def test_search_url_keeps_only_that_url_and_below(monkeypatch):
+    """Algolia matches url words, so a bare domain also hits other domains containing them."""
+    urls = ["http://www.example.com/", "https://example.com/a", "https://systemd-by-example.com/",
+            "https://example.community/x", None]
+    hits = [{**_hit(str(i), i), "url": u} for i, u in enumerate(urls)]
+    monkeypatch.setattr(hn, "_get", lambda path, params: {"hits": hits})
+    assert sorted(s.id for s in hn.search("https://example.com")) == ["0", "1"]
 
 
 def test_firebase_null_item_is_clean_not_found(monkeypatch):

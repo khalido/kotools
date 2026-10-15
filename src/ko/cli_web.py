@@ -583,10 +583,10 @@ def _echo_stories(stories: list[hn_mod.Story], as_json: bool) -> None:
 @hn_app.command("top")
 def hn_top(
     n: int = typer.Option(
-        hn_mod.DEFAULT_TOP_N, "--n", "-n", help="how many stories (10 or 20, hckrnews-style)"
+        hn_mod.DEFAULT_TOP_N, "--n", "-n", min=1, help="how many stories (10 or 20, hckrnews-style)"
     ),
     days: int = typer.Option(
-        1, "--days", "-d", help="window: top stories of the last N days"
+        1, "--days", "-d", min=1, help="window: top stories of the last N days"
     ),
     now: bool = typer.Option(
         False, "--now", help="the live front page (right now) instead of top-by-points; ignores --days"
@@ -604,11 +604,11 @@ def hn_top(
 @hn_app.command("search")
 def hn_search(
     query: str = typer.Argument(..., help="search query"),
-    n: int = typer.Option(hn_mod.DEFAULT_SEARCH_N, "--n", "-n", help="max results"),
+    n: int = typer.Option(hn_mod.DEFAULT_SEARCH_N, "--n", "-n", min=1, help="max results"),
     years: int = typer.Option(
-        hn_mod.DEFAULT_YEARS, "--years", "-y", help="only stories from the last N years (0 = all time)"
+        hn_mod.DEFAULT_YEARS, "--years", "-y", min=0, help="only stories from the last N years (0 = all time)"
     ),
-    new: bool = typer.Option(False, "--new", help="newest first instead of by points"),
+    new: bool = typer.Option(False, "--new", help="newest first instead of by points (no points floor)"),
     min_comments: int = typer.Option(
         0, "--min-comments", "-c", help="only stories with at least N comments"
     ),
