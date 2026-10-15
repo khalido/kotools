@@ -21,7 +21,7 @@ a bug — lift those into the transport layer.
 
 Structured output (why @dataclass is doing work for us)
 -------------------------------------------------------
-FastMCP introspects return type annotations and auto-generates structured output
+MCPServer (mcp 2.x; was FastMCP) introspects return type annotations and auto-generates structured output
 schemas. Supported return types (per MCP Python SDK docs):
 
   - Pydantic models (BaseModel subclasses) — richest: per-field descriptions
@@ -31,7 +31,7 @@ schemas. Supported return types (per MCP Python SDK docs):
   - Primitives and generics (str, list, etc.) — auto-wrapped as {"result": ...}
 
 So the MCP tool wrappers below just return domain types directly — no manual
-asdict() needed. FastMCP serializes.
+asdict() needed. MCPServer serializes.
 
 If we ever want per-field descriptions in the MCP schema (visible to agents
 when they call a tool), migrate the dataclasses to Pydantic BaseModel with
@@ -40,16 +40,13 @@ when they call a tool), migrate the dataclasses to Pydantic BaseModel with
 Wiring sketch (uncomment when ready)
 ------------------------------------
     import os
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server import MCPServer  # mcp 2.x; was mcp.server.fastmcp.FastMCP
 
     from ko import arxiv, exa, gsheets
     from ko.arxiv import SearchResult as ArxivResult
     from ko.exa import ExaResult
 
-    # stateless_http=True + json_response=True is the Railway-friendly combo:
-    # short POSTs, no long-lived connections — sidesteps Railway's 60s idle
-    # timeout and its 15min max request duration.
-    mcp = FastMCP("ko", stateless_http=True, json_response=True)
+    mcp = MCPServer("ko")
 
     @mcp.tool()
     def exa_search(query: str, n: int = 10) -> list[ExaResult]:
@@ -68,7 +65,10 @@ Wiring sketch (uncomment when ready)
 
     if __name__ == "__main__":
         transport = os.getenv("MCP_TRANSPORT", "stdio")
-        mcp.run(transport=transport)  # stdio for local, "streamable-http" for remote
+        mcp.run(transport=transport)  # stdio for local
+    # Remote: serve mcp.streamable_http_app(stateless_http=True, json_response=True) with uvicorn —
+    # the Railway-friendly combo (short POSTs, no long-lived connections: sidesteps Railway's 60s
+    # idle timeout and 15min max request). mcp.run("streamable-http") drops those two flags.
 
 Running (once wired — none of these work yet; the block above is a sketch, not live code)
 -----------------------------------------------------------------------------------------

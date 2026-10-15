@@ -28,9 +28,7 @@ dependencies = [
     "liteparse>=2.15",  # page_label, image_mode="none", is_complex (ko doc)
     "loguru~=0.7.3",
     "markdown-it-py>=4.2.0",  # gmail draft --md: markdown -> html (also arrives transitively via rich)
-    # <2 deliberately: mcp 2.0 drops `mcp.client.streamable_http.streamablehttp_client`,
-    # which ticktick.py + mcp_client.py import. Lift the cap only with that port.
-    "mcp[cli]>=1.29.0,<2",
+    "mcp[cli]>=2.3",  # 2.x: streamable_http_client(url, http_client=…) — mcp_client.py
     "mdit-py-plugins>=0.6.1",
     "opentelemetry-exporter-otlp-proto-http>=1.44.0",
     "opentelemetry-sdk>=1.44.0",
@@ -45,7 +43,7 @@ dependencies = [
     "trafilatura>=2.1.0",
     "typer>=0.27.0",
     "tzdata>=2026.3",  # guarantees zoneinfo works cross-platform (ko cal)
-    "weasyprint>=69.0",
+    "weasyprint>=70.0",
     "xdk>=0.10.6",
     "youtube-transcript-api>=1.2.4",
 ]

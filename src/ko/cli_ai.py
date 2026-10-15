@@ -928,11 +928,8 @@ def tt_search(
 ) -> None:
     """Keyword search over every task, open and completed (TSV: id, list, title, url).
 
-    Fuzzy: matches the markdown body (`content`) as well as the title, and ranks loosely.
-    The only command that goes via TickTick's hosted MCP (REST has no search endpoint), so
-    it costs a ~3s handshake, its index trails writes by ~10-30s (a task you just added
-    won't be found yet — `items`/`done` read live), and it is occasionally flaky: an empty
-    result for a query you know matches means re-run it.
+    Matches the markdown body (`content`) as well as the title. Its index trails writes by
+    ~5-10s — a task you just added won't be found yet (`items`/`done` read live).
     """
     try:
         hits = ticktick_mod.search(query)

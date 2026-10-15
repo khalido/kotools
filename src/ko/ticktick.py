@@ -1,12 +1,11 @@
-"""TickTick tasks — read & write over the Open API v1, plus its hosted MCP for search.
+"""TickTick tasks — read & write over the Open API v1 (REST only; docs/ticktick.md).
 
-One static token serves BOTH surfaces: TickTick (web app or desktop) → avatar →
-Settings → Account → API Token. Set `TICKTICK_API_KEY` (env, or `~/.config/ko/config.toml`
-under `[keys]`). No OAuth dance.
+One static token: TickTick (web app or desktop) → avatar → Settings → Account → API Token.
+Set `TICKTICK_API_KEY` (env, or `~/.config/ko/config.toml` under `[keys]`). No OAuth dance.
 
-REST (`https://api.ticktick.com/open/v1`) is the spine: ~0.6s a call and it covers lists,
-tasks, create, update, complete. The hosted MCP costs a ~3s handshake per invocation and
-times out often, so it's kept for the one thing REST has no endpoint for: keyword `search`.
+REST (`https://api.ticktick.com/open/v1`), ~0.6-0.9s a call, covers lists, tasks, create,
+update, complete and keyword search. The hosted MCP has the same token and more tools, but
+gave identical search results 3x slower (2026-10-16), so ko doesn't use it.
 
 A task's markdown body is `content` — TickTick renders it in the app, so write markdown
 verbatim (no escaping, no conversion). `desc` is only for CHECKLIST-kind tasks; we don't
@@ -19,8 +18,6 @@ those in TickTick itself.
 
 from __future__ import annotations
 
-import asyncio
-import json
 import re
 import sys
 from dataclasses import dataclass
@@ -29,14 +26,11 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 import httpx2 as httpx
-from mcp import ClientSession
-from mcp.client.streamable_http import streamablehttp_client
 
 from . import config
 
 API = "https://api.ticktick.com/open/v1"
-ENDPOINT = "https://mcp.ticktick.com/"  # MCP: search only
-_TIMEOUT = 20.0  # both surfaces can be slow; fail clearly, don't hang
+_TIMEOUT = 20.0  # fail clearly, don't hang
 DEFAULT_TZ = "Australia/Sydney"
 
 _KEY_HINT = (
@@ -73,7 +67,7 @@ class Task:
 
 @dataclass
 class Hit:
-    """A keyword-search result — MCP search returns only these four fields."""
+    """A keyword-search result."""
 
     id: str
     project: str  # list name (resolved from the url's project id)
@@ -251,65 +245,26 @@ def find_tasks(query: str, tasks: list[Task]) -> list[Task]:
     return [t for t in tasks if lowered in t.title.casefold()]
 
 
-# --- keyword search (MCP: REST has no search endpoint) ---
-
-
-async def _mcp_call(tool: str, args: dict) -> dict:
-    headers = {"Authorization": f"Bearer {_key()}"}
-    async with (
-        streamablehttp_client(ENDPOINT, headers=headers) as (read, write, _),
-        ClientSession(read, write) as session,
-    ):
-        await session.initialize()
-        result = await session.call_tool(
-            tool, args, read_timeout_seconds=timedelta(seconds=_TIMEOUT)
-        )
-        if result.isError:
-            detail = (
-                getattr(result.content[0], "text", str(result.content[0]))
-                if result.content
-                else "(no detail)"
-            )
-            raise RuntimeError(f"TickTick {tool} failed: {detail}")
-        if result.structuredContent:
-            return result.structuredContent
-        # Some tools answer with one JSON object per content text block instead.
-        blocks = []
-        for c in result.content:
-            try:
-                blocks.append(json.loads(getattr(c, "text", "")))
-            except ValueError:
-                pass
-        return {"results": blocks}
-
-
-def _project_id_from_url(url: str) -> str:
-    """'…/webapp/#p/<projectId>/tasks/<taskId>' -> projectId ('' if the shape changes)."""
-    return url.split("#p/")[1].split("/")[0] if "#p/" in url else ""
+# --- keyword search ---
 
 
 def search(query: str) -> list[Hit]:
-    """Keyword search across ALL tasks (open and completed, every list) via the hosted MCP.
-    Server-side and fuzzy: case-insensitive, matches `content` as well as the title, and
-    ranks loosely — not a strict substring filter. Costs a ~3s handshake, and the index
-    trails writes by ~10-30s (a task you just added won't be found yet — `open_tasks` is
-    the live read). Occasionally returns an empty set for a query that does match; re-run.
-    Returns id, list name, title and web url."""
-    data = asyncio.run(_mcp_call("search_task", {"query": query}))
-    raw = data.get("results") or data.get("result") or []
+    """Keyword search across ALL tasks and notes (open and completed, every list), server-side:
+    case-insensitive, matches the body (`content`) as well as the title. The index trails
+    writes by ~5-10s (`open_tasks` is the live read). Returns id, list name, title, web url."""
+    raw = _request("POST", "/task/search", {"keywords": query}) or []
     if not raw:
         return []
     names = {p.id: p.name for p in list_projects()}
     hits = []
     for r in raw:
-        url = r.get("url") or ""
-        pid = _project_id_from_url(url)
+        pid = r.get("projectId") or ""
         hits.append(
             Hit(
-                id=r.get("id") or "",
+                id=r["id"],
                 project=names.get(pid, "Inbox" if pid.startswith(INBOX) else pid),
                 title=(r.get("title") or "").strip(),
-                url=url,
+                url=f"https://ticktick.com/webapp/#p/{pid}/tasks/{r['id']}",
             )
         )
     return hits

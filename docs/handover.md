@@ -10,6 +10,7 @@ Read CLAUDE.md first, then this.
   - `ko judge`: typed answers with probabilities from Jev (yes/no, `--choice`, `--score`, `--tags`) through OpenRouter on the existing key. Guide: `ko prompt judge`.
   - `ko yt`: `info` (batch, transcript excerpt or reason code), `channel` (`--since`, durations), `-s` = Gemini Flash watching the video through OpenRouter with `src/ko/prompts/yt-condense.md`. Transcripts and write-ups cached in `~/.cache/ko/yt/`.
   - Google: one Cloud API key `GOOGLE_CLOUD_API_KEY` (YouTube, Books, Weather enabled; `YOUTUBE_API_KEY` still read) for public data; `youtube.readonly` added to the OAuth sign-in.
+- **2026-10-16:** `ko tt` is REST-only (search moved off the MCP), mcp 2.3 + fastmcp-slim 4.1, weasyprint ≥70. `docs/ticktick.md` is the TickTick reference. Candidates: `ko tt note` (REST `kind: NOTE`), Reddit route check in `ko fetch` (Reddit ending free API/RSS, per HN 49912499).
 - **`ko hn` (2026-10-15):** search ranks title matches by points, `-y/--years` (default 1) replaced `--since` months, filters comma-joined (`-c` was silently ignored), `--now` uses HN's real rank via Firebase. WORKLOG has the measurements; comment search is the next candidate.
 - **koevguide is ko yt's first consumer** (`koev feeds` calls `ko yt channel --json`; triage uses `info` and `-s`). Shape changes there break it — message the koevguide session.
 - **Transcripts are IP-blocked from this Mac** (youtube-transcript-api `IpBlocked`), so the free path fails today; `-s` is the working route. The excerpt code path is unit-tested only.

@@ -2,6 +2,13 @@
 
 Newest first. Big picture only — git commits have the detail; candidate ideas and decisions live in `docs/ideas.md`.
 
+## 2026-10-16 — `ko tt` REST-only; mcp 2.x; weasyprint 70
+
+- **`ko tt search` moved off the MCP to REST `POST /task/search`** (new since July). Same results on five queries, ~0.8s vs ~2.3s; matches bodies, index trails writes ~5–10s (measured). `ticktick.py` no longer imports `mcp`. TickTick's MCP itself got fast (0.7s handshake, was ~3s with timeouts) and grew to 57 tools — kept as a fallback for what REST lacks. Notes: REST `kind: "NOTE"` works though undocumented. Reference: `docs/ticktick.md`.
+- **mcp 1.30 → 2.3** (cap lifted; fastmcp-slim 3.4 → 4.1 came with it, pydantic-ai's MCP toolset verified). Port was `mcp_client.py` only: `streamable_http_client(url, http_client=httpx2.AsyncClient(headers, timeout=Timeout(30, read=300)))`, a 2-tuple, float `read_timeout_seconds`, and **types went snake_case** (`input_schema`, `server_info`, `mime_type`, `resource_templates`…) — inspect wraps listings in `except Exception: pass`, so a missed rename would have shown as an empty tool list, not an error. Verified live: HTTP+auth, 401, public, stdio, call. `mcp_server.py` sketch → `MCPServer`.
+- **weasyprint floor 70.0** for CVE-2026-55073 (EPS no longer rendered).
+- After a dep change the `ko` uv tool env needs `uv tool install --reinstall -e .` — it still had mcp 1.x and failed with an opaque `ValueError` until reinstalled.
+
 ## 2026-10-15 — `ko hn`: search ranked by points, real front-page order
 
 - **Filters were silently dropped.** `numericFilters` went as repeated params, and Algolia keeps only the first, so `-c` never applied under the date window. Comma-joined now, as Algolia's docs show. The old comment and test claimed the comma form 400s; it doesn't.

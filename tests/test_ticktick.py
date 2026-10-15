@@ -169,18 +169,14 @@ def test_missing_key_raises(monkeypatch):
 
 
 def test_search_maps_hits_to_list_names(monkeypatch):
-    async def fake_call(tool, args):
-        assert (tool, args) == ("search_task", {"query": "onions"})
-        web = "https://ticktick.com/webapp"
-        return {
-            "results": [
-                {"id": "t1", "title": "Onions", "url": f"{web}/#p/p1/tasks/t1"},
-                {"id": "t2", "title": "Onion", "url": f"{web}/#p/inbox9/tasks/t2"},
-            ]
-        }
-
-    monkeypatch.setattr(ticktick, "_mcp_call", fake_call)
+    calls = _fake_http(
+        monkeypatch,
+        [{"id": "t1", "title": "Onions", "projectId": "p1"}, {"id": "t2", "title": "Onion", "projectId": "inbox9"}],
+    )
     monkeypatch.setattr(ticktick, "list_projects", lambda: [Project(id="p1", name="🛒Shopping")])
     shopping, inbox = ticktick.search("onions")
     assert (shopping.project, shopping.title) == ("🛒Shopping", "Onions")
     assert inbox.project == "Inbox"  # an inbox<uid> project id isn't in GET /project
+    method, url, body, _ = calls[0]
+    assert (method, url.removeprefix(ticktick.API), body) == ("POST", "/task/search", {"keywords": "onions"})
+    assert shopping.url == "https://ticktick.com/webapp/#p/p1/tasks/t1"

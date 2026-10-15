@@ -1,5 +1,5 @@
-"""Minimal MCP client for *inspecting / calling* servers, reusing the same `mcp` SDK ko uses
-as a TickTick client. Backs `ko mcp inspect|call|servers`.
+"""Minimal MCP client for *inspecting / calling* servers, on the official `mcp` SDK (2.x).
+Backs `ko mcp inspect|call|servers`.
 
 Targets a server by **name or url**: names resolve from `~/.config/ko/mcp.json`, which holds the
 standard `{"mcpServers": {...}}` object (copy-paste-compatible with Claude Code / opencode / Cursor).
@@ -17,17 +17,16 @@ import os
 import re
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import timedelta
 from urllib.parse import urlsplit
 
 import httpx2 as httpx
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-from mcp.client.streamable_http import streamablehttp_client
+from mcp.client.streamable_http import streamable_http_client
 
 from ko import dirs
 
-_TIMEOUT = timedelta(seconds=30)
+_TIMEOUT = 30.0  # seconds, per tool call
 _PROTOCOL = "2025-06-18"
 
 
@@ -40,7 +39,7 @@ class ToolInfo:
     name: str
     description: str
     required: list[str] = field(default_factory=list)
-    schema: dict = field(default_factory=dict)  # full inputSchema — surfaced by `--tool`
+    schema: dict = field(default_factory=dict)  # full input schema — surfaced by `--tool`
 
 
 @dataclass
@@ -229,8 +228,13 @@ async def _session(spec: dict):
         async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
             yield session
     else:
+        # mcp 2.x takes headers/timeouts on the http client; read=300 keeps v1's SSE read window
+        client = httpx.AsyncClient(
+            headers=spec.get("headers") or None, timeout=httpx.Timeout(30, read=300)
+        )
         async with (
-            streamablehttp_client(spec["url"], headers=spec.get("headers") or None) as (read, write, _),
+            client,
+            streamable_http_client(spec["url"], http_client=client) as (read, write),
             ClientSession(read, write) as session,
         ):
             yield session
@@ -256,7 +260,7 @@ async def _inspect(spec: dict) -> ServerInfo:
         if init.capabilities.tools is not None:
             try:
                 for t in (await session.list_tools()).tools:
-                    schema = t.inputSchema or {}
+                    schema = t.input_schema or {}
                     req = list(schema.get("required", []) or [])
                     tools.append(ToolInfo(t.name, _first_line(t.description), req, schema))
             except Exception:
@@ -265,11 +269,11 @@ async def _inspect(spec: dict) -> ServerInfo:
             try:
                 for r in (await session.list_resources()).resources:
                     resources.append(
-                        ResourceInfo(str(r.uri), r.name or "", _first_line(r.description), r.mimeType or "")
+                        ResourceInfo(str(r.uri), r.name or "", _first_line(r.description), r.mime_type or "")
                     )
-                for tpl in (await session.list_resource_templates()).resourceTemplates:
+                for tpl in (await session.list_resource_templates()).resource_templates:
                     resources.append(
-                        ResourceInfo(tpl.uriTemplate, tpl.name or "", _first_line(tpl.description), "", template=True)
+                        ResourceInfo(tpl.uri_template, tpl.name or "", _first_line(tpl.description), "", template=True)
                     )
             except Exception:
                 pass
@@ -280,9 +284,9 @@ async def _inspect(spec: dict) -> ServerInfo:
                     prompts.append(PromptInfo(p.name, _first_line(p.description), args))
             except Exception:
                 pass
-        si = init.serverInfo
+        si = init.server_info
         return ServerInfo(
-            si.name, si.version, init.protocolVersion, (init.instructions or "").strip(),
+            si.name, si.version, init.protocol_version, (init.instructions or "").strip(),
             caps, tools, resources, prompts,
         )
 

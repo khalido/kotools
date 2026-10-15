@@ -89,7 +89,7 @@ Keys live in environment variables (shell profile or `.env`) or in `~/.config/ko
 | `GEMINI_API_KEY` | `-m google:…` escape hatch | 💰 | Direct Gemini (`-m google:gemini-3.5-flash`), or for Gemini-only features later. |
 | `X_BEARER_TOKEN` | `ko x` | 💰 | X API v2 Bearer Token. Pay-per-use since 2026 (prepaid credits, ~$0.005/post read). [developer.x.com](https://developer.x.com) |
 | `TMDB_READ_ACCESS_TOKEN` | `ko tv` | free | v4 Read Access Token from [TMDB settings](https://www.themoviedb.org/settings/api). |
-| `TICKTICK_API_KEY` | `ko tt` | (TickTick sub) | TickTick → avatar → Settings → Account → API Token. One token authenticates both the Open API (reads + `add`/`done`) and the hosted MCP (`search`). |
+| `TICKTICK_API_KEY` | `ko tt` | (TickTick sub) | TickTick → avatar → Settings → Account → API Token. Authenticates the Open API (REST) that `ko tt` uses for everything; the same token also works for TickTick's hosted MCP and CLI. |
 | `S2_API_KEY` | `ko papers` (optional) | free | [Semantic Scholar](https://www.semanticscholar.org/product/api) key — adds `tldr` + `similar`; everything else works keyless. |
 | `REDDIT_CLIENT_ID` + `REDDIT_CLIENT_SECRET` | `ko reddit` (planned) | free (100 req/min) | The OAuth app **"kotools"** at [developers.reddit.com/apps](https://developers.reddit.com/apps) — script-app client id + secret pair. App-only read token (no user login). Not Devvit: Devvit apps run *on* reddit and authenticate inside reddit's platform — their tokens can't be used from an external CLI. |
 | — (Google OAuth) | `ko gsheets` | free | Not a key: one-off browser consent, token cached locally. See below. |
