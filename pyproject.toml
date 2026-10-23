@@ -90,5 +90,5 @@ dev = [
 ]
 
 [tool.uv]
-# Supply-chain guard: never resolve a release younger than a week.
-exclude-newer = "7 days"
+# Supply-chain guard: never resolve a release younger than 3 days.
+exclude-newer = "3 days"
