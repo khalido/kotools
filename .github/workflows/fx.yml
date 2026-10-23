@@ -46,12 +46,12 @@ jobs:
       pull-requests: write
       issues: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0 # full history, so `git log -S` and `git blame` can answer "this used to work"
 
-      - uses: khalido/fx-agent-action@main
+      - uses: khalido/fx-agent-action@0f1493a47d83150d5c55c8fb6522441f699f7e47 # main 2026-10-18
         env:
           AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}
         with:
