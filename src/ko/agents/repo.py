@@ -14,16 +14,17 @@ from __future__ import annotations
 
 from pydantic_ai import Agent
 
-from ko import config, llm
+from ko import config, models
 from ko.agents import _shared
 from ko.agents._files import refs_overview_head
 from ko.agents._memory import instructions_block, memory_toolset
 from ko.agents._toolsets import files
 
-_MODEL = config.setting("KO_AGENT_MODEL", "agents", "model", llm.model_for("basic"))
+_MODEL = config.setting("KO_AGENT_MODEL", "agents", "model", models.model_for("basic"))
 
 agent = Agent(
     _MODEL,
+    defer_model_check=True,  # the model (and its key) is resolved per run by _shared
     instructions=(
         "You explore Ko's code folder to answer questions about how things are done. "
         "Layout: the root holds Ko's OWN and work repos (kotools, everx, thinker, ...); "

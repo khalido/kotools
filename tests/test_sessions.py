@@ -291,6 +291,7 @@ def test_summarize_db_row_created(monkeypatch, tmp_path):
     from ko.cli import app  # registers all sub-apps on import
 
     monkeypatch.setenv("KO_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("VERCEL_AI_GATEWAY_API_KEY", "vck_test")  # resolve() checks it; Agent is faked
     sid = "20260101T000000-abc123"
     _write_session_file(tmp_path, sid)
 
@@ -329,6 +330,7 @@ def test_summarize_idempotent(monkeypatch, tmp_path):
     from ko.cli import app  # registers all sub-apps on import
 
     monkeypatch.setenv("KO_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("VERCEL_AI_GATEWAY_API_KEY", "vck_test")  # resolve() checks it; Agent is faked
     sid = "20260101T000000-idem01"
     _write_session_file(tmp_path, sid)
 
@@ -381,6 +383,7 @@ def test_summarize_stale_after_touch(monkeypatch, tmp_path):
     from ko.cli import app  # registers all sub-apps on import
 
     monkeypatch.setenv("KO_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("VERCEL_AI_GATEWAY_API_KEY", "vck_test")  # resolve() checks it; Agent is faked
     sid = "20260101T000000-stale1"
     f = _write_session_file(tmp_path, sid)
 

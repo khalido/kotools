@@ -1,6 +1,7 @@
 """Billing overview across the paid services ko uses — read-only balances + recent usage.
 
-v1: OpenRouter (credit balance + daily/weekly/monthly usage). Each provider is a function that
+Vercel AI Gateway (team credit balance) and OpenRouter (credit balance + daily/weekly/monthly
+usage, kept for Jev). Each provider is a function that
 returns a `Balance` (never raises — a missing key or API error becomes `Balance.error`), so the
 overview degrades gracefully like `ko doctor`. Add a provider = add a function to PROVIDERS.
 
@@ -80,4 +81,21 @@ def openrouter() -> Balance:
     )
 
 
-PROVIDERS = [openrouter]
+def gateway() -> Balance:
+    """Vercel AI Gateway team credit balance (/v1/credits). Per-key quotas live behind the
+    Vercel team API (`vercel ai-gateway api-keys inspect <id>`), not this key."""
+    key = os.environ.get("VERCEL_AI_GATEWAY_API_KEY")
+    if not key:
+        return Balance("ai-gateway", error="VERCEL_AI_GATEWAY_API_KEY not set")
+    try:
+        r = httpx.get(
+            "https://ai-gateway.vercel.sh/v1/credits", headers={"Authorization": f"Bearer {key}"}, timeout=10.0
+        )
+        data = r.raise_for_status().json()
+        remaining, used = float(data["balance"]), float(data["total_used"])
+    except (httpx.HTTPError, KeyError, ValueError) as e:
+        return Balance("ai-gateway", error=str(e))
+    return Balance("ai-gateway", remaining=remaining, total=remaining + used, used=used)
+
+
+PROVIDERS = [gateway, openrouter]

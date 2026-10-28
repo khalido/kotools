@@ -51,7 +51,7 @@ Full docs: **[kotools.khalido.dev](https://kotools.khalido.dev/)**.
 | `ko prompt` | my "how I build X" kickoff briefs | `ko prompt research-papers` → load into an agent |
 | `ko refs` | manage `~/code/refs` (reference repo clones) | `ko refs` pulls all; `add <url>` clones + remembers |
 
-Utilities: `ko doctor` (setup status — run it first), `ko models` (model strings for `-m`), `ko billing` (credits left), `ko logs`, `ko mcp` (inspect/call MCP servers). Every LLM call prints its cost to stderr — OpenRouter's actual billed cost when available. Agents keep their own markdown memory (plus a shared `~/.config/ko/memory.md` about you) and save resumable sessions; `ko agent sessions summarize` builds a searchable index of them.
+Utilities: `ko doctor` (setup status — run it first), `ko models` (model strings for `-m`), `ko billing` (credits left), `ko logs`, `ko mcp` (inspect/call MCP servers). Every LLM call prints its cost to stderr — an estimate from the gateway's listed price (OpenRouter calls: the actual billed cost). Agents keep their own markdown memory (plus a shared `~/.config/ko/memory.md` about you) and save resumable sessions; `ko agent sessions summarize` builds a searchable index of them.
 
 ## It composes
 
@@ -85,7 +85,8 @@ Keys live in environment variables (shell profile or `.env`) or in `~/.config/ko
 | Env var | Used by | Paid? | Notes |
 |---|---|---|---|
 | `EXA_API_KEY` | `ko exa`, agents | 💰 | Search $7/1k requests (contents for 10 results included); standalone contents $1/1k pages. [exa.ai](https://exa.ai) |
-| `OPENROUTER_API_KEY` | `ko llm`, `ko ai`, agents, `ko brief` — the default for everything | 💰 | One prepaid pool, any model. Baked model tiers ride on it: basic = deepseek-v4-flash (llm/brief/summarize), medium = gpt-5.6-luna (`ko ai`), smart = grok-latest (research). Override per-tier in `[llm]`; `-m` per run. `ko billing`/doctor show $ left; every call prints its actual cost to stderr. |
+| `VERCEL_AI_GATEWAY_API_KEY` | `ko llm`, `ko ai`, agents, `ko sum`, `ko brief` — the default for everything | 💰 | Vercel AI Gateway, one prepaid pool, any model (`vercel ai-gateway api-keys create`). Tiers by price: basic = deepseek-v4.1-flash (llm/brief/`ko ai`), medium = gpt-6.1-terra, smart = kimi-k3.1-pro (research); tested models and their host order live in `src/ko/models.py`; `ko models` lists them first. Override per tier in `[llm]`; `-m` per run. `ko billing`/doctor show $ left; every call prints an estimated cost to stderr. |
+| `OPENROUTER_API_KEY` | `ko judge` (Jev), `ko yt -s` | 💰 | Jev's endpoint and YouTube-video input exist only on OpenRouter. |
 | `GEMINI_API_KEY` | `-m google:…` escape hatch | 💰 | Direct Gemini (`-m google:gemini-3.5-flash`), or for Gemini-only features later. |
 | `X_BEARER_TOKEN` | `ko x` | 💰 | X API v2 Bearer Token. Pay-per-use since 2026 (prepaid credits, ~$0.005/post read). [developer.x.com](https://developer.x.com) |
 | `TMDB_READ_ACCESS_TOKEN` | `ko tv` | free | v4 Read Access Token from [TMDB settings](https://www.themoviedb.org/settings/api). |

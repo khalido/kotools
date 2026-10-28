@@ -213,7 +213,8 @@ def hn_search(
     an empty result under the default window does NOT mean HN never discussed it.
     Title matches with 20+ points first, by points; if fewer than n, matches anywhere (body, url)
     at any points fill in after them. by_date=True for newest first, any field, no floor.
-    min_comments skips stories with no discussion.
+    min_comments skips stories with no discussion; it narrows on top of the years window, so
+    start without it and add it only to cut a long list.
     A query starting with http(s):// is a lookup: every submission of that URL (any scheme/www), all time —
     answers 'has this been discussed on HN?'."""
     return _try(
@@ -230,7 +231,9 @@ def hn_search(
 @news.tool_plain
 def hn_discussion(story_id: str, max_comments: int = 30) -> dict:
     """Fetch a Hacker News story + its comment thread (community discussion) by story id.
-    Returns the first `max_comments` comments in thread order (0 = the whole thread)."""
+    Returns the first `max_comments` comments in thread order (0 = the whole thread); ~25 is
+    plenty for the gist, since each comment costs tokens. An empty `comments` list means nobody
+    commented: don't retry. Link a story as https://news.ycombinator.com/item?id=<id>."""
 
     def _do():
         story, comments = hn_mod.item(story_id, max_comments=max_comments)
@@ -301,6 +304,57 @@ def glob(pattern: str, path: str = ".") -> str:
     .gitignore respected, hidden dirs (.git/.venv, installed packages) excluded,
     capped at 200. Use to map a repo's shape before reading anything."""
     return _files_mod.glob(pattern, path=path)
+
+
+# --- AI models (Vercel AI Gateway catalog + HN) ---
+ai_models = FunctionToolset(
+    instructions="For a question about an AI model (a release, its price, speed, or reception), "
+    "call model_info first: it resolves the newest version and gives facts, hosts and HN threads; "
+    "then dig with hn_discussion, papers/hf, and exa_search (include_domains=['reddit.com'] for "
+    "hands-on reports)."
+)
+
+
+@ai_models.tool_plain
+def model_info(name: str, years: int = 1) -> dict:
+    """Look up an AI model by name, fuzzy ('sonnet', 'glm flash', 'kimi'): the NEWEST matching
+    model on Vercel AI Gateway with release date, $/M-token prices (the cheapest host's listed
+    price), context, every host's last-hour speed (first-token latency, tokens/s), other matching
+    ids, and up to 3 HN threads from the last `years` (0 = all time) by points, each with its
+    top-ranked comment and reply (full text). Deterministic, no LLM."""
+    from dataclasses import asdict
+
+    from ko import models as models_mod
+
+    def _do():
+        info = asdict(models_mod.info(name, years=years))
+        info.pop("description", None)  # marketing copy; the facts are in the fields
+        return info
+
+    return _try("model_info", _do)
+
+
+# --- packages (npm / PyPI via deps.dev + GitHub) ---
+packages = FunctionToolset(
+    instructions="For a question about an npm or PyPI package (is it maintained, safe, worth "
+    "using, what changed), call pkg_info first. Few GitHub stars, no releases in a year, or "
+    "advisories on the version in use are the warning signs to report."
+)
+
+
+@packages.tool_plain
+def pkg_info(name: str) -> list[dict]:
+    """Look up an npm or PyPI package by exact name ('npm:x' / 'pypi:x' to pick; '@scope/x' is
+    npm; else both are tried and every match returned): the registry's latest version and date,
+    the version uv/npm would pick under KO's 3-day release-age floor, the version locked in the
+    current repo, advisories on latest and on the locked version, licence, GitHub stars, last
+    push, releases in the last year, weekly downloads, and the first lines of the latest release
+    notes with their link. Deterministic, no LLM."""
+    from dataclasses import asdict
+
+    from ko import pkg as pkg_mod
+
+    return _try("pkg_info", lambda: [asdict(p) for p in pkg_mod.info(name)])
 
 
 # --- tmdb (movies / TV) ---

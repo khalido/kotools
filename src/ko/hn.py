@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import html
 import re
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -52,6 +53,8 @@ class Comment:
     author: str
     text: str
     depth: int  # 0 = top-level
+    id: str = ""
+    url: str = ""  # the comment's own HN link
 
 
 def _get(path: str, params: dict | None = None, base: str = ALGOLIA) -> dict | list:
@@ -229,24 +232,61 @@ def _walk(children: list[dict], depth: int, out: list[Comment], limit: int) -> N
         if limit and len(out) >= limit:
             return
         if child.get("text"):  # deleted/flagged comments come back text-less
-            out.append(
-                Comment(
-                    author=child.get("author") or "[deleted]",
-                    text=_strip_html(child["text"]),
-                    depth=depth,
-                )
-            )
+            out.append(_comment(child, depth))
         _walk(child.get("children") or [], depth + 1, out, limit)
+
+
+def _ranked(children: list[dict], kids: list[int]) -> list[dict]:
+    """Algolia returns replies oldest first; HN's own ranking is Firebase's `kids` order."""
+    rank = {k: i for i, k in enumerate(kids)}
+    return sorted(children, key=lambda c: rank.get(c.get("id"), len(rank)))
+
+
+def _tree(item_id: str) -> dict:
+    """Algolia's whole comment tree for an item, top level re-ordered to HN's ranking."""
+    with ThreadPoolExecutor() as pool:
+        tree = pool.submit(_get, f"items/{item_id}")
+        kids = pool.submit(_kids, item_id)
+        data = tree.result()
+        data["children"] = _ranked(data.get("children") or [], kids.result())
+    return data
+
+
+def _kids(item_id) -> list[int]:
+    """HN's ranked reply ids from Firebase. Ranking is a nicety: if Firebase is down, [] keeps
+    Algolia's (oldest-first) order rather than failing the command, with a note on stderr."""
+    try:
+        return (_get(f"item/{item_id}.json", base=FIREBASE) or {}).get("kids") or []
+    except Exception as e:
+        print(f"note: HN ranking unavailable ({e}); comments are oldest first", file=sys.stderr)
+        return []
+
+
+def _comment(d: dict, depth: int) -> Comment:
+    cid = str(d.get("id", ""))
+    return Comment(
+        d.get("author") or "[deleted]", _strip_html(d["text"]), depth, cid, f"https://news.ycombinator.com/item?id={cid}"
+    )
+
+
+def top_comment(story_id: str) -> tuple[Comment | None, Comment | None]:
+    """HN's top-ranked comment on a story, and the top-ranked reply to it (either may be None)."""
+    top = next((c for c in _tree(story_id)["children"] if c.get("text")), None)
+    if top is None:
+        return None, None
+    reply = next((c for c in _ranked(top.get("children") or [], _kids(top["id"])) if c.get("text")), None)
+    return _comment(top, 0), _comment(reply, 1) if reply else None
 
 
 def item(
     item_id: str, max_comments: int = DEFAULT_MAX_COMMENTS
 ) -> tuple[Story, list[Comment]]:
-    """One story + its comments, thread order (depth-first, as displayed on HN).
+    """One story + its comments, depth-first. Top-level comments in HN's ranked order (from
+    Firebase); replies under them oldest first (ranking those costs a call per comment).
 
     `max_comments=0` = no cap. Comment text is plain (HTML stripped).
     """
-    data = _get(f"items/{item_id}")
+    data = _tree(item_id)
     story = Story(
         id=str(data["id"]),
         title=data.get("title") or "",

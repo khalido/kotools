@@ -22,6 +22,7 @@ from rich.markdown import Markdown
 
 from ko import config, sessions
 from ko.llm import run_cost
+from ko.models import resolve
 
 _console = Console()
 _err = Console(stderr=True)  # cost notes are notes, not data — stderr keeps pipes clean
@@ -64,7 +65,7 @@ def _stream(
     stream_text(delta=False) yields the full text so far each tick.
     """
     result = agent.run_stream_sync(
-        prompt, message_history=history, model=model, usage_limits=limits
+        prompt, message_history=history, model=resolve(model or agent.model), usage_limits=limits
     )
     text = ""
     with Live(console=_console, refresh_per_second=15) as live:
@@ -92,7 +93,7 @@ def run(
         text, messages = _stream(agent, prompt, history, model=model, limits=limits)
     else:
         result = agent.run_sync(
-            prompt, message_history=history, model=model, usage_limits=limits
+            prompt, message_history=history, model=resolve(model or agent.model), usage_limits=limits
         )
         text, messages = result.output, result.all_messages()
         print(text)

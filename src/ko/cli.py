@@ -61,7 +61,7 @@ def _startup(
     telemetry.setup()
 
 
-def _online(host: str = "openrouter.ai", timeout: float = 1.5) -> bool:
+def _online(host: str = "ai-gateway.vercel.sh", timeout: float = 1.5) -> bool:
     """Can we reach the internet? One TCP connect, so `ko doctor` can skip its live checks
     offline instead of stalling on each one's timeout."""
     import socket
@@ -94,6 +94,7 @@ def doctor(
     from . import config, google_auth
     from . import llm as _llm
     from . import mcp_client as mcp_client_mod
+    from . import models as _models
     from . import telemetry as telemetry_mod
 
     def env(var: str) -> tuple[str, str]:
@@ -109,7 +110,7 @@ def doctor(
         bool(shutil.which("soffice")) or Path("/Applications/LibreOffice.app").exists()
     )
     default = _llm.default_model()
-    default_key = _llm.PROVIDER_KEYS.get(default.split(":")[0], "")
+    default_key = _models.PROVIDER_KEYS.get(default.split(":")[0], "")
 
     from . import pdf as pdf_mod
 
@@ -202,8 +203,8 @@ def doctor(
         (
             "agent",
             "research agent (web search via exa)",
-            "OPENROUTER_API_KEY + EXA_API_KEY",
-            env("OPENROUTER_API_KEY"),
+            "VERCEL_AI_GATEWAY_API_KEY + EXA_API_KEY",
+            env("VERCEL_AI_GATEWAY_API_KEY"),
         ),
         (
             "tv",
@@ -234,9 +235,9 @@ def doctor(
         ("mcp", "inspect/call MCP servers by name or url", "~/.config/ko/mcp.json", _mcp_status),
         (
             "billing",
-            "balance + usage across paid services (OpenRouter)",
-            "OPENROUTER_API_KEY",
-            env("OPENROUTER_API_KEY"),
+            "balance + usage across paid services (AI Gateway, OpenRouter)",
+            "VERCEL_AI_GATEWAY_API_KEY",
+            env("VERCEL_AI_GATEWAY_API_KEY"),
         ),
         (
             "telemetry",
@@ -261,10 +262,10 @@ def doctor(
 
     online = _online()
     if online:
-        _llm.refresh_openrouter_models()  # populate/refresh the OR catalog cache
+        _models.refresh_catalogs()  # populate/refresh the model catalog caches
     else:
-        console.print("[yellow]offline — skipped the live checks (model catalog refresh, OpenRouter credits, account lookups)[/yellow]")
-    extra = [m for m in _llm.available_models() if ":" in m]
+        console.print("[yellow]offline — skipped the live checks (model catalog refresh, credit balances, account lookups)[/yellow]")
+    extra = [m for m in _models.available_models() if ":" in m]
     providers = sorted({m.split(":")[0] for m in extra})
     console.print(
         f"[dim]models available to -m: {len(extra)} across {', '.join(providers) or 'none'}[/dim]"
@@ -284,8 +285,8 @@ def doctor(
             config.setting_source("KO_AGENT_MODEL", "agents", "model"),
         ),
         *(
-            (f"{tier} tier", _llm.model_for(tier), "config" if config.get("llm", tier) else "default")
-            for tier in ("basic", "medium", "smart", "ultra")
+            (f"{tier} tier", _models.model_for(tier), "config" if config.get("llm", tier) else "default")
+            for tier in _models.TIERS
         ),
         ("sum model", _llm.sum_model(), config.setting_source("KO_SUM_MODEL", "llm", "sum")),
         ("cal timezone", gcal.tz_name(), "config" if config.get("cal", "timezone") else "default"),
@@ -325,30 +326,35 @@ def doctor(
                 line += "  [red]⚠ big: " + ", ".join(f"{n} {b / 1e9:.1f} GB" for n, b in _big) + "[/red]"
             console.print(f"[dim]{line}[/dim]")
 
-    # live OpenRouter key check — /credits is a free authenticated GET, so this both
-    # proves the key works and shows money left (the agent-tier default rides on it)
-    if online and config.key_source("OPENROUTER_API_KEY"):
+    # live balance checks — /credits is a free authenticated GET on both gateways, so this
+    # proves the key works and shows money left (every LLM call rides on one of them)
+    if online:
         from . import billing
 
-        b = billing.openrouter()  # never raises — errors land in b.error
-        if b.error:
-            console.print(f"[red]openrouter: key set but /credits failed — {b.error}[/red]")
-        elif b.remaining is not None:
-            console.print(
-                f"[dim]openrouter: key works — ${b.remaining:.2f} of ${b.total:.2f} credits left"
-                + (f" ({b.trend})" if b.trend else "")
-                + "[/dim]"
-            )
-        # A key can be capped below the account balance, so "credits left" reads healthy
-        # while every call 403s. Say so loudly — that gap cost a debugging session.
-        if b.key_capped:
-            console.print(
-                f"[red]openrouter: this key's ${b.key_limit:.0f} spend cap is used up "
-                f"(${b.key_used:.2f}) — calls 403 until you raise it at "
-                f"https://openrouter.ai/settings/keys, even with credit left[/red]"
-            )
-        elif b.key_left is not None:
-            console.print(f"[dim]openrouter: key cap ${b.key_limit:.0f}, ${b.key_left:.2f} left[/dim]")
+        for check, key_env in ((billing.gateway, "VERCEL_AI_GATEWAY_API_KEY"), (billing.openrouter, "OPENROUTER_API_KEY")):
+            if not config.key_source(key_env):
+                continue
+            b = check()  # never raises — errors land in b.error
+            if b.error:
+                console.print(f"[red]{b.provider}: key set but /credits failed — {b.error}[/red]")
+            elif b.remaining is not None:
+                low = "red" if b.remaining < 1 else "dim"
+                console.print(
+                    f"[{low}]{b.provider}: key works — ${b.remaining:.2f} of ${b.total:.2f} credits left"
+                    + (f" ({b.trend})" if b.trend else "")
+                    + f"[/{low}]"
+                )
+            # A key can be capped below the account balance, so "credits left" reads healthy
+            # while every call 403s. Say so loudly — that gap cost a debugging session.
+            if b.key_capped:
+                console.print(
+                    f"[red]{b.provider}: this key's ${b.key_limit:.0f} spend cap is used up "
+                    f"(${b.key_used:.2f}) — calls 403 until you raise it"
+                    + (" at https://openrouter.ai/settings/keys" if b.provider == "openrouter" else "")
+                    + ", even with credit left[/red]"
+                )
+            elif b.key_left is not None:
+                console.print(f"[dim]{b.provider}: key cap ${b.key_limit:.0f}, ${b.key_left:.2f} left[/dim]")
 
     if as_json:
         import json as _json

@@ -19,11 +19,15 @@ import re
 import sys
 import tempfile
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
 import httpx2 as httpx
 
 from ko import dirs
+
+if TYPE_CHECKING:
+    from pydantic_ai.models import Model
 
 _TIMEOUT = 30.0  # seconds, per request
 _INIT_TIMEOUT = 120.0  # pydantic-ai's default is 5s; a first `uvx`/`npx -y` run downloads first
@@ -345,7 +349,7 @@ _OVERVIEW_INSTRUCTIONS = (
 )
 
 
-def overview(spec: dict, model: str, prompt: str | None = None) -> str:
+def overview(spec: dict, model: str | Model, prompt: str | None = None) -> str:
     """Have a pydantic-ai agent connect to the server (as an MCP toolset), explore it, and summarize
     what it's for."""
     from pydantic_ai import Agent

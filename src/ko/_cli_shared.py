@@ -151,3 +151,29 @@ def _fmt_day(iso: str | None) -> str:
         return datetime.fromisoformat(iso).strftime("%d %b %Y")
     except ValueError:
         return iso[:10]  # fall back to the date portion
+
+
+def _link(text: str, url: str, links: bool) -> str:
+    """Clickable on a terminal (OSC 8); piped, the URL follows the text so an agent can use it."""
+    return f"\033]8;;{url}\033\\{text}\033]8;;\033\\" if links else f"{text}  {url}"
+
+
+def _clip(text: str, n: int = 180) -> str:
+    text = " ".join(text.split())
+    return text if len(text) <= n else text[: n - 1].rstrip() + "…"
+
+
+def _big(n) -> str:
+    """12, 3.4k, 1.05M, 1.2B; – for none."""
+    if n is None:
+        return "–"
+    for unit, size in (("B", 1e9), ("M", 1e6), ("k", 1e3)):
+        if n >= size * 0.9995:  # 999,600 is 1M, not "1e+03k"
+            return f"{n / size:.3g}{unit}"
+    return str(n)
+
+
+def _table(rows: list[list[str]]) -> list[str]:
+    """Left-aligned columns, two spaces apart; rows[0] is the header."""
+    widths = [max(len(r[c]) for r in rows) + 2 for c in range(len(rows[0]))]
+    return ["".join(cell.ljust(w) for cell, w in zip(r, widths, strict=True)).rstrip() for r in rows]

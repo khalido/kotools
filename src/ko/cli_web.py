@@ -3,13 +3,25 @@
 from __future__ import annotations
 
 import json
+import sys
 from dataclasses import asdict
 from pathlib import Path
 
 import typer
 
 from . import config
-from ._cli_shared import _die, _emit_json, _fmt_day, _no_results, _tsv_cell, app, lazy
+from ._cli_shared import (
+    _big,
+    _die,
+    _emit_json,
+    _fmt_day,
+    _link,
+    _no_results,
+    _table,
+    _tsv_cell,
+    app,
+    lazy,
+)
 
 arxiv_mod = lazy("arxiv")
 doc_mod = lazy("doc")
@@ -18,6 +30,7 @@ fetch_mod = lazy("fetch")
 hf_mod = lazy("hf")
 hn_mod = lazy("hn")
 papers_mod = lazy("papers")
+pkg_mod = lazy("pkg")
 tmdb_mod = lazy("tmdb")
 x_mod = lazy("x")
 yt_mod = lazy("yt")
@@ -52,6 +65,9 @@ papers_app = typer.Typer(
     no_args_is_help=True,
 )
 app.add_typer(papers_app, name="papers")
+
+pkg_app = typer.Typer(help="npm/PyPI packages: `info <name>...` (no key).", no_args_is_help=True)
+app.add_typer(pkg_app, name="pkg")
 
 x_app = typer.Typer(
     help="X (Twitter) posts via the official XDK (X_BEARER_TOKEN required, paid tier for reads).",
@@ -1085,9 +1101,9 @@ def tv(
 
 def _yt_models() -> list[str]:
     """Lazy model completion — cli_web doesn't import llm at module load."""
-    from . import llm as llm_mod
+    from . import models as models_mod
 
-    return llm_mod.available_models()
+    return models_mod.available_models()
 
 
 _REFRESH_HELP = "ignore the cache: fetch the transcript again (and re-run -s, which costs again)"
@@ -1222,3 +1238,112 @@ def yt_channel(
         _no_results(f"{ch.title} has no public uploads" + (f" since {since}" if since else ""), as_json=False)
     for u in ch.uploads:
         typer.echo(f"{u.published_at}\t{u.duration}\t{u.url}\t{_tsv_cell(u.title)}")
+
+
+# --- pkg ---
+
+
+@pkg_app.command("info")
+def pkg_info(
+    names: list[str] = typer.Argument(..., help="package names; `npm:x` / `pypi:x` to pick one; several = a comparison table"),
+    as_json: bool = typer.Option(False, "--json", help="an array, one object per package found; {query, error, code} for a miss"),
+) -> None:
+    """Latest version and date (and what the 3-day floor picks), this repo's locked version, advisories, stars, last push, release notes."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    def one(q: str):
+        try:
+            return pkg_mod.info(q, notes=len(names) == 1)
+        except LookupError as e:
+            return {"query": q, "error": str(e), "code": "not_found"}
+        except TypeError, AttributeError, NameError, ImportError:
+            raise  # our bug, not the upstream's: surface it
+        except Exception as e:
+            return {"query": q, "error": f"package lookup failed: {e}", "code": "upstream"}
+
+    with ThreadPoolExecutor() as pool:
+        results = list(pool.map(one, names))
+    found = [p for r in results if isinstance(r, list) for p in r]
+    for r in results:
+        if isinstance(r, dict) and not as_json:
+            typer.echo(f"[{r['query']}: {r['error']}]", err=True)
+    if as_json:
+        rows = [row for r in results for row in ([r] if isinstance(r, dict) else [asdict(p) for p in r])]
+        typer.echo(json.dumps(rows, default=str))
+    elif found:  # nothing on stdout when every name missed
+        links = sys.stdout.isatty()
+        lines = _pkg_lines(found[0], links) if len(names) == 1 and len(found) == 1 else _pkg_table(found)
+        for line in lines:
+            typer.echo(line)
+    if not found:
+        _die(f"none of {len(names)} names is an npm or PyPI package", code="not_found")
+
+
+def _pkg_activity(p) -> str:
+    return " · ".join(
+        x
+        for x in [
+            f"{_big(p.stars)}★" if p.repo else "no GitHub repo",
+            f"last push {p.pushed}" if p.pushed else "",
+            f"{p.releases_1y} releases in a year",
+            f"{_big(p.downloads_week)}/week" if p.downloads_week is not None else "",
+        ]
+        if x
+    )
+
+
+def _pkg_lines(p, links: bool) -> list[str]:
+    head = f"{p.name} ({p.system})  {p.latest}  {p.released or 'date not indexed yet'}"
+    if p.floor_pick:
+        head += f"  under the 3-day floor, {"npm" if p.system == "npm" else "uv"} picks {p.floor_pick}"
+    out = [head]
+    if p.description:
+        out.append(p.description)
+    if p.deprecated:
+        out.append(f"DEPRECATED: {p.deprecated}")
+    out.append(_pkg_activity(p))
+    out.append(
+        " · ".join(
+            x
+            for x in [
+                ", ".join(p.licenses) or "no licence listed",
+                f"scorecard {p.scorecard:g}" if p.scorecard is not None else "",
+                "provenance verified" if p.provenance else "no provenance",
+                f"{p.open_issues} open issues" if p.open_issues is not None else "",
+            ]
+            if x
+        )
+    )
+    if p.locked:
+        out.append(f"in this repo: {p.locked}" + ("  (latest)" if p.locked == p.latest else ""))
+    for label, advs in [("advisories on " + p.latest, p.advisories), ("advisories on your " + p.locked, p.locked_advisories if p.locked != p.latest else [])]:
+        if advs:
+            out.append(f"{label}: {len(advs)}")
+            out += [f"  {a.cvss if a.cvss is not None else '–':>4}  {_link(a.title or a.id, a.url, links)}" for a in advs[:5]]
+    if p.recent:
+        out.append("earlier: " + " · ".join(f"{v} {d}" for v, d in p.recent))
+    if p.repo:
+        out.append(f"repo   {p.repo}")
+    if p.homepage and p.homepage.rstrip("/") != p.repo:
+        out.append(f"home   {p.homepage}")
+    if p.notes_url:
+        out.append(f"notes  {p.notes_url}")
+        out += [f"       {line}" for line in p.notes]
+    return out
+
+
+def _pkg_table(pkgs: list) -> list[str]:
+    rows = [["package", "latest", "released", "in repo", "stars", "last push", "releases/yr", "downloads/wk", "advisories"]]
+    for p in pkgs:
+        rows.append([
+            f"{p.system}:{p.name}",
+            p.latest + (f" (floor: {p.floor_pick})" if p.floor_pick else ""),
+            p.released or "–",
+            p.locked or "–",
+            _big(p.stars) if p.repo else "no repo",
+            p.pushed or "–",
+            str(p.releases_1y),
+            _big(p.downloads_week),
+            str(len(p.advisories)) + (f" (yours {len(p.locked_advisories)})" if p.locked != p.latest and p.locked_advisories else ""),
+        ])
+    return _table(rows)

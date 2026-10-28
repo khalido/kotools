@@ -11,17 +11,18 @@ from __future__ import annotations
 
 from pydantic_ai import Agent
 
-from ko import config, llm
+from ko import config, models
 from ko.agents import _shared
 from ko.agents._memory import instructions_block, memory_toolset
-from ko.agents._toolsets import news, papers, web
+from ko.agents._toolsets import ai_models, news, papers, web
 
 # Default model (read at import): KO_AGENT_MODEL -> `[agents] model` in config.toml ->
 # baked default; the `-m` flag overrides per-run via the model= arg (see run/repl).
-_MODEL = config.setting("KO_AGENT_MODEL", "agents", "model", llm.model_for("smart"))
+_MODEL = config.setting("KO_AGENT_MODEL", "agents", "model", models.model_for("smart"))
 
 agent = Agent(
     _MODEL,
+    defer_model_check=True,  # the model (and its key) is resolved per run by _shared
     instructions=(
         "You are a research assistant. For a literature/state-of-the-art question, work like a "
         "researcher: start broad (papers_search across publishers, hf_search for ML), find 1-2 "
@@ -32,7 +33,7 @@ agent = Agent(
         "(it lags and is prestige-biased). Verify a citation is real (papers_get) before relying "
         "on it. Reply in markdown with headers, bullets, and cited URLs/DOIs; be concise."
     ),
-    toolsets=[web, papers, news, memory_toolset("research")],
+    toolsets=[web, papers, news, ai_models, memory_toolset("research")],
 )
 
 

@@ -20,7 +20,8 @@ This file is a stub, not a manual — same rule as agent-browser/herdr: **the in
 | `sum [url\|file...]` | fetch + summarize in one move; stdin-aware |
 | `llm "<prompt>"` | one-shot LLM; `-f` attaches anything, `-x` extracts code, `--schema` constrains JSON |
 | `judge "<question>"` | typed answer with probabilities (Jev): yes/no, `--choice`, `--score`, `--tags`; guide `ko prompt judge` |
-| `models` | model strings usable with `-m` |
+| `models [info <name>...]` | model strings usable with `-m`; `info` = newest matching gateway model: price, hosts' speed, top HN threads + best comment (no LLM); several names = one comparison table |
+| `pkg info <name>...` | npm/PyPI package: latest + date (and what the 3-day floor picks), version in this repo, advisories, stars, last push, release notes head (deps.dev + registry + GitHub, no key) |
 | `doc <file>` | PDF/Office/image → text (liteparse, local) |
 | `pdf <file.md>` (`md-to-pdf`) | markdown → print-ready PDF; styles + brand.yml |
 | `gsheets ...` | Sheets read+write, OAuth, learned name aliases |
@@ -36,7 +37,7 @@ This file is a stub, not a manual — same rule as agent-browser/herdr: **the in
 | `tv <title>` | movie/TV + AU watch providers |
 | `brief [--raw]` | morning brief: gather + one cheap-model synthesis |
 | `publish ...` | folder → Cloudflare Worker (`new`/`preview`/`rm`/`list`) |
-| `ai "<prompt>"` | default agent, all toolsets + memory, medium tier |
+| `ai "<prompt>"` | default agent, all toolsets + memory, basic tier (`-m` for hard questions) |
 | `agent research\|repo\|tv\|sessions` (`a`) | specialist agents, resumable sessions |
 | `mcp inspect\|call\|overview\|servers` | investigate/use MCP servers |
 | `refs [pull]\|setup\|add\|list` | manage ~/code reference clones |
@@ -64,7 +65,7 @@ Releasing: `/release` repo skill — CalVer, CHANGELOG canonical, human approves
 
 ## Things `--help` can't tell you
 - **Google auth:** one shared OAuth token per account across gsheets/gdocs/cal/gmail; accounts are short tags, default set by `ko google use` (state/settings.json, per machine — commands never rewrite config.toml). Personal Gmail + External app in Testing = refresh token dies in 7 days — publish the app or use Workspace-Internal. Service-account profiles (`auth --service-account key.json`), multi-account `-a`, token paths — all in `google_auth.py` + README. Scope is per-API, never per-folder; Drive is the full `drive` scope since 2026-09 (per-folder = a service account).
-- **Model tiers** (`llm.model_for`): basic/medium/smart/ultra, all via OpenRouter; override in config.toml `[llm]`. Re-check prices whenever touching the tier table — they drift fast (82% drift once). Every LLM call prints a cost note to stderr.
+- **Models** (`models.py`, ko's twin of everx's `ai-models.ts`): a `ModelSpec` per tested model (note, gateway host order, pydantic-ai settings) and the basic/medium/smart price tiers, all via Vercel AI Gateway. Every call goes through `models.resolve()`; nothing else builds a model; override in config.toml `[llm]`. OpenRouter stays only for Jev (`ko judge`) and `ko yt -s` (video input). Re-check prices whenever touching the tier table — they drift fast. Every LLM call prints a cost note to stderr (gateway calls: estimated from the cached catalog price).
 - **Directories** (`dirs.py`): config (`~/.config/ko`, dotfile-synced, keys fall back to `[keys]` in config.toml) · state (`~/.local/state/ko`, tokens/sessions/memory, never synced) · cache (disposable). Env overrides `KO_*_DIR`.
 - **Keys:** modules call `config.require_key(name, hint)` → one `MissingKeyError` type; `ko doctor` reports the lot.
 

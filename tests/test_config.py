@@ -6,7 +6,7 @@ import os
 
 import pytest
 
-from ko import config, telemetry
+from ko import config, llm, models, telemetry
 from ko.config import MissingKeyError
 
 
@@ -130,26 +130,20 @@ def _boom(*a, **k):
 
 
 def test_model_for_baked_defaults(monkeypatch, tmp_path):
-    from ko import llm
-
     _with_config(monkeypatch, tmp_path, "")
-    assert llm.model_for("basic") == llm.TIERS["basic"]
-    assert llm.model_for("smart") == llm.TIERS["smart"]
+    assert models.model_for("basic") == models.TIERS["basic"]
+    assert models.model_for("smart") == models.TIERS["smart"]
     config._data.cache_clear()
 
 
 def test_model_for_config_override(monkeypatch, tmp_path):
-    from ko import llm
-
     _with_config(monkeypatch, tmp_path, '[llm]\nsmart = "openrouter:openai/gpt-5.4"\n')
-    assert llm.model_for("smart") == "openrouter:openai/gpt-5.4"
-    assert llm.model_for("basic") == llm.TIERS["basic"]  # untouched tiers keep baked picks
+    assert models.model_for("smart") == "openrouter:openai/gpt-5.4"
+    assert models.model_for("basic") == models.TIERS["basic"]  # untouched tiers keep baked picks
     config._data.cache_clear()
 
 
 def test_default_model_rides_basic_tier(monkeypatch, tmp_path):
-    from ko import llm
-
     _with_config(monkeypatch, tmp_path, '[llm]\nbasic = "test:cheap"\n')
     monkeypatch.delenv("KO_DEFAULT_MODEL", raising=False)
     assert llm.default_model() == "test:cheap"  # no [llm] model set → basic tier
@@ -197,8 +191,6 @@ def _resp(cost=None, tin=10, tout=5, model="m:x"):
 
 
 def test_run_cost_prefers_openrouter_actuals():
-    from ko import llm
-
     rc = llm.run_cost([_resp(cost=0.001), _resp(cost=0.002)])
     assert rc.source == "actual"
     assert abs(rc.usd - 0.003) < 1e-9
@@ -207,8 +199,6 @@ def test_run_cost_prefers_openrouter_actuals():
 
 
 def test_run_cost_tokens_only_when_unpriceable():
-    from ko import llm
-
     # no provider cost + model unknown to genai-prices -> tokens only, no $ in the note
     rc = llm.run_cost([_resp(model="nonexistent:model-xyz")])
     assert rc.usd is None
@@ -216,7 +206,5 @@ def test_run_cost_tokens_only_when_unpriceable():
 
 
 def test_run_cost_tiny_amounts_never_show_zero():
-    from ko import llm
-
     rc = llm.run_cost([_resp(cost=0.00001)])
     assert "<$0.0001" in rc.note  # never a misleading "$0.0000"

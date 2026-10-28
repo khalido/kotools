@@ -82,7 +82,7 @@ def test_sum_tty_no_input_is_usage_error(fake_llm, monkeypatch):
     assert r.exit_code == 2
 
 
-@pytest.mark.skipif(not os.environ.get("OPENROUTER_API_KEY"), reason="no OPENROUTER_API_KEY")
+@pytest.mark.skipif(not os.environ.get("VERCEL_AI_GATEWAY_API_KEY"), reason="no VERCEL_AI_GATEWAY_API_KEY")
 def test_sum_live_smoke():
     """One tiny live call on the real default model — cents, and proves the model string."""
     r = runner.invoke(app, ["sum"], input="Pelicans are large water birds with big bills.")

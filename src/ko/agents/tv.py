@@ -10,14 +10,14 @@ from __future__ import annotations
 
 from pydantic_ai import Agent
 
-from ko import config, llm
+from ko import config, models
 from ko.agents import _shared
 from ko.agents._memory import instructions_block, memory_toolset
 from ko.agents._toolsets import tmdb, web
 
 # Cheap model — this is a light task. KO_AGENT_MODEL -> `[agents] model` -> baked
 # default (read at import); the `-m` flag overrides per-run via model=.
-_MODEL = config.setting("KO_AGENT_MODEL", "agents", "model", llm.model_for("basic"))
+_MODEL = config.setting("KO_AGENT_MODEL", "agents", "model", models.model_for("basic"))
 
 # Optional personal taste profile, kept out of the code: set `[agents] tv_tastes` in
 # config.toml (or KO_TV_TASTES). Empty by default — the agent just recommends broadly.
@@ -26,6 +26,7 @@ _taste_line = f"Ko's taste: {_TASTES}. " if _TASTES else ""
 
 agent = Agent(
     _MODEL,
+    defer_model_check=True,  # the model (and its key) is resolved per run by _shared
     instructions=(
         "You help Ko pick something to watch tonight in Australia. "
         "Use tv_lookup for rating, overview, and AU streaming availability; use "

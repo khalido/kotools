@@ -75,3 +75,10 @@ def test_key_left_derived_when_limit_remaining_absent():
     # Older /key responses omit limit_remaining; we still want a cap verdict.
     b = billing.Balance("openrouter", key_limit=100, key_left=100 - 101.36)
     assert b.key_capped
+
+
+def test_gateway_without_key_is_a_note(monkeypatch):
+    monkeypatch.delenv("VERCEL_AI_GATEWAY_API_KEY", raising=False)
+    b = billing.gateway()
+    assert b.provider == "ai-gateway"
+    assert "VERCEL_AI_GATEWAY_API_KEY" in b.error

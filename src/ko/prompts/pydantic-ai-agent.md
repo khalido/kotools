@@ -25,15 +25,17 @@ via `model=` at call time — NOT into the `Agent()` constructor — so the `-m`
 
 ```python
 # research.py
-_MODEL = os.environ.get("KO_AGENT_MODEL", "openrouter:openai/gpt-5.6-luna")  # capable model
-agent = Agent(_MODEL, instructions=..., toolsets=[web, papers, news])
+_MODEL = os.environ.get("KO_AGENT_MODEL", models.model_for("basic"))
+# defer: the model (and its key) is built per run by models.resolve(), which applies the
+# ModelSpec (gateway host order, settings). _shared.run does that for you.
+agent = Agent(_MODEL, defer_model_check=True, instructions=..., toolsets=[web, papers, news])
 
 def run(prompt, model=None, resume=None):
     return _shared.run(agent, prompt, name="research", model=model, resume=resume)
 ```
 
 `KO_AGENT_MODEL` is global to all agents (session-level override); the `-m` flag feeds `model=` per-call.
-Cheap tasks get a cheap default (`"google:gemini-3.5-flash"` for the TV agent).
+Every model goes through `models.resolve()` — never hand a raw string to `run_sync(model=…)`.
 
 ## Toolsets — declare once, compose by reference
 

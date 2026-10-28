@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import mimetypes
+import os
 import re
 import sys
 from dataclasses import asdict
@@ -12,10 +13,14 @@ from pathlib import Path
 import typer
 
 from ._cli_shared import (
+    _big,
+    _clip,
     _die,
     _emit_json,
+    _link,
     _no_results,
     _reject_group_flags,
+    _table,
     _tsv_cell,
     app,
     lazy,
@@ -24,6 +29,7 @@ from ._cli_shared import (
 billing_mod = lazy("billing")
 brief_mod = lazy("brief")
 llm_mod = lazy("llm")
+models_mod = lazy("models")
 mcp_client_mod = lazy("mcp_client")
 prompt_mod = lazy("prompt")
 publish_mod = lazy("publish")
@@ -129,8 +135,8 @@ def llm_cmd(
         None,
         "--model",
         "-m",
-        help=f"model string, e.g. {llm_mod.FALLBACK_MODEL} (default: KO_DEFAULT_MODEL or that)",
-        autocompletion=llm_mod.available_models,
+        help=f"model string, e.g. {models_mod.TIERS["basic"]} (default: KO_DEFAULT_MODEL or that)",
+        autocompletion=models_mod.available_models,
     ),
     system: str = typer.Option(
         None, "--system", "-s", help="replace the default system prompt"
@@ -169,7 +175,7 @@ def llm_cmd(
     Schema for the response (`{"type": "object", ...}`), printed compact to stdout."""
     if llm_mod.is_decision_model(model) and schema is None:
         _die(f"{model} answers typed questions, not prose: use `ko judge` (or give it a --schema)", code="usage")
-    llm_mod.refresh_openrouter_models()  # keeps -m autocomplete catalog fresh (once/day)
+    models_mod.refresh_catalogs()  # keeps -m autocomplete + prices fresh (once/day)
     schema_obj = None
     if schema is not None:
         try:  # bad JSON / not an object schema is a usage error, before we spend a call
@@ -238,7 +244,7 @@ def judge_cmd(
         "--model",
         "-m",
         help="jev (default) gives every answer a probability; any `ko llm` model answers the same question bare",
-        autocompletion=llm_mod.available_models,
+        autocompletion=models_mod.available_models,
     ),
     as_json: bool = typer.Option(False, "--json", help="emit the full answer: probabilities, confidence, model"),
 ) -> None:
@@ -336,7 +342,7 @@ def sum_cmd(
         "--model",
         "-m",
         help=f"model (default {llm_mod.SUM_MODEL}; or set `[llm] sum`)",
-        autocompletion=llm_mod.available_models,
+        autocompletion=models_mod.available_models,
     ),
 ) -> None:
     """Fetch + summarize in one move: `ko sum <url>`, `ko sum report.pdf`, `ko hn item 123 | ko sum`.
@@ -395,31 +401,184 @@ def sum_cmd(
         _die(f"all {len(failed)} input(s) failed")
 
 
-@app.command("models")
+models_app = typer.Typer(
+    help="Models usable with -m (bare `ko models` lists them); `info <name>` looks one up.",
+    invoke_without_command=True,
+)
+app.add_typer(models_app, name="models")
+
+
+@models_app.callback()
 def models_cmd(
+    ctx: typer.Context,
     refresh: bool = typer.Option(
         False,
         "--refresh",
-        help="force re-fetch the OpenRouter catalog, ignoring the 24h cache",
+        help="force re-fetch the model catalogs, ignoring the 24h cache",
     ),
 ) -> None:
-    """List model strings usable with -m, one per line — filtered to providers whose key is set."""
-    llm_mod.refresh_openrouter_models(force=refresh)
-    if refresh and llm_mod.last_refresh_hit_network is False:
-        # A forced refresh that couldn't reach OpenRouter used to look identical to a
+    """List model strings usable with -m, one per line, for providers whose key is set; ko's tested models first, with a note (TSV)."""
+    if ctx.invoked_subcommand:
+        _reject_group_flags(ctx, refresh="--refresh")
+        return
+    hit = models_mod.refresh_catalogs(force=refresh)
+    if refresh and hit is False:
+        # A forced refresh that couldn't reach a catalog used to look identical to a
         # successful one; say so, else the list silently stays stale.
-        typer.echo(
-            "couldn't reach OpenRouter — showing the cached catalog (network error)", err=True
-        )
+        typer.echo("couldn't reach a model catalog — showing the cached list (network error)", err=True)
     else:
-        age = llm_mod.openrouter_cache_age()
-        if not refresh and age is not None and age > llm_mod.OPENROUTER_STALE:
+        ages = [
+            a
+            for p in models_mod.CATALOG_URLS
+            if os.environ.get(models_mod.PROVIDER_KEYS[p]) and (a := models_mod.catalog_age(p)) is not None
+        ]
+        if not refresh and ages and max(ages) > models_mod.CATALOG_STALE:
             typer.echo(
-                f"catalog cached {int(age // 86400)} days ago — ko models --refresh for the latest",
+                f"catalog cached {int(max(ages) // 86400)} days ago — ko models --refresh for the latest",
                 err=True,
             )
-    for name in sorted(llm_mod.available_models()):
-        typer.echo(name)
+    names = models_mod.available_models()
+    tested = [f"vercel:{m.id}" for m in models_mod.MODELS.values()]
+    for name in tested:
+        if name in names:
+            typer.echo(f"{name}\t{models_mod.MODELS[name.removeprefix('vercel:')].note}")
+    for name in names:
+        if name not in tested:
+            typer.echo(name)
+
+
+@models_app.command("info")
+def models_info(
+    queries: list[str] = typer.Argument(..., help="model names, fuzzy: sonnet, 'glm flash', kimi; several = a comparison table"),
+    years: int = typer.Option(1, "--years", "-y", min=0, help="HN window in years (0 = all time)"),
+    as_json: bool = typer.Option(False, "--json", help="one name: an object; several: an array, {query, error, code} for a miss"),
+) -> None:
+    """The newest gateway model matching a name: price, context, each host's speed, and the top HN threads with their best comment. No LLM, no key."""
+    if len(queries) > 1:
+        _models_compare(queries, years, as_json)
+        return
+    try:
+        info = models_mod.info(queries[0], years=years)
+    except LookupError as e:
+        _die(str(e), as_json=as_json, code="not_found")
+    except Exception as e:  # gateway or HN down / timeout: one clean line, {error, code} under --json
+        _die(f"model lookup failed: {e}", as_json=as_json, code="upstream")
+    if as_json:
+        typer.echo(json.dumps(asdict(info), default=str))
+        return
+    for line in _model_info_lines(info, years, links=sys.stdout.isatty()):
+        typer.echo(line)
+
+
+def _models_compare(queries: list[str], years: int, as_json: bool) -> None:
+    """Several models side by side, one HN thread each. A miss is reported, not fatal: exit 1
+    only when every name missed."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    def one(q: str):
+        try:
+            return models_mod.info(q, years=years, threads=1)
+        except LookupError as e:
+            return {"query": q, "error": str(e), "code": "not_found"}
+        except TypeError, AttributeError, NameError, ImportError:
+            raise  # our bug, not the upstream's: surface it
+        except Exception as e:
+            return {"query": q, "error": f"model lookup failed: {e}", "code": "upstream"}
+
+    try:
+        models_mod._live_catalog()  # warm the per-process cache once, not once per thread
+    except Exception as e:
+        _die(f"model lookup failed: {e}", as_json=as_json, code="upstream")
+    with ThreadPoolExecutor() as pool:
+        results = list(pool.map(one, queries))
+    found = [r for r in results if not isinstance(r, dict)]
+    for r in results:
+        if isinstance(r, dict) and not as_json:
+            typer.echo(f"[{r['query']}: {r['error']}]", err=True)
+    if as_json:
+        typer.echo(json.dumps([r if isinstance(r, dict) else asdict(r) for r in results], default=str))
+    elif found:  # nothing on stdout when every name missed
+        for line in _model_compare_lines(found, years, links=sys.stdout.isatty()):
+            typer.echo(line)
+    if not found:
+        _die(f"none of {len(queries)} names matched a gateway model", code="not_found")
+
+
+def _num(v, unit: str = "") -> str:
+    return "–" if v is None else f"{v:g}{unit}"
+
+
+def _hn_window(years: int) -> str:
+    return "all time" if years == 0 else f"last {years} year" + ("s" if years > 1 else "")
+
+
+def _model_compare_lines(infos: list, years: int, *, links: bool) -> list[str]:
+    """One row per model, then each model's biggest HN thread."""
+    rows = [["model", "released", "$in/$out", "context", "max out", "hosts", "fastest host", "quickest 1st token"]]
+    for i in infos:
+        fast = max(i.hosts, key=lambda h: h.tok_s or 0, default=None)
+        quick = min((h for h in i.hosts if h.latency_ms is not None), key=lambda h: h.latency_ms, default=None)
+        rows.append([
+            i.id,
+            i.released,
+            f"{_num(i.price_in)}/{_num(i.price_out)}",
+            _big(i.context),
+            _big(i.max_output),
+            str(len(i.hosts)),
+            f"{round(fast.tok_s)} tok/s {fast.name}" if fast and fast.tok_s else "–",
+            f"{quick.latency_ms / 1000:.1f} s {quick.name}" if quick else "–",
+        ])
+    out = _table(rows)
+    out += ["", "$ per M tokens, the cheapest host's listed price; speeds are the gateway's last hour.", "", f"HN, {_hn_window(years)}:"]
+    for i in infos:
+        t = i.threads[0] if i.threads else None
+        if t is None:
+            out.append(f"  {i.id}: no stories found")
+            continue
+        out.append(f"  {i.id}: {t.story.points}pts {t.story.num_comments}c  {_link(t.story.title, t.url, links)}")
+        if t.top:
+            out.append(f"      {_link(t.top.author, t.top.url, links)}: {_clip(t.top.text)}")
+    return out
+
+
+def _model_info_lines(i, years: int, *, links: bool) -> list[str]:
+    """Human view. On a terminal, titles and comments are clickable (OSC 8); piped, the URL is
+    printed instead so an agent can follow it."""
+
+    def link(text: str, url: str) -> str:
+        return _link(text, url, links)
+
+    out = [
+        f"{i.name}  vercel:{i.id}  · released {i.released}",
+        (
+            f"${_num(i.price_in)} in · ${_num(i.price_out)} out · ${_num(i.cache_read)} cache read, per M tokens"
+            f" · {_big(i.context)} context · {_big(i.max_output)} max out"
+        ),
+    ]
+    if i.tags:
+        out.append(", ".join(i.tags))
+    if i.note:
+        out.append(f"ko: {i.note}")
+    out += ["", f"{'host':<18}{'$in/$out':<12}{'1st token':<11}{'tok/s':<7}{'quant':<7}uptime 1d"]
+    for h in i.hosts:
+        first = "–" if h.latency_ms is None else f"{h.latency_ms / 1000:.1f} s"
+        uptime = "–" if h.uptime_1d is None else f"{h.uptime_1d:.2f}%"
+        out.append(
+            f"{h.name:<18}{_num(h.price_in) + '/' + _num(h.price_out):<12}{first:<11}"
+            f"{_num(h.tok_s and round(h.tok_s)):<7}{h.quantization or '–':<7}{uptime}"
+        )
+    if i.others:
+        out.append("also: " + ", ".join(f"{oid} ({d})" for oid, d in i.others))
+    window = _hn_window(years)
+    out += ["", f"HN, {window}:" if i.threads else f"HN, {window}: no stories found"]
+    for t in i.threads:
+        st = t.story
+        out.append(f"  {st.points:>5}pts {st.num_comments:>5}c  {st.created_at:%Y-%m-%d}  {link(st.title, t.url)}")
+        if t.top:
+            out.append(f"      {link(t.top.author, t.top.url)}: {_clip(t.top.text)}")
+        if t.reply:
+            out.append(f"        ↳ {link(t.reply.author, t.reply.url)}: {_clip(t.reply.text, 140)}")
+    return out
 
 
 @app.command("ai")
@@ -431,8 +590,8 @@ def ai_cmd(
         None,
         "--model",
         "-m",
-        help="model override (default: the medium tier)",
-        autocompletion=llm_mod.available_models,
+        help="model override (default: the basic tier)",
+        autocompletion=models_mod.available_models,
     ),
     resume: str = typer.Option(
         None, "--resume", "-r", help="resume a saved session id"
@@ -465,7 +624,7 @@ def agent_research(
         None,
         "--model",
         "-m",
-        help="model override, e.g. openrouter:anthropic/claude-sonnet-4",
+        help="model override, e.g. vercel:zai/glm-5.3-flash",
     ),
     resume: str = typer.Option(
         None,
@@ -707,7 +866,7 @@ def agent_sessions_summarize(
             continue
         try:
             result = _summarizer.run_sync(
-                f"Summarize this session:\n\n{digest}", model=mdl
+                f"Summarize this session:\n\n{digest}", model=models_mod.resolve(mdl)
             )
             s: SessionSummary = result.output
             sessions.upsert_session_summary(
@@ -1415,11 +1574,11 @@ def mcp_overview(
     # via the tier table + the documented env → config.toml chain; a hardcoded model
     # string here silently drifted from TIERS once already.
     mdl = model or config.setting(
-        "KO_AGENT_MODEL", "agents", "model", llm_mod.model_for("medium")
+        "KO_AGENT_MODEL", "agents", "model", models_mod.model_for("medium")
     )
     try:
         spec = mcp_client_mod.resolve(server, headers)
-        out = mcp_client_mod.overview(spec, mdl)
+        out = mcp_client_mod.overview(spec, models_mod.resolve(mdl))
     except mcp_client_mod.MCPTestError as e:
         _die(str(e), code="overview")
     typer.echo(out)
@@ -1429,7 +1588,7 @@ def mcp_overview(
 def billing(
     as_json: bool = typer.Option(False, "--json", help="emit JSON"),
 ) -> None:
-    """Balance + recent usage across paid services (read-only). v1: OpenRouter credits."""
+    """Balance + recent usage across paid services (read-only): AI Gateway, OpenRouter."""
     balances = [fn() for fn in billing_mod.PROVIDERS]
     if as_json:
         # key_capped is a property, so asdict() drops it — but it's the field an agent
@@ -1578,8 +1737,8 @@ def brief_cmd(
         None,
         "--model",
         "-m",
-        help=f"model for synthesis (default: KO_DEFAULT_MODEL or {llm_mod.FALLBACK_MODEL})",
-        autocompletion=llm_mod.available_models,
+        help=f"model for synthesis (default: KO_DEFAULT_MODEL or {models_mod.TIERS["basic"]})",
+        autocompletion=models_mod.available_models,
     ),
 ) -> None:
     """Morning brief: calendar + unread email + HN top 10 + AI papers → LLM synthesis.

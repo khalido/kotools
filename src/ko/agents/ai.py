@@ -1,8 +1,8 @@
 """ko's default agent — the Layer-2 entry point over every Layer-1 toolset.
 
 The June design (docs/ideas.md "ko ai — the agent layer") finally assembled:
-all the module toolsets + its own memory, medium-tier model (capable enough to
-route six toolsets, cheap enough to be the default), and a runaway request cap.
+all the module toolsets + its own memory, basic-tier model (cheap enough to be
+the default; -m a stronger one for hard questions), and a runaway request cap.
 Explicit `ko ai` on purpose — intelligence is opt-in, a typo'd subcommand must
 never silently spend tokens.
 
@@ -15,30 +15,31 @@ from __future__ import annotations
 from pydantic_ai import Agent
 from pydantic_ai.usage import UsageLimits
 
-from ko import config, llm
+from ko import config, models
 from ko.agents import _shared
 from ko.agents._memory import instructions_block, memory_toolset
-from ko.agents._toolsets import files, news, papers, tmdb, web
+from ko.agents._toolsets import ai_models, files, news, packages, papers, tmdb, web
 
-_MODEL = config.setting("KO_AGENT_MODEL", "agents", "model", llm.model_for("medium"))
+_MODEL = config.setting("KO_AGENT_MODEL", "agents", "model", models.model_for("basic"))  # KO 2026-10-27: cheap by default; -m for hard ones
 
 # an all-tools agent gets a runaway guard: 30 model requests per run, hard stop
 _LIMITS = UsageLimits(request_limit=30)
 
 agent = Agent(
     _MODEL,
+    defer_model_check=True,  # the model (and its key) is resolved per run by _shared
     instructions=(
         "You are ko — Ko's personal agent, the default entry to his CLI toolkit. "
         "Route by task: current web → exa_search/fetch_url; literature → the papers "
         "tools (snowball cites/refs, triangulate sources); practitioner signal → "
-        "Hacker News; movies/TV → tv_lookup; questions about Ko's own code or the "
+        "Hacker News; a library or package → pkg_info; movies/TV → tv_lookup; questions about Ko's own code or the "
         "refs/ reference clones → the read-only file tools under ~/code (for a deep "
         "multi-file dive, suggest `ko agent repo` instead — it carries the refs map). "
         "Combine tools freely but stay frugal: survey before reading, read only what "
         "answers the question. Keep answers tight and concrete; cite URLs, papers, or "
         "file:line for every claim. Maintain your memory per its rules."
     ),
-    toolsets=[web, papers, news, tmdb, files, memory_toolset("ai")],
+    toolsets=[web, papers, news, ai_models, packages, tmdb, files, memory_toolset("ai")],
 )
 
 

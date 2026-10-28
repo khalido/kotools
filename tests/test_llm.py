@@ -6,7 +6,7 @@ import os
 import pytest
 from typer.testing import CliRunner
 
-from ko import llm
+from ko import llm, models
 from ko.cli import app
 
 runner = CliRunner()
@@ -16,32 +16,32 @@ def test_default_model_env_override(monkeypatch):
     monkeypatch.setenv("KO_DEFAULT_MODEL", "openrouter:anthropic/claude-sonnet-4")
     assert llm.default_model() == "openrouter:anthropic/claude-sonnet-4"
     monkeypatch.delenv("KO_DEFAULT_MODEL")
-    assert llm.default_model() == llm.FALLBACK_MODEL
+    assert llm.default_model() == models.TIERS["basic"]
 
 
 def test_available_models_filters_by_env_keys(monkeypatch):
-    for var in set(llm.PROVIDER_KEYS.values()):
+    for var in set(models.PROVIDER_KEYS.values()):
         monkeypatch.delenv(var, raising=False)
-    assert llm.available_models() == []
+    assert models.available_models() == []
     monkeypatch.setenv("GEMINI_API_KEY", "k")
-    models = llm.available_models()
-    assert models and all(m.startswith("google:") for m in models)
-    assert llm.available_models("google:gemini")  # prefix filtering works
+    names = models.available_models()
+    assert names and all(m.startswith("google:") for m in names)
+    assert models.available_models("google:gemini")  # prefix filtering works
 
 
 def test_openrouter_cache_surfaces_only_with_key(monkeypatch, tmp_path):
     monkeypatch.setenv("KO_CACHE_DIR", str(tmp_path))
-    for var in set(llm.PROVIDER_KEYS.values()):
+    for var in set(models.PROVIDER_KEYS.values()):
         monkeypatch.delenv(var, raising=False)
-    assert llm.cached_openrouter_models() == []  # no cache yet
+    assert models.cached_models("openrouter") == []  # no cache yet
     (tmp_path / "openrouter_models.json").write_text(
         '{"models": ["openrouter:anthropic/claude-sonnet-4", "openrouter:openai/gpt-5"]}'
     )
-    assert len(llm.cached_openrouter_models()) == 2
+    assert len(models.cached_models("openrouter")) == 2
     # cached catalog is hidden until OPENROUTER_API_KEY is set
-    assert not any(m.startswith("openrouter:") for m in llm.available_models())
+    assert not any(m.startswith("openrouter:") for m in models.available_models())
     monkeypatch.setenv("OPENROUTER_API_KEY", "k")
-    assert llm.available_models("openrouter:") == [
+    assert models.available_models("openrouter:") == [
         "openrouter:anthropic/claude-sonnet-4",
         "openrouter:openai/gpt-5",
     ]
@@ -50,7 +50,7 @@ def test_openrouter_cache_surfaces_only_with_key(monkeypatch, tmp_path):
 def test_refresh_openrouter_noop_without_key(monkeypatch, tmp_path):
     monkeypatch.setenv("KO_CACHE_DIR", str(tmp_path))
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
-    assert llm.refresh_openrouter_models() == []  # no key → no network, no cache
+    assert models.refresh_catalog("openrouter") == []  # no key → no network, no cache
     assert not (tmp_path / "openrouter_models.json").exists()
 
 
@@ -74,10 +74,10 @@ def test_refresh_force_bypasses_ttl(monkeypatch, tmp_path):
     monkeypatch.setattr(httpx, "get", fake_get)
 
     # fresh cache → no fetch without force
-    assert llm.refresh_openrouter_models() == ["openrouter:old/model"]
+    assert models.refresh_catalog("openrouter") == ["openrouter:old/model"]
     assert calls["n"] == 0
     # force re-fetches despite a fresh cache
-    assert llm.refresh_openrouter_models(force=True) == ["openrouter:new/model"]
+    assert models.refresh_catalog("openrouter", force=True) == ["openrouter:new/model"]
     assert calls["n"] == 1
 
 
@@ -94,13 +94,13 @@ def test_refresh_records_network_failure(monkeypatch, tmp_path):
     monkeypatch.setattr(httpx, "get", boom)
     # a forced refresh that can't reach OpenRouter serves the old cache and records the miss,
     # instead of looking identical to a success (the real item-3 defect: silent failure)
-    assert llm.refresh_openrouter_models(force=True) == ["openrouter:old/model"]
-    assert llm.last_refresh_hit_network is False
+    assert models.refresh_catalog("openrouter", force=True) == ["openrouter:old/model"]
+    assert models.last_refresh_hit_network is False
 
 
 def test_cache_age_none_when_missing(monkeypatch, tmp_path):
     monkeypatch.setenv("KO_CACHE_DIR", str(tmp_path))
-    assert llm.openrouter_cache_age() is None
+    assert models.catalog_age("openrouter") is None
 
 
 def test_models_cli_warns_when_stale(monkeypatch, tmp_path):
@@ -114,7 +114,7 @@ def test_models_cli_warns_when_stale(monkeypatch, tmp_path):
     old = _time.time() - 10 * 86400  # 10 days ago — past the 7-day staleness threshold
     _os.utime(cache, (old, old))
     # within-TTL check would refetch a >TTL cache; keep it offline so it falls back to cache
-    monkeypatch.setattr(llm, "refresh_openrouter_models", lambda *a, **k: None)
+    monkeypatch.setattr(models, "refresh_catalogs", lambda *a, **k: None)
     r = runner.invoke(app, ["models"])
     assert r.exit_code == 0
     assert "cached 10 days ago" in r.stderr
@@ -227,8 +227,8 @@ def test_cli_schema_bad_file_exits_2(tmp_path):
 
 
 @pytest.mark.skipif(
-    not os.environ.get("OPENROUTER_API_KEY"),
-    reason="OPENROUTER_API_KEY not set; skipping live --schema smoke test",
+    not os.environ.get("VERCEL_AI_GATEWAY_API_KEY"),
+    reason="VERCEL_AI_GATEWAY_API_KEY not set; skipping live --schema smoke test",
 )
 def test_cli_schema_live_smoke(tmp_path):
     # tiny live call on the basic tier: a one-field object schema → valid JSON on stdout
@@ -271,6 +271,7 @@ def test_llm_non_utf8_text_file_is_runtime_error_not_usage(fake_run, tmp_path):
 def test_input_goes_before_the_prompt(monkeypatch):
     """simonw-llm's fragment convention, and what the -f help promises: documents first
     (stable prefix, cache-friendly), question last. This was documented-but-wrong once."""
+    monkeypatch.setenv("VERCEL_AI_GATEWAY_API_KEY", "vck_test")  # resolve() checks it; no call is made
     seen = {}
 
     def _run_sync(user_prompt, **kw):
@@ -370,10 +371,49 @@ def test_is_decision_model():
 def test_jev_goes_through_openrouter_unless_typesafe_key(monkeypatch):
     monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
-    m = llm._resolve("jev")
+    m = models.resolve("jev")
     assert m.model_name == "jev-latest"
     assert m.provider.base_url == "https://openrouter.ai/api"
-    assert llm._resolve("openrouter:x/y") == "openrouter:x/y"
+    assert models.resolve("openrouter:x/y") == "openrouter:x/y"
+
+
+def test_gateway_model_sends_host_order_only_for_listed_models(monkeypatch):
+    monkeypatch.setenv("VERCEL_AI_GATEWAY_API_KEY", "vck_test")
+    models._gateway_model.cache_clear()
+    m = models.resolve("vercel:zai/glm-5.3-flash")
+    gateway = m.settings["extra_body"]["providerOptions"]["gateway"]
+    assert gateway == {"order": list(models.MODELS["zai/glm-5.3-flash"].hosts), "has": ["!quantization:fp4"]}
+    assert m.provider.base_url == "https://ai-gateway.vercel.sh/v1"
+    assert models.resolve("vercel:openai/gpt-6-luna").settings is None  # gateway defaults
+
+
+def test_gateway_model_without_key_names_the_fix(monkeypatch):
+    from ko.config import MissingKeyError
+
+    monkeypatch.delenv("VERCEL_AI_GATEWAY_API_KEY", raising=False)
+    models._gateway_model.cache_clear()
+    with pytest.raises(MissingKeyError, match="vercel ai-gateway api-keys create"):
+        models.resolve("vercel:zai/glm-5.3-flash")
+
+
+def test_gateway_cost_estimate_from_cached_catalog(monkeypatch, tmp_path):
+    from pydantic_ai.messages import ModelResponse, TextPart
+    from pydantic_ai.usage import RequestUsage
+
+    monkeypatch.setenv("KO_CACHE_DIR", str(tmp_path))
+    (tmp_path / "vercel_models.json").write_text(
+        '{"models": [], "prices": {"zai/glm-5.3-flash": {"input": "0.00000015", "output": "0.0000005"}}}'
+    )
+    resp = ModelResponse(
+        parts=[TextPart("ok")],
+        usage=RequestUsage(input_tokens=1_000_000, output_tokens=1_000_000),
+        model_name="zai/glm-5.3-flash",
+        provider_name="vercel",
+    )
+    c = llm.run_cost([resp])
+    assert c.source == "estimate"
+    assert c.usd == pytest.approx(0.65)
+    assert "~$0.6500" in c.note
 
 
 @pytest.mark.parametrize(
@@ -450,3 +490,60 @@ def test_judge_json_carries_everything(monkeypatch):
     r = runner.invoke(app, ["judge", "q", "--choice", "read,archive", "--json"], input="text")
     assert r.exit_code == 0
     assert json.loads(r.stdout.splitlines()[0])["probabilities"] == {"read": 0.88, "archive": 0.12}
+
+
+def test_spec_extra_body_keeps_the_host_order(monkeypatch):
+    spec = models.ModelSpec("zai/glm-5.3-flash", "t", hosts=("baseten",), settings={"extra_body": {"reasoning": {"effort": "low"}}, "max_tokens": 9})
+    monkeypatch.setitem(models.MODELS, spec.id, spec)
+    monkeypatch.setenv("VERCEL_AI_GATEWAY_API_KEY", "vck_test")
+    monkeypatch.setattr(models, "refresh_catalog", lambda *a, **k: [])
+    m = models.resolve("vercel:zai/glm-5.3-flash")
+    assert m.settings["extra_body"]["providerOptions"]["gateway"]["order"] == ["baseten"]
+    assert m.settings["extra_body"]["reasoning"] == {"effort": "low"}
+    assert m.settings["max_tokens"] == 9
+
+
+def test_model_match_is_fuzzy_and_newest_first():
+    catalog = [
+        {"id": "anthropic/claude-sonnet-5", "name": "Claude Sonnet 5", "released": 1, "type": "language"},
+        {"id": "anthropic/claude-sonnet-5.5", "name": "Claude Sonnet 5.5", "released": 2, "type": "language"},
+        {"id": "anthropic/claude-opus-5.5", "name": "Claude Opus 5.5", "released": 3, "type": "language"},
+        {"id": "x/sonnet-video", "name": "Sonnet Video", "released": 9, "type": "video"},
+    ]
+    assert [m["id"] for m in models.match("sonnet", catalog)] == ["anthropic/claude-sonnet-5.5", "anthropic/claude-sonnet-5"]
+    assert [m["id"] for m in models.match("Sonnet 5-5", catalog)] == ["anthropic/claude-sonnet-5.5"]
+    assert models.match("gemini", catalog) == []
+    assert [m["id"] for m in models.match("sonnet 5", catalog)] == ["anthropic/claude-sonnet-5"]
+
+
+def test_models_info_compare_reports_a_miss_and_keeps_the_rest(monkeypatch):
+    def fake_info(q, years=1, threads=3):
+        if q == "nope":
+            raise LookupError("no gateway model matches 'nope'")
+        host = models.Host("baseten", 0.1, 0.3, 250.0, 300.0, "fp8", 99.9)
+        return models.ModelInfo(
+            q, q, "2026-10-17", 1_048_576, 131_072, 0.1, 0.3, None, [], "", "", [host], [], []
+        )
+
+    monkeypatch.setattr(models, "info", fake_info)
+    r = runner.invoke(app, ["models", "info", "a/one", "nope", "b/two"])
+    assert r.exit_code == 0
+    assert "[nope: no gateway model matches" in r.stderr
+    assert "a/one" in r.stdout and "b/two" in r.stdout
+    assert "1.05M" in r.stdout and "300 tok/s baseten" in r.stdout and "0.2 s baseten" in r.stdout
+
+    r = runner.invoke(app, ["models", "info", "a/one", "nope", "--json"])
+    rows = json.loads(r.stdout)
+    assert [row.get("id") or row["code"] for row in rows] == ["a/one", "not_found"]
+
+    r = runner.invoke(app, ["models", "info", "nope", "nope", "--json"])
+    assert r.exit_code == 1
+
+
+def test_spec_provider_options_keep_host_order(monkeypatch):
+    monkeypatch.setenv("VERCEL_AI_GATEWAY_API_KEY", "fake")
+    monkeypatch.setattr(models, "refresh_catalog", lambda *a, **k: [])
+    spec = models.ModelSpec("x/y", "", hosts=("baseten",), settings={"extra_body": {"providerOptions": {"zai": {"a": 1}}}})
+    monkeypatch.setitem(models.MODELS, "x/y", spec)
+    po = models.resolve("vercel:x/y").settings["extra_body"]["providerOptions"]
+    assert po["gateway"]["order"] == ["baseten"] and po["zai"] == {"a": 1}

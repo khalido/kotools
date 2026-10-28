@@ -75,3 +75,16 @@ def _isolated_local_settings(monkeypatch, tmp_path):
     from ko import config
 
     monkeypatch.setattr(config, "_settings_path", lambda: tmp_path / "settings.json")
+
+
+@pytest.fixture(autouse=True)
+def _clean_gateway_models():
+    """Gateway models are lru_cached with the key they were built with; a fake key from one
+    test must not reach a later live test. Same for a faked live catalog."""
+    from ko import models
+
+    models._gateway_model.cache_clear()
+    models._live_catalog.cache_clear()
+    yield
+    models._gateway_model.cache_clear()
+    models._live_catalog.cache_clear()

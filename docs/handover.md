@@ -1,6 +1,12 @@
-# Handover — 2026-10-14
+# Handover — 2026-10-28
 
 Read CLAUDE.md first, then this.
+
+**2026-10-27: LLM calls moved to Vercel AI Gateway; `models.py` owns every model** (a `ModelSpec` per tested model: note, host order, settings; tiers basic/medium/smart; `resolve()`). `ko ai` defaults to basic (deepseek-v4.1-flash). New `ko models info <name>` (and agent tool `model_info`): price, hosts' speed, top HN threads with their best comment. HN comments now come in HN's ranked order. WORKLOG 2026-10-27 has the why and measurements. OpenRouter ($0.21) now only serves `ko judge` and `ko yt -s`.
+
+**2026-10-28:** `ko models info a b c` compares models in one table; new `ko pkg info <name>...` + `pkg_info` agent tool (WORKLOG 2026-10-28). Packages upgraded (pydantic-ai 2.61) and the ko tool env reinstalled.
+
+Next on this thread, in order: (1) `model_info` tool returns clipped comments + links; (2) `ko ai` instructions: Reddit via `exa_search(include_domains=['reddit.com'])`, reviews default to the last year; X search as a tool with a small limit; (3) code mode for `ko ai`/research, measured before and after; (4) per-model settings one at a time (terra reasoning effort, deepseek thinking off). Speed: `hn.top_comment` pulls the whole Algolia tree for one comment + reply; a Firebase chain (kids[0] → item → kids[0]) would be a few small calls, and is the slow part of `ko models info`.
 
 ## Where things stand
 
@@ -13,11 +19,12 @@ Read CLAUDE.md first, then this.
 - **2026-10-16:** `ko tt` is REST-only (search moved off the MCP); `ko mcp` runs on pydantic-ai's `MCPToolset` and `mcp` is no longer a direct dep (2.3 via pydantic-ai); weasyprint ≥70. Page-watch design for chota-bot: `~/code/chota-bot/docs/page-watch.md`. `docs/ticktick.md` is the TickTick reference. Candidates: `ko tt note` (REST `kind: NOTE`), Reddit route check in `ko fetch` (Reddit ending free API/RSS, per HN 49912499).
 - **`ko hn` (2026-10-15):** search ranks title matches by points, `-y/--years` (default 1) replaced `--since` months, filters comma-joined (`-c` was silently ignored), `--now` uses HN's real rank via Firebase. WORKLOG has the measurements; comment search is the next candidate.
 - **koevguide is ko yt's first consumer** (`koev feeds` calls `ko yt channel --json`; triage uses `info` and `-s`). Shape changes there break it — message the koevguide session.
-- **Transcripts are IP-blocked from this Mac** (youtube-transcript-api `IpBlocked`), so the free path fails today; `-s` is the working route. The excerpt code path is unit-tested only.
+- **YouTube transcripts work from this Mac again** (2026-10-27); the earlier `IpBlocked` was intermittent and is still mapped to `ip_blocked`, with `-s` as the paid route.
 - **The direct `GEMINI_API_KEY`** (`~/.zshrc.local`) is out of AI Studio prepay credit (402). OpenRouter carries all Gemini use in ko; `ko doc --deep` figure descriptions still need the direct key.
 
 ## Next, in order
 
+0. **Bugs from the 2026-10-27 dogfood run, checked:** `ko fetch` accepts bot walls ("not a robot") as `live`; a non-existent reddit thread returns another sub's page from the mirror as success (check the post id); `ko hn item` rejects a pasted item URL; `ko hn search` help says "highest points first" but the backfill tier ranks title matches first; `fetch --json` returns an object, not the per-URL array, when every URL fails; arxiv abs front matter mixes affiliations into `authors`. Small adds: exa-py 2.26 `lite` search type (`exa.py:33`), pydantic-ai `Caching` for `ko ai`.
 1. KO: `ko google auth kd` and `ko google auth sfl` to add the YouTube scope (`ko google accounts` shows `missing: youtube` until then). Still open: `ko google auth ne`, and whether the OAuth app is in Testing (7-day tokens): https://console.cloud.google.com/auth/audience?project=kotools-500611
 2. Stubs in `docs/ideas.md` (2026-10-14): `ko weather` (Open-Meteo + BOM FTP + Google, like KO's home repo) and `ko books` (blocked: Google Books fielded queries return 0 since ~2026-10-05; re-test before building).
 3. Later, from pydantic-ai's decision docs: Jev picking the model tier per step in `ko ai` (`SelectModel`), and a Jev tool-call guard.

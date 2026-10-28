@@ -190,3 +190,18 @@ def test_search_by_date_keeps_algolia_order(monkeypatch):
 
     monkeypatch.setattr(hn, "_get", fake_get)
     assert [s.id for s in hn.search("x", by_date=True, n=3)] == ["new", "old", "newer-body"]
+
+
+def test_ranked_follows_firebase_kids_not_algolia_order():
+    children = [{"id": 1}, {"id": 2}, {"id": 3}, {"id": 4}]
+    assert [c["id"] for c in hn._ranked(children, [3, 1])] == [3, 1, 2, 4]  # unranked keep their order, last
+
+
+def test_tree_keeps_algolia_order_when_firebase_fails(monkeypatch):
+    def fake_get(path, params=None, base=hn.ALGOLIA):
+        if base == hn.FIREBASE:
+            raise RuntimeError("HN API error 503")
+        return {"id": 1, "children": [{"id": 5}, {"id": 4}]}
+
+    monkeypatch.setattr(hn, "_get", fake_get)
+    assert [c["id"] for c in hn._tree("1")["children"]] == [5, 4]

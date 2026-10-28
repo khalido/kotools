@@ -28,6 +28,7 @@ dependencies = [
     "liteparse>=2.15",  # page_label, image_mode="none", is_complex (ko doc)
     "loguru~=0.7.3",
     "markdown-it-py>=4.2.0",  # gmail draft --md: markdown -> html (also arrives transitively via rich)
+    "packaging>=26.3",  # ko pkg: PEP 440 pre-release check and version order
     "mdit-py-plugins>=0.6.1",
     "opentelemetry-exporter-otlp-proto-http>=1.44.0",
     "opentelemetry-sdk>=1.44.0",
