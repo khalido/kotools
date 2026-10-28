@@ -114,14 +114,17 @@ def _vkey(system: str, v: str):
     return tuple(int(p) for p in re.findall(r"\d+", v.split("-")[0]))
 
 
-def _registry_latest(system: str, name: str) -> tuple[str, dict]:
-    """The registry's own latest version, plus PyPI project_urls (npm: repository directory)."""
+def _registry_latest(system: str, name: str) -> tuple[str, str, dict]:
+    """The registry's own latest version, its upload time (PyPI only; npm's /latest has none), and
+    PyPI project_urls (npm: the repository directory)."""
     if system == "pypi":
-        info = _get(f"https://pypi.org/pypi/{name}/json").raise_for_status().json()["info"]
-        return info["version"], info.get("project_urls") or {}
+        d = _get(f"https://pypi.org/pypi/{name}/json").raise_for_status().json()
+        info = d["info"]
+        files = (d.get("releases") or {}).get(info["version"]) or [{}]
+        return info["version"], files[0].get("upload_time_iso_8601", ""), info.get("project_urls") or {}
     d = _get(f"https://registry.npmjs.org/{name.replace('/', '%2F')}/latest").raise_for_status().json()
     repo = d.get("repository") or {}
-    return d["version"], {"directory": repo.get("directory", "")} if isinstance(repo, dict) else {}
+    return d["version"], "", {"directory": repo.get("directory", "")} if isinstance(repo, dict) else {}
 
 
 def _downloads(system: str, name: str) -> int | None:
@@ -130,7 +133,7 @@ def _downloads(system: str, name: str) -> int | None:
             return _get(f"https://api.npmjs.org/downloads/point/last-week/{name}").json()["downloads"]
         return _get(f"https://pypistats.org/api/packages/{name.lower()}/recent").json()["data"]["last_week"]
     except Exception:
-        return None  # a nice-to-have; pypistats rate-limits
+        return None  # shown as "downloads unavailable"; pypistats rate-limits
 
 
 # --- the lockfile ------------------------------------------------------------------------
@@ -210,23 +213,16 @@ def _head(text: str, n: int = NOTES_LINES) -> list[str]:
 
 
 def _release_notes(repo: str, name: str, version: str) -> tuple[str, list[str]]:
-    """The GitHub release for `version` (tags v1.2, 1.2, name@1.2, name-v1.2): link + first lines."""
+    """The GitHub release for `version` (tags v1.2, 1.2, name@1.2, name-v1.2) among the 30 newest,
+    in one call: link + first lines."""
     slug = repo.removeprefix("https://github.com/")
-    for tag in [
-        f"v{version}",
-        version,
-        f"{name}@{version}",
-        f"{name}@v{version}",
-        f"{name}-v{version}",
-    ]:
-        r = _get(
-            f"https://api.github.com/repos/{slug}/releases/tags/{quote(tag, safe='')}",
-            headers=_gh_headers(),
-        )
-        if r.status_code == 200:
-            rel = r.json()
-            return rel["html_url"], _head(rel.get("body") or "")
-    return "", []
+    r = _get(f"https://api.github.com/repos/{slug}/releases?per_page=30", headers=_gh_headers())
+    if r.status_code != 200:
+        return "", []
+    tags = [f"v{version}", version, f"{name}@{version}", f"{name}@v{version}", f"{name}-v{version}"]
+    by_tag = {rel["tag_name"]: rel for rel in r.json()}
+    rel = next((by_tag[t] for t in tags if t in by_tag), None)
+    return (rel["html_url"], _head(rel.get("body") or "")) if rel else ("", [])
 
 
 def _changelog(repo: str, directory: str, version: str) -> tuple[str, list[str]]:
@@ -279,7 +275,7 @@ def info(query: str, *, notes: bool = True) -> list[PkgInfo]:
 
 
 def _one(system: str, name: str, pkg: dict, *, notes: bool) -> PkgInfo:
-    versions = {v["versionKey"]["version"]: _date(v.get("publishedAt", "")) for v in pkg["versions"]}
+    versions = {v["versionKey"]["version"]: v.get("publishedAt", "") for v in pkg["versions"]}  # full UTC times
     stable = sorted(
         (v for v in versions if _stable(system, v)),
         key=lambda v: _vkey(system, v),
@@ -290,7 +286,7 @@ def _one(system: str, name: str, pkg: dict, *, notes: bool) -> PkgInfo:
     with ThreadPoolExecutor() as pool:
         reg = pool.submit(_registry_latest, system, name)
         dl = pool.submit(_downloads, system, name)
-        latest, extra = reg.result()
+        latest, reg_time, extra = reg.result()
         cur = pool.submit(_version, system, name, latest)
         old = pool.submit(_version, system, name, locked) if locked and locked != latest else None
         detail = cur.result()
@@ -317,11 +313,13 @@ def _one(system: str, name: str, pkg: dict, *, notes: bool) -> PkgInfo:
 
     # Below the registry's latest only: a stable 5.0 on another dist-tag isn't what npm picks.
     older = [v for v in stable if _vkey(system, v) < _vkey(system, latest)]
-    cutoff = (datetime.now(UTC) - timedelta(days=FLOOR_DAYS)).date().isoformat()
-    year_ago = (datetime.now(UTC) - timedelta(days=365)).date().isoformat()
-    released = versions.get(latest, "")
+    # Timestamps, not dates: uv's "3 days" is 72 hours. ISO UTC strings compare in time order.
+    now = datetime.now(UTC)
+    cutoff = (now - timedelta(days=FLOOR_DAYS)).strftime("%Y-%m-%dT%H:%M:%S")
+    year_ago = (now - timedelta(days=365)).strftime("%Y-%m-%dT%H:%M:%S")
+    released = versions.get(latest) or reg_time
     floor_pick = ""
-    if released and released > cutoff:
+    if not released or released > cutoff:  # unknown date = too new for deps.dev to have it
         floor_pick = next((v for v in older if versions[v] and versions[v] <= cutoff), "")
     homepage = next(
         (link["url"] for link in detail.get("links", []) if link["label"] == "HOMEPAGE"),
@@ -331,7 +329,7 @@ def _one(system: str, name: str, pkg: dict, *, notes: bool) -> PkgInfo:
         system=system,
         name=name,
         latest=latest,
-        released=released,
+        released=_date(released),
         floor_pick=floor_pick,
         locked=locked,
         locked_advisories=(old_adv.result() if old_adv else adv.result()) if locked else [],
@@ -341,7 +339,7 @@ def _one(system: str, name: str, pkg: dict, *, notes: bool) -> PkgInfo:
         deprecated=detail.get("deprecatedReason", "") if detail.get("isDeprecated") else "",
         provenance=any(a.get("verified") for a in detail.get("attestations", [])),
         releases_1y=sum(1 for v in stable if versions[v] >= year_ago),
-        recent=[(v, versions[v]) for v in older][:4],
+        recent=[(v, _date(versions[v])) for v in older][:4],
         downloads_week=dl.result(),
         repo=repo,
         stars=project.get("starsCount"),

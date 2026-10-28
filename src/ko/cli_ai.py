@@ -175,7 +175,6 @@ def llm_cmd(
     Schema for the response (`{"type": "object", ...}`), printed compact to stdout."""
     if llm_mod.is_decision_model(model) and schema is None:
         _die(f"{model} answers typed questions, not prose: use `ko judge` (or give it a --schema)", code="usage")
-    models_mod.refresh_catalogs()  # keeps -m autocomplete + prices fresh (once/day)
     schema_obj = None
     if schema is not None:
         try:  # bad JSON / not an object schema is a usage error, before we spend a call
@@ -463,6 +462,8 @@ def models_info(
         _die(str(e), as_json=as_json, code="not_found")
     except Exception as e:  # gateway or HN down / timeout: one clean line, {error, code} under --json
         _die(f"model lookup failed: {e}", as_json=as_json, code="upstream")
+    for part in info.unavailable:
+        typer.echo(f"[unavailable: {part}]", err=True)
     if as_json:
         typer.echo(json.dumps(asdict(info), default=str))
         return
@@ -495,6 +496,9 @@ def _models_compare(queries: list[str], years: int, as_json: bool) -> None:
     for r in results:
         if isinstance(r, dict) and not as_json:
             typer.echo(f"[{r['query']}: {r['error']}]", err=True)
+        elif not isinstance(r, dict):
+            for part in r.unavailable:
+                typer.echo(f"[{r.id} unavailable: {part}]", err=True)
     if as_json:
         typer.echo(json.dumps([r if isinstance(r, dict) else asdict(r) for r in results], default=str))
     elif found:  # nothing on stdout when every name missed

@@ -547,3 +547,26 @@ def test_spec_provider_options_keep_host_order(monkeypatch):
     monkeypatch.setitem(models.MODELS, "x/y", spec)
     po = models.resolve("vercel:x/y").settings["extra_body"]["providerOptions"]
     assert po["gateway"]["order"] == ["baseten"] and po["zai"] == {"a": 1}
+
+
+def test_model_info_survives_hn_failure(monkeypatch):
+    import httpx2 as httpx
+
+    m = {"id": "x/y", "name": "Y 1", "released": 1, "type": "language", "pricing": {}}
+    monkeypatch.setattr(models, "_live_catalog", lambda: [m])
+
+    class R:
+        def raise_for_status(self):
+            return self
+
+        def json(self):
+            return {"data": {"endpoints": []}}
+
+    monkeypatch.setattr(httpx, "get", lambda *a, **k: R())
+
+    def down(*a, **k):
+        raise httpx.ConnectError("algolia down")
+
+    monkeypatch.setattr(models, "_hn_stories", down)
+    i = models.info("y 1")
+    assert i.id == "x/y" and i.threads == [] and i.unavailable == ["HN: algolia down"]

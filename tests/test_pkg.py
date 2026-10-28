@@ -62,10 +62,14 @@ def fake_web(monkeypatch):
             "openIssuesCount": 3,
         },
         "https://api.github.com/repos/acme/demo": {"pushed_at": "2026-10-01T00:00:00Z"},
-        "https://api.github.com/repos/acme/demo/releases/tags/v2.0.0": {
-            "html_url": "https://github.com/acme/demo/releases/tag/v2.0.0",
-            "body": "<!-- generated -->\n## What's new\n\n* faster\n",
-        },
+        "https://api.github.com/repos/acme/demo/releases?per_page=30": [
+            {"tag_name": "v1.10.0", "html_url": "x", "body": "old"},
+            {
+                "tag_name": "v2.0.0",
+                "html_url": "https://github.com/acme/demo/releases/tag/v2.0.0",
+                "body": "<!-- generated -->\n## What's new\n\n* faster\n",
+            },
+        ],
     }
 
     def fake_get(url, **kw):
@@ -123,3 +127,16 @@ def test_big_never_goes_scientific():
     from ko._cli_shared import _big
 
     assert [_big(x) for x in (12, 999_600, 1_048_576, 1_500_000_000, None)] == ["12", "1M", "1.05M", "1.5B", "–"]
+
+
+def test_floor_is_72_hours_and_covers_unindexed_latest(fake_web, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    vs = pkg._get(f"{pkg.DEPS}/systems/pypi/packages/demo").json()["versions"]
+    hours_ago = (datetime.now(UTC) - timedelta(hours=60)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    vs[2]["publishedAt"] = hours_ago  # 2.0.0: 2.5 days, maybe on the cutoff's calendar day
+    [p] = pkg.info("pypi:demo")
+    assert p.floor_pick == "1.10.0"
+
+    vs.pop(2)  # deps.dev hasn't indexed 2.0.0, and PyPI's JSON here carries no upload time
+    [p] = pkg.info("pypi:demo")
+    assert (p.released, p.floor_pick) == ("", "1.10.0")

@@ -176,8 +176,18 @@ def catalog_age(provider: str) -> float | None:
 
 
 def _catalog(provider: str) -> dict:
+    """The cached catalog, parsed once per file version (run_cost asks for a price per response)."""
+    path = _catalog_file(provider)
     try:
-        return json.loads(_catalog_file(provider).read_text())
+        return _parse_catalog(path, path.stat().st_mtime_ns)
+    except OSError:
+        return {}
+
+
+@lru_cache(maxsize=4)
+def _parse_catalog(path: Path, _mtime: int) -> dict:
+    try:
+        return json.loads(path.read_text())
     except (OSError, ValueError):
         return {}
 
@@ -308,6 +318,7 @@ class ModelInfo:
     hosts: list[Host]
     others: list[tuple[str, str]]  # other matches: (id, released), newest first
     threads: list[Thread]
+    unavailable: list[str] = field(default_factory=list)  # parts that failed (HN, host stats), with why
 
 
 def _norm(s: str) -> str:
@@ -376,12 +387,23 @@ def info(query: str, years: int = 1, threads: int = 3) -> ModelInfo:
     if not hits:
         raise LookupError(f"no gateway model matches {query!r} — `ko models | grep -i <word>` lists them all")
     m = hits[0]
+    # The catalog facts are the answer; HN threads and host stats are extras, so a failure there
+    # is reported in `unavailable`, not fatal.
+    unavailable: list[str] = []
     with ThreadPoolExecutor() as pool:
         eps = pool.submit(lambda: httpx.get(f"{GATEWAY_API}/models/{m['id']}/endpoints", timeout=15).raise_for_status())
         stories = pool.submit(_hn_stories, m, years, threads)
-        found = stories.result()
-        tops = list(pool.map(lambda s: hn.top_comment(s.id) if s.num_comments else (None, None), found))
-        endpoints = eps.result().json()["data"]["endpoints"]
+        try:
+            found = stories.result()
+            tops = list(pool.map(lambda s: hn.top_comment(s.id) if s.num_comments else (None, None), found))
+        except (httpx.HTTPError, KeyError, ValueError) as e:
+            found, tops = [], []
+            unavailable.append(f"HN: {e}")
+        try:
+            endpoints = eps.result().json()["data"]["endpoints"]
+        except (httpx.HTTPError, KeyError, ValueError) as e:
+            endpoints = []
+            unavailable.append(f"host stats: {e}")
     p = m.get("pricing") or {}
     spec = MODELS.get(m["id"])
     return ModelInfo(
@@ -416,6 +438,7 @@ def info(query: str, years: int = 1, threads: int = 3) -> ModelInfo:
             Thread(s, f"https://news.ycombinator.com/item?id={s.id}", t, r)
             for s, (t, r) in zip(found, tops, strict=True)
         ],
+        unavailable=unavailable,
     )
 
 

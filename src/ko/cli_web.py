@@ -1286,7 +1286,7 @@ def _pkg_activity(p) -> str:
             f"{_big(p.stars)}★" if p.repo else "no GitHub repo",
             f"last push {p.pushed}" if p.pushed else "",
             f"{p.releases_1y} releases in a year",
-            f"{_big(p.downloads_week)}/week" if p.downloads_week is not None else "",
+            f"{_big(p.downloads_week)}/week" if p.downloads_week is not None else "downloads unavailable",
         ]
         if x
     )
