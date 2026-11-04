@@ -126,6 +126,36 @@ _REDDIT_HOSTS = frozenset(
 _BAKED_REDDIT_MIRRORS = ("safereddit.com", "reddit.synth.download")
 
 
+# A "page" that is really a bot check. Only short pages count: an article can mention captchas.
+_WALL_PHRASES = (
+    "not a robot", "are you a robot", "verify you are human", "verify you are a human",
+    "checking your browser", "just a moment", "enable javascript and cookies", "unusual traffic",
+    "press & hold", "press and hold", "attention required", "access denied", "captcha",
+)
+_WALL_MAX_CHARS = 1500
+
+
+def _walled(text: str) -> bool:
+    low = text.lower()
+    return len(text) < _WALL_MAX_CHARS and any(p in low for p in _WALL_PHRASES)
+
+
+def _reddit_check(html: str, url: str) -> None:
+    """A thread URL must come back as that thread. A mirror shown an id that lives in another
+    subreddit serves that thread instead (r/LocalLLaMA/comments/1ft0000 gave r/Line6Helix), so
+    match `/r/<sub>/comments/<id>` in the page; raise naming the real subreddit when it differs."""
+    m = re.search(r"/r/([^/]+)/comments/([a-z0-9]+)", httpx.URL(url).path, re.IGNORECASE)
+    if not m:
+        return  # a subreddit or user page, not a thread
+    sub, post = m.groups()
+    found = re.findall(rf"/r/([A-Za-z0-9_]+)/comments/{post}\b", html, re.IGNORECASE)
+    if any(f.lower() == sub.lower() for f in found):
+        return
+    if found:
+        raise LookupError(f"reddit thread {post} is in r/{found[0]}, not r/{sub} — check the URL")
+    raise LookupError(f"the mirror page doesn't show thread {post}")
+
+
 def _reddit_mirror_hosts() -> tuple[str, ...]:
     raw = config.setting("KO_REDDIT_MIRRORS", "fetch", "reddit_mirrors", "")
     hosts = tuple(h.strip().lower() for h in raw.split(",") if h.strip())
@@ -342,6 +372,8 @@ def _browser(url: str) -> Fetched:
     text = _extract(html, url)
     if not text:
         raise RuntimeError("rendered page had no extractable content")
+    if _walled(text):
+        raise RuntimeError("rendered page is a bot check")
     return Fetched(text=text, source="browser", note="rendered in agent-browser")
 
 
@@ -510,6 +542,12 @@ def _fetch(
             except httpx.HTTPError:
                 text = None
             if text:
+                try:
+                    _reddit_check(resp.text, url)
+                except LookupError as e:
+                    if " is in r/" in str(e):
+                        raise RuntimeError(f"{url}: {e}") from None  # a wrong URL, not a dead mirror
+                    continue
                 return Fetched(text=text, source="reddit-mirror", note=f"reddit → {mirror}")
         # Whole ladder dead/empty — someone else's infrastructure, so say so LOUDLY (a
         # silent zero-word result reads as an empty page) and recover via Wayback of the
@@ -577,4 +615,6 @@ def _fetch(
     text = _extract(resp.text, url)
     if not text:  # 200 but empty → a paywall, or a page that renders client-side
         return _rescue(url, date, dead=False, why="the live page had no extractable content")
+    if _walled(text):  # 200 with a captcha (Bloomberg: "let us know you're not a robot")
+        return _rescue(url, date, dead=False, why="the live page is a bot check")
     return Fetched(text=text, source="live")

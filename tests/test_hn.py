@@ -205,3 +205,15 @@ def test_tree_keeps_algolia_order_when_firebase_fails(monkeypatch):
 
     monkeypatch.setattr(hn, "_get", fake_get)
     assert [c["id"] for c in hn._tree("1")["children"]] == [5, 4]
+
+
+def test_item_takes_a_pasted_url(monkeypatch):
+    asked = []
+
+    def fake_tree(item_id):
+        asked.append(item_id)
+        return {"id": 50195959, "title": "T", "points": 1, "created_at_i": 0, "children": []}
+
+    monkeypatch.setattr(hn, "_tree", fake_tree)
+    hn.item("https://news.ycombinator.com/item?id=50195959")
+    assert asked == ["50195959"]

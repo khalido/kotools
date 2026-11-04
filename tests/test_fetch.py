@@ -1,5 +1,6 @@
 """Offline tests for ko.fetch — routing logic + extraction, no network."""
 
+import json
 import httpx2 as httpx
 import pytest
 from typer.testing import CliRunner
@@ -66,6 +67,7 @@ def test_reddit_route_sets_source_and_note(monkeypatch):
         assert not url.startswith("https://www.reddit.com")  # never reddit itself
         html = (
             "<html><head><title>T</title></head><body><article><h1>Thread</h1>"
+            '<a href="/r/Python/comments/abc/title/">permalink</a>'
             "<p>A long enough comment body that trafilatura keeps it as real content "
             "rather than discarding it as boilerplate navigation or footer noise.</p>"
             "</article></body></html>"
@@ -90,6 +92,7 @@ def test_reddit_ladder_falls_through_a_dead_first_mirror(monkeypatch):
             )
         html = (
             "<html><head><title>T</title></head><body><article><h1>Thread</h1>"
+            '<a href="/r/Python/comments/abc/title/">permalink</a>'
             "<p>A long enough comment body that trafilatura keeps it as real content "
             "rather than discarding it as boilerplate navigation or footer noise.</p>"
             "</article></body></html>"
@@ -388,7 +391,6 @@ def test_refused_tries_archive_is_first_but_gone_goes_straight_to_wayback(
 
 
 def test_cli_fetch_json_keeps_order_and_reports_failures(monkeypatch):
-    import json
 
     from typer.testing import CliRunner
 
@@ -406,3 +408,47 @@ def test_cli_fetch_json_keeps_order_and_reports_failures(monkeypatch):
     rows = json.loads(r.stdout)
     assert rows[0] == {"url": "https://a.com", "source": "live", "tokens": 10, "note": "", "text": "x" * 40}
     assert rows[1] == {"url": "https://bad.com", "error": "unreachable"}
+
+
+_THREAD = (
+    "<html><body><article><h1>Thread</h1>{link}"
+    "<p>A long enough comment body that trafilatura keeps it as real content "
+    "rather than discarding it as boilerplate navigation or footer noise.</p></article></body></html>"
+)
+
+
+def test_reddit_id_from_another_subreddit_is_an_error(monkeypatch):
+    # r/LocalLLaMA/comments/1ft0000 came back as an r/Line6Helix thread (2026-10-27)
+    html = _THREAD.format(link='<a href="/r/Line6Helix/comments/1ft0000/amp/">x</a>')
+    monkeypatch.setattr(
+        fetch.httpx, "get", lambda url, **kw: httpx.Response(200, html=html, request=httpx.Request("GET", url))
+    )
+    with pytest.raises(RuntimeError, match="is in r/Line6Helix, not r/LocalLLaMA"):
+        fetch.fetch("https://www.reddit.com/r/LocalLLaMA/comments/1ft0000/x/", fresh=True)
+
+
+def test_bot_wall_is_not_a_live_page(monkeypatch):
+    wall = "<html><body><p>Please click the box below to let us know you're not a robot.</p></body></html>"
+    monkeypatch.setattr(
+        fetch.httpx, "get", lambda url, **kw: httpx.Response(200, html=wall, request=httpx.Request("GET", url))
+    )
+    seen = {}
+
+    def fake_rescue(url, date, *, dead, why):
+        seen.update(dead=dead, why=why)
+        return fetch.Fetched(text="the article", source="browser")
+
+    monkeypatch.setattr(fetch, "_rescue", fake_rescue)
+    r = fetch.fetch("https://www.bloomberg.com/news/articles/x", fresh=True)
+    assert r.source == "browser" and seen == {"dead": False, "why": "the live page is a bot check"}
+    assert not fetch._walled("A long article about captcha design. " * 60)  # long pages never count
+
+
+def test_fetch_json_is_an_array_even_when_every_url_fails(monkeypatch):
+    def boom(u, **kw):
+        raise RuntimeError("dead")
+
+    monkeypatch.setattr(fetch, "fetch", boom)
+    r = runner.invoke(app, ["fetch", "https://a.example", "--json"])
+    assert r.exit_code == 1
+    assert json.loads(r.stdout) == [{"url": "https://a.example", "error": "dead"}]

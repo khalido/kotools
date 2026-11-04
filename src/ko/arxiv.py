@@ -118,4 +118,19 @@ def fetch(arxiv_id: str) -> str:
     if result.returncode != 0:  # surface arxiv2md's own message, not a bare CalledProcessError
         msg = (result.stderr or result.stdout or "").strip()
         raise RuntimeError(f"arxiv2md failed for {arxiv_id}: {msg}".rstrip(": "))
-    return result.stdout
+    return _fix_authors(result.stdout, arxiv_id)
+
+
+def _fix_authors(md: str, arxiv_id: str) -> str:
+    """arxiv2md reads authors off the rendered page, where affiliations and labels sit between
+    the names ("Ashish Vaswani", "Affiliation:", "Google Brain", ...). The arxiv API has the
+    clean list; if it can't be reached, arxiv2md's line stays."""
+    import json
+    import re
+
+    try:
+        paper = next(client_results(arxiv.Search(id_list=[arxiv_id])))
+    except Exception:
+        return md
+    line = "authors: " + json.dumps([a.name for a in paper.authors], ensure_ascii=False)
+    return re.sub(r"(?m)^authors: .*$", lambda _: line, md, count=1)

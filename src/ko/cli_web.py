@@ -630,7 +630,7 @@ def hn_search(
     ),
     as_json: bool = typer.Option(False, "--json", help="emit JSON instead of text"),
 ) -> None:
-    """Search HN stories, highest points first, last year by default. A URL searches all time for its submissions."""
+    """Search HN stories, last year by default: title matches with 20+ points by points, then weaker matches. A URL searches all time for its submissions."""
     try:
         results = hn_mod.search(
             query, n=n, years=years, by_date=new, min_comments=min_comments
@@ -646,7 +646,7 @@ def hn_search(
 
 @hn_app.command("item")
 def hn_item(
-    item_id: str = typer.Argument(..., help="story id (first column of top/search)"),
+    item_id: str = typer.Argument(..., help="story id (first column of top/search) or its HN URL"),
     n: int = typer.Option(
         hn_mod.DEFAULT_MAX_COMMENTS, "--n", "-n", help="max comments to show (0 = all)"
     ),
@@ -787,7 +787,7 @@ def pdf(
         None,
         "--brand",
         help="which identity to send as: a name in ~/.config/ko/brands/ (or a path to a "
-        "brand.yml); else $KO_BRAND or `[pdf] brand`",
+        "brand.yml); else $KO_BRAND or `\\[pdf] brand`",
     ),
 ) -> None:
     """Markdown → print-ready PDF (A4, code highlighting, page footer). Prints the path it
@@ -1022,11 +1022,11 @@ def fetch_cmd(
         docs.append((u, r))
         rows.append({"url": u, "source": r.source, "tokens": _tokens(r), "note": r.note, "text": r.text})
         typer.echo(_fetch_banner(r), err=True)  # one token banner per document
-    if not docs:  # nothing succeeded → runtime error (no output to give)
+    if not docs:  # nothing succeeded → runtime error
+        if as_json:  # same array shape as a partial run, so a caller parses one thing
+            typer.echo(json.dumps(rows))
         _die(f"no content returned for any of the {len(urls)} URL(s)", as_json=as_json)
     if as_json:
-        import json
-
         typer.echo(json.dumps(rows))
         return
     # Single URL stays byte-identical on stdout (it's piped everywhere): raw text, no header.

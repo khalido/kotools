@@ -150,7 +150,7 @@ def search(
     by_date: bool = False,
     min_comments: int = 0,
 ) -> list[Story]:
-    """Search HN stories from the last `years` years (0 = all time), highest points first.
+    """Search HN stories from the last `years` years (0 = all time).
 
     Title matches with >= SEARCH_MIN_POINTS come first; if they're fewer than n, the rest fill in
     after them (title matches at any points, then body/url matches). `by_date` = newest first
@@ -284,8 +284,11 @@ def item(
     """One story + its comments, depth-first. Top-level comments in HN's ranked order (from
     Firebase); replies under them oldest first (ranking those costs a call per comment).
 
-    `max_comments=0` = no cap. Comment text is plain (HTML stripped).
+    `max_comments=0` = no cap. Comment text is plain (HTML stripped). `item_id` may be a pasted
+    item URL (news.ycombinator.com/item?id=123).
     """
+    if m := re.search(r"[?&]id=(\d+)", item_id):
+        item_id = m[1]
     data = _tree(item_id)
     story = Story(
         id=str(data["id"]),

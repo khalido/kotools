@@ -81,3 +81,15 @@ def test_search_returns_recent_results():
     assert len(results) > 0
     assert all(r.title for r in results)
     assert all(r.short_id for r in results)
+
+
+def test_fetch_takes_authors_from_the_api(monkeypatch):
+    md = '---\ntitle: "T"\nauthors: ["Ashish Vaswani", "Affiliation:", "Google Brain"]\n---\nbody'
+    monkeypatch.setattr(arxiv_mod, "client_results", lambda sq: iter([_fake("1706.03762", 1)]))
+    assert 'authors: ["A. Author"]' in arxiv_mod._fix_authors(md, "1706.03762")
+
+    def down(sq):
+        raise ConnectionError("arxiv down")
+
+    monkeypatch.setattr(arxiv_mod, "client_results", down)
+    assert arxiv_mod._fix_authors(md, "1706.03762") == md  # arxiv2md's line stays
