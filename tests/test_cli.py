@@ -226,27 +226,28 @@ def test_no_results_plain_note_to_stderr_exit0(capsys):
     assert out.err.strip() == "No results for 'x'."
 
 
-def test_die_records_error_label_for_logging(capsys):
-    # _die() must populate _last_error with the `code` label (never the message) so
-    # cli.main()'s log event captures useful error context without leaking user data.
-    _cli_shared._last_error = None
+def test_die_puts_code_and_message_on_the_log_event(capsys):
+    from ko import logs
+
+    logs.reset()
     with pytest.raises(typer.Exit):
-        cli._die("secret query text", code="auth")
-    assert _cli_shared._last_error == "auth"  # code label, not the message
-
-
-def test_die_error_label_default_code(capsys):
-    _cli_shared._last_error = None
+        cli._die("no sheet named Budget", code="not_found", fix="ko gsheets ls")
+    assert logs.get("error") == "not_found"
+    assert logs.get("error_msg") == "no sheet named Budget"
+    assert logs.get("fix") == "ko gsheets ls"
+    logs.reset()
     with pytest.raises(typer.Exit):
         cli._die("something broke")
-    assert _cli_shared._last_error == "error"  # default code
+    assert logs.get("error") == "error"  # default code
+    logs.reset()
 
 
-def test_die_error_label_usage_code(capsys):
-    _cli_shared._last_error = None
-    with pytest.raises(typer.Exit):
-        cli._die("bad arg", code="usage")
-    assert _cli_shared._last_error == "usage"
+def test_crash_site_names_the_innermost_ko_frame():
+    try:
+        cli._cmd_label(None)  # TypeError raised inside cli.py
+    except TypeError as e:
+        site = cli._crash_site(e)
+    assert site.startswith("cli.py:") and site.endswith("in _cmd_label")
 
 
 def test_fmt_day_humanizes_and_drops_time():

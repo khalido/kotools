@@ -340,7 +340,7 @@ def sum_cmd(
         None,
         "--model",
         "-m",
-        help=f"model (default {llm_mod.SUM_MODEL}; or set `[llm] sum`)",
+        help=f"model (default {llm_mod.SUM_MODEL}; or set `\\[llm] sum`)",
         autocompletion=models_mod.available_models,
     ),
 ) -> None:

@@ -20,7 +20,7 @@ from rich.console import Console
 from rich.live import Live
 from rich.markdown import Markdown
 
-from ko import config, sessions
+from ko import config, logs, sessions
 from ko.llm import run_cost
 from ko.models import resolve
 
@@ -89,6 +89,7 @@ def run(
     """
     session_id = resume or sessions.new_id()
     history = sessions.load(resume) if resume else []
+    logs.add(agent=name, session=session_id, resumed=bool(resume))
     if _console.is_terminal:
         text, messages = _stream(agent, prompt, history, model=model, limits=limits)
     else:
@@ -99,6 +100,7 @@ def run(
         print(text)
     _cost_note(messages, prior=len(history))
     sessions.save(session_id, name, messages)
+    logs.inc(turns=1)
     return text
 
 
@@ -142,3 +144,5 @@ def repl(
         _, history = _stream(agent, user_input, history, model=model, limits=limits)
         _cost_note(history, prior=prior)
         sessions.save(session_id, name, history)
+        logs.add(agent=name, session=session_id)
+        logs.inc(turns=1)

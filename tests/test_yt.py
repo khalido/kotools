@@ -297,6 +297,8 @@ def test_transcript_is_cached(monkeypatch) -> None:
 def test_condense_caches_by_video_model_and_prompt(monkeypatch) -> None:
     from ko import llm
 
+    monkeypatch.delenv("GEMINI_FREE_API_KEY", raising=False)
+
     runs = []
 
     def fake_run(prompt, *, model, system, attachments):
@@ -308,9 +310,67 @@ def test_condense_caches_by_video_model_and_prompt(monkeypatch) -> None:
     a = yt.condense("https://youtu.be/abcdefghijk")
     b = yt.condense("abcdefghijk")
     assert (a.text, a.cached, b.cached) == ("write-up", False, True)
-    assert runs == [("openrouter:google/gemini-3.5-flash", "https://www.youtube.com/watch?v=abcdefghijk")]
-    yt.condense("abcdefghijk", model="openrouter:other/model")  # another model is another entry
+    assert runs == [("vercel:google/gemini-3.8-flash", "https://www.youtube.com/watch?v=abcdefghijk")]
+    assert yt.condense("abcdefghijk", model="openrouter:google/gemini-3.8-flash").cached  # same model, other route
+    yt.condense("abcdefghijk", model="vercel:other/model")  # another model is another entry
     assert len(runs) == 2
+
+
+def test_condense_uses_the_free_tier_when_its_key_is_set(monkeypatch) -> None:
+    from pydantic_ai.messages import ModelResponse, TextPart
+    from pydantic_ai.models.google import GoogleModel
+
+    from ko import llm
+
+    monkeypatch.setenv("GEMINI_FREE_API_KEY", "test")
+    seen = []
+
+    def fake_run(prompt, *, model, system, attachments):
+        seen.append(model)
+        llm.last_cost = llm.run_cost([ModelResponse(parts=[TextPart("w")], model_name="gemini-3.8-flash", provider_name="google-free")])
+        return "write-up"
+
+    monkeypatch.setattr(llm, "run", fake_run)
+    done = yt.condense("abcdefghijk", refresh=True)
+    assert isinstance(seen[0], GoogleModel) and seen[0].model_name == "gemini-3.8-flash"
+    assert (done.usd, llm.last_cost.note.endswith("· free tier]")) == (0.0, True)
+    yt.condense("abcdefghijk", model="vercel:google/gemini-3.8-flash", refresh=True)  # explicit -m: as given
+    assert seen[1] == "vercel:google/gemini-3.8-flash"
+
+
+def test_condense_falls_back_to_the_gateway_when_free_tier_is_busy(monkeypatch, capsys) -> None:
+    from pydantic_ai.exceptions import ModelHTTPError, ModelUnavailableError
+    from pydantic_ai.models.google import GoogleModel
+
+    from ko import llm
+
+    monkeypatch.setenv("GEMINI_FREE_API_KEY", "test")
+    seen = []
+
+    def fake_run(prompt, *, model, system, attachments):
+        seen.append(model)
+        if isinstance(model, GoogleModel):
+            raise ModelHTTPError.for_category(ModelUnavailableError, status_code=503, model_name="gemini-3.8-flash")
+        llm.last_cost = llm.RunCost("google/gemini-3.8-flash", 100, 20, 0.09, "estimate")
+        return "write-up"
+
+    monkeypatch.setattr(llm, "run", fake_run)
+    assert yt.condense("abcdefghijk", refresh=True).text == "write-up"
+    assert seen[1] == "vercel:google/gemini-3.8-flash" and "paying via the gateway" in capsys.readouterr().err
+
+
+def test_gateway_model_sends_video_as_a_file_part(monkeypatch) -> None:
+    import asyncio
+
+    from pydantic_ai import VideoUrl
+
+    from ko import models
+
+    monkeypatch.setenv("VERCEL_AI_GATEWAY_API_KEY", "test")
+    monkeypatch.setattr(models, "refresh_catalog", lambda *a, **k: None)
+    m = models._gateway_model.__wrapped__("google/gemini-3.5-flash")
+    part = asyncio.run(m._map_content_item(VideoUrl(url="https://www.youtube.com/watch?v=abcdefghijk")))
+    assert part == {"type": "file", "file": {"file_data": "https://www.youtube.com/watch?v=abcdefghijk", "media_type": "video/mp4"}}
 
 
 def test_infos_batches_and_reports_missing(monkeypatch) -> None:

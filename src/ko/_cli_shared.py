@@ -11,11 +11,6 @@ from typing import NoReturn
 
 import typer
 
-# Last error label from _die() — picked up by cli.main()'s logging so failures via the
-# normal _die() path populate the `error` field. Only the programmer-set `code` label is
-# stored (never the message, which may contain user queries/URLs).
-_last_error: str | None = None
-
 # The root Typer app — imported by all group modules so they can self-register.
 app = typer.Typer(
     help="ko — Ko's opinionated CLI: web/papers (exa, fetch, arxiv, hf, papers, hn), "
@@ -65,11 +60,11 @@ def _die(
     """Error exit: a JSON error object to stderr under --json, else plain text.
     Exit code follows AGENTS.md — `code="usage"` → 2, everything else → 1 (override with
     exit_code). Keeps stdout clean so a downstream `... | jq` never sees a half-message.
-    Records the error code label in `_last_error` so cli.main() can populate the log's
-    `error` field without capturing user-data from the message. `fix` is the command that
-    resolves it: a `fix` field under --json, "— run `…`" in text."""
-    global _last_error
-    _last_error = code
+    Puts the code label and message on the command's log event (`error`, `error_msg`). `fix` is
+    the command that resolves it: a `fix` field under --json, "— run `…`" in text."""
+    from ko import logs
+
+    logs.add(error=code, error_msg=msg, fix=fix)
     if as_json:
         typer.echo(json.dumps({"error": msg, "code": code} | ({"fix": fix} if fix else {})), err=True)
     else:

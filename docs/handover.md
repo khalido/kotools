@@ -2,9 +2,9 @@
 
 Read CLAUDE.md first, then this.
 
-**2026-10-27: LLM calls moved to Vercel AI Gateway; `models.py` owns every model** (a `ModelSpec` per tested model: note, host order, settings; tiers basic/medium/smart; `resolve()`). `ko ai` defaults to basic (deepseek-v4.1-flash). New `ko models info <name>` (and agent tool `model_info`): price, hosts' speed, top HN threads with their best comment. HN comments now come in HN's ranked order. WORKLOG 2026-10-27 has the why and measurements. OpenRouter ($0.21) now only serves `ko judge` and `ko yt -s`.
+**2026-10-27: LLM calls moved to Vercel AI Gateway; `models.py` owns every model** (a `ModelSpec` per tested model: note, host order, settings; tiers basic/medium/smart; `resolve()`). `ko ai` defaults to basic (deepseek-v4.1-flash). New `ko models info <name>` (and agent tool `model_info`): price, hosts' speed, top HN threads with their best comment. HN comments now come in HN's ranked order. WORKLOG 2026-10-27 has the why and measurements. OpenRouter ($0.21, KO won't top it up: everything moves to the gateway) still serves only `ko judge` (Jev, `/v1/systemone`), which stops when it runs out; moving it is open (does the gateway serve Jev?). `ko yt -s` moved to the gateway 2026-11-04, default model 3.8 Flash, via the paid gateway. The free-tier Google key path is built but switched off (key commented out in config.toml: the free tier was overloaded on day one); uncomment to retry (WORKLOG).
 
-**2026-10-28:** `ko models info a b c` compares models in one table; new `ko pkg info <name>...` + `pkg_info` agent tool (WORKLOG 2026-10-28). Packages upgraded (pydantic-ai 2.61) and the ko tool env reinstalled.
+**2026-10-28:** the six dogfood bugs are fixed (WORKLOG). `ko models info a b c` compares models in one table; new `ko pkg info <name>...` + `pkg_info` agent tool (WORKLOG 2026-10-28). Packages upgraded (pydantic-ai 2.61) and the ko tool env reinstalled.
 
 Next on this thread, in order: (1) `model_info` tool returns clipped comments + links; (2) `ko ai` instructions: Reddit via `exa_search(include_domains=['reddit.com'])`, reviews default to the last year; X search as a tool with a small limit; (3) code mode for `ko ai`/research, measured before and after; (4) per-model settings one at a time (terra reasoning effort, deepseek thinking off). Speed: `hn.top_comment` pulls the whole Algolia tree for one comment + reply; a Firebase chain (kids[0] → item → kids[0]) would be a few small calls, and is the slow part of `ko models info`.
 
@@ -24,14 +24,18 @@ Next on this thread, in order: (1) `model_info` tool returns clipped comments + 
 
 ## Next, in order
 
-0. **Bugs from the 2026-10-27 dogfood run, checked:** `ko fetch` accepts bot walls ("not a robot") as `live`; a non-existent reddit thread returns another sub's page from the mirror as success (check the post id); `ko hn item` rejects a pasted item URL; `ko hn search` help says "highest points first" but the backfill tier ranks title matches first; `fetch --json` returns an object, not the per-URL array, when every URL fails; arxiv abs front matter mixes affiliations into `authors`. Small adds: exa-py 2.26 `lite` search type (`exa.py:33`), pydantic-ai `Caching` for `ko ai`.
+0. **Reddit in `ko fetch` is down** (2026-10-28): safereddit.com serves a browser challenge, reddit.synth.download 502s. Mirror churn keeps recurring; the durable fix is Reddit's OAuth API (app "kotools" already registered, see the comment in `fetch.py`). Small adds: exa-py `lite` search type (`exa.py:33`), pydantic-ai `Caching` for `ko ai`.
 1. KO: `ko google auth kd` and `ko google auth sfl` to add the YouTube scope (`ko google accounts` shows `missing: youtube` until then). Still open: `ko google auth ne`, and whether the OAuth app is in Testing (7-day tokens): https://console.cloud.google.com/auth/audience?project=kotools-500611
-2. Stubs in `docs/ideas.md` (2026-10-14): `ko weather` (Open-Meteo + BOM FTP + Google, like KO's home repo) and `ko books` (blocked: Google Books fielded queries return 0 since ~2026-10-05; re-test before building).
-3. Later, from pydantic-ai's decision docs: Jev picking the model tier per step in `ko ai` (`SelectModel`), and a Jev tool-call guard.
-4. `ko ai` against the one-agent-loop guidance (svelte skill `references/agent-sidepanel.md`, checked 2026-10-25): 24 tools, no subagents, so nothing to fold. Two follow-ups: fold the repo agent's refs map into `ko ai` (as instructions or a tool) instead of telling the user to switch to `ko agent repo`; and add ~10 golden questions with known answers, each run 2–3 times, alongside the trace-reading eval, then use them to judge each toolset change.
-5. `lazy import` (PEP 810) can replace `_cli_shared.lazy()` and the in-function SDK imports — a separate cleanup.
-6. Carried over: retire `docs/assistant.md` and `docs/yaad.md`; move the live-network test out of the default suite (`tests/test_gsheets.py:494`); `accounts --check`; fetch logins in the `ko-fetch` agent-browser session; trafilatura import cost upstream issues.
-7. `ruff format --check` wants to reformat 65 files — pre-existing; decide whether to adopt the formatter repo-wide in one commit.
+2. Ideas from Spawn's fleet post (https://x.com/jsnnsa/status/2115623382721126826, 2026-10-30), not started. KO wants (a) first; sketch the design before building:
+   - (a) `ko decided "<question>"` + agent tool: a Jev judge over WORKLOG, the CLAUDE.md files, memory feedback files and `docs/`, answering "decided (file:line)", "wrong question" or "hold for KO", so agents check before asking. Spawn's judges: 11,000 verdicts in 8 days, 27 needed the founder.
+   - (b) Close the loop on ko's own failures: `ko logs --errors` is recorded but unread. Since 2026-11-04 each event carries argv, error message, crash site, cost and caller (WORKLOG), so a group can name what failed and why; level `error` = broke, `warning` = user-fixable. Start with a grouped list in `ko brief`; later a scheduled agent turns each group into a handover item or fix branch.
+   - (c) Spend spike check in `ko brief` across gateway, Exa, X and OpenRouter (they caught a leaked key in 15 minutes).
+3. Stubs in `docs/ideas.md` (2026-10-14): `ko weather` (Open-Meteo + BOM FTP + Google, like KO's home repo) and `ko books` (blocked: Google Books fielded queries return 0 since ~2026-10-05; re-test before building).
+4. Later, from pydantic-ai's decision docs: Jev picking the model tier per step in `ko ai` (`SelectModel`), and a Jev tool-call guard.
+5. `ko ai` against the one-agent-loop guidance (svelte skill `references/agent-sidepanel.md`, checked 2026-10-25): 24 tools, no subagents, so nothing to fold. Two follow-ups: fold the repo agent's refs map into `ko ai` (as instructions or a tool) instead of telling the user to switch to `ko agent repo`; and add ~10 golden questions with known answers, each run 2–3 times, alongside the trace-reading eval, then use them to judge each toolset change.
+6. `lazy import` (PEP 810) can replace `_cli_shared.lazy()` and the in-function SDK imports — a separate cleanup.
+7. Carried over: retire `docs/assistant.md` and `docs/yaad.md`; move the live-network test out of the default suite (`tests/test_gsheets.py:494`); `accounts --check`; fetch logins in the `ko-fetch` agent-browser session; trafilatura import cost upstream issues.
+8. `ruff format --check` wants to reformat 65 files — pre-existing; decide whether to adopt the formatter repo-wide in one commit.
 
 ## Open calls for KO
 

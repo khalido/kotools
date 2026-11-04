@@ -132,7 +132,7 @@ def doctor(
     rows: list[tuple[str, str, str, tuple[str, str]]] = [
         ("hn", "Hacker News top/search/comments", "—", ("✓ no auth", "green")),
         ("hf", "HF papers: daily feed, search, metadata", "—", ("✓ no auth", "green")),
-        ("yt", "YouTube transcripts; video + channel metadata", "GOOGLE_CLOUD_API_KEY (info/channel); -s via OpenRouter", env("GOOGLE_CLOUD_API_KEY")),
+        ("yt", "YouTube transcripts; video + channel metadata", "GOOGLE_CLOUD_API_KEY (info/channel); -s: GEMINI_FREE_API_KEY (free) else the gateway", env("GOOGLE_CLOUD_API_KEY")),
         (
             "brief",
             "morning brief (cal+gmail+hn+hf → LLM)",
@@ -561,13 +561,13 @@ def refs_list(
 @app.command("logs")
 def logs_cmd(
     n: int = typer.Option(20, "--n", "-n", help="how many recent events"),
-    errors: bool = typer.Option(False, "--errors", help="only error events"),
-    as_json: bool = typer.Option(False, "--json", help="emit JSON"),
+    errors: bool = typer.Option(False, "--errors", help="only failed commands (warnings + errors)"),
+    as_json: bool = typer.Option(False, "--json", help="emit JSON: every field each event carried"),
 ) -> None:
-    """Recent ko command logs — local structured JSONL (one event per command, no args/secrets).
-    On by default; disable with `[logs] enabled = false` in config.toml. A PostHog sync is later.
+    """Recent ko commands from the local log: what ran, who ran it, cost, and why it failed.
+    ✗ = error (something broke), ! = warning (a fix the user can make). Off: `\\[logs] enabled = false` in config.toml.
 
-    --json fields: ts, level, event, cmd, duration_ms, exit_code, error, ko_version.
+    --json fields: ts, level, cmd, argv, exit_code, duration_ms, error, error_msg, model, cost_usd, …
     """
     import json as _json
 
@@ -581,18 +581,27 @@ def logs_cmd(
         return
     for e in events:
         ts = e.get("ts", "")[:19].replace("T", " ")
-        mark = "✗" if e.get("level") == "error" else " "
+        mark = {"error": "✗", "warning": "!"}.get(e.get("level"), " ")
+        what = e.get("argv") or e.get("cmd") or e.get("event", "")
+        what = what if len(what) <= 48 else what[:47] + "…"
         dur = e.get("duration_ms")
-        durs = f"{dur}ms" if dur is not None else ""
-        err = f"  {e['error']}" if e.get("error") else ""
-        cmd = e.get("cmd") or e.get("event", "")
-        typer.echo(f"{mark} {ts}  {cmd:22} exit={e.get('exit_code', '?')}  {durs}{err}")
+        parts = [f"exit={e.get('exit_code', '?')}", f"{dur}ms" if dur is not None else ""]
+        if (usd := e.get("cost_usd")) is not None:
+            cost = "free" if e.get("cost_source") == "free" else f"${usd:.4f}" if usd >= 0.0001 else "<$0.0001"
+            parts.append(cost + f" {e.get('model', '')}".rstrip())
+        if e.get("caller"):
+            parts.append(str(e["caller"]).split("_")[0])
+        if e.get("error"):
+            msg = e.get("error_msg") or ""
+            msg = msg if len(msg) <= 80 else msg[:79] + "…"  # full text in --json
+            parts.append(f"{e['error']}: {msg}" if msg else e["error"])
+        typer.echo(f"{mark} {ts}  {what:48}  " + "  ".join(p for p in parts if p))
 
 
 def _cmd_label(args: list[str]) -> str:
-    """A privacy-safe command label for logging: the group/command + a *validated* subcommand only.
-    A subcommand must be a registered command of the group, so an arg value (query, url, id) is
-    never captured — `ko exa search rust` logs `exa search`, never `rust`."""
+    """The command label for logging and grouping: the group/command + a *validated* subcommand
+    only, so an arg value never becomes the label — `ko exa search rust` is `exa search`. (The
+    args themselves go to the log's `argv` field.)"""
     toks = [a for a in args if not a.startswith("-")]
     if not toks:
         return "(root)"
@@ -673,6 +682,26 @@ def _route(args: list[str]) -> list[str]:
     return args
 
 
+# _die() codes that mean "the user can fix this" — logged as warnings, not errors, so
+# `ko logs --errors` level=error is what broke: crashes, upstream and network failures.
+_USER_ERRORS = frozenset({"usage", "auth", "config", "not_found"})
+
+
+def _crash_site(e: BaseException) -> str | None:
+    """`file.py:line in func` of the innermost frame inside ko's own code, for a crash's log."""
+    import traceback
+
+    try:  # runs mid-crash: must never replace the real exception with its own
+        ko_dir = Path(__file__).parent
+        frames = [f for f in traceback.extract_tb(e.__traceback__) if Path(f.filename).is_relative_to(ko_dir)]
+        if not frames:
+            return None
+        f = frames[-1]
+        return f"{Path(f.filename).relative_to(ko_dir)}:{f.lineno} in {f.name}"
+    except Exception:
+        return None
+
+
 def main() -> None:
     """Entry point with deterministic bare-argument shortcuts (see `_route`): `ko paper.pdf`
     routes to `ko doc`, `ko x ai` to `ko x list ai`, `ko <url>` to `ko fetch <url>`."""
@@ -686,24 +715,29 @@ def main() -> None:
     if os.environ.get("_KO_COMPLETE"):  # shell-completion run — never log it
         app()
         return
-    # One wide structured event per command (local JSONL; see logs.py). Best-effort.
+    # One wide event per command (local JSONL; see logs.py): code anywhere adds fields with
+    # logs.add(), this writes them once at the end. Best-effort.
+    import shlex
+
+    from . import logs
+
+    logs.reset()
+    logs.add(argv=shlex.join(sys.argv[1:]), **logs.caller())
     label = _cmd_label(sys.argv[1:])
     start = time.monotonic()
-    code, err = 0, None
-    from . import _cli_shared as _shared
-    _shared._last_error = None  # reset per-command so a prior run's label doesn't bleed through
+    code, level = 0, None
     try:
         app()
     except SystemExit as e:
         code = e.code if isinstance(e.code, int) else (1 if e.code else 0)
-        # _die() raises typer.Exit (a SystemExit); pick up the error code label it recorded.
-        if code not in (0, None) and err is None:
-            err = _shared._last_error
+        if logs.get("error") in _USER_ERRORS:  # set by _die(): the user can fix it, nothing broke
+            level = "warning"
         raise
     except google_auth.AuthError as e:
         # The one Google failure every command can hit before its own error net: no usable
         # token. One line naming the fix, never a traceback (agents read stderr, not frames).
-        code, err = 1, "AuthError"
+        code, level = 1, "warning"
+        logs.add(error="auth", error_msg=e.msg, fix=e.fix)
         if "--json" in sys.argv:
             import json
 
@@ -713,7 +747,8 @@ def main() -> None:
             print(str(e), file=sys.stderr)
         raise SystemExit(1) from None
     except config.ConfigError as e:
-        code, err = 1, "ConfigError"
+        code, level = 1, "warning"
+        logs.add(error="config", error_msg=str(e))
         if "--json" in sys.argv:
             import json
 
@@ -722,12 +757,13 @@ def main() -> None:
             print(str(e), file=sys.stderr)
         raise SystemExit(1) from None
     except BaseException as e:
-        code, err = 1, type(e).__name__
+        code = 1
+        if isinstance(e, config.MissingKeyError):
+            level = "warning"
+        logs.add(error=type(e).__name__, error_msg=str(e) or None, error_at=_crash_site(e))
         raise
     finally:
-        from . import logs
-
-        logs.command_event(label, int((time.monotonic() - start) * 1000), code, err)
+        logs.command_event(label, int((time.monotonic() - start) * 1000), code, level)
 
 
 if __name__ == "__main__":

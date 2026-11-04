@@ -462,7 +462,7 @@ def _utc(value: str) -> datetime:
 # --- transcript status and the condensed write-up -------------------------------------------
 
 EXCERPT_WORDS = 100  # per part: start, middle and end
-CONDENSE_MODEL = "openrouter:google/gemini-3.5-flash"  # Flash-Lite tested 2026-10-14: too lossy, got events wrong
+CONDENSE_MODEL = "vercel:google/gemini-3.8-flash"  # 2026-11-04: every drive event at half 3.5 Flash's price; Flash-Lite misses them
 
 
 def transcript_status(vid: str, *, full: bool = False, refresh: bool = False) -> dict:
@@ -501,15 +501,15 @@ class Condensed:
 
 
 def condensed_model() -> str:
-    """`-s`'s model: KO_YT_MODEL → `[yt] model` in config.toml → Gemini Flash via OpenRouter."""
+    """`-s`'s model: KO_YT_MODEL → `[yt] model` in config.toml → Gemini 3.8 Flash. Runs on Google's
+    free tier when GEMINI_FREE_API_KEY is set (public video, so its training terms don't matter),
+    else through the AI Gateway; an explicit `-m` always goes where it says."""
     return config.setting("KO_YT_MODEL", "yt", "model", CONDENSE_MODEL)
 
 
 def condense(url_or_id: str, *, model: str | None = None, refresh: bool = False) -> Condensed:
     """The video written up by a model that watches it (the `yt-condense` prompt: every point, no
     filler, on-screen text marked), cached by video, model and prompt. Costs tokens on a miss."""
-    from pydantic_ai import VideoUrl
-
     from . import llm
 
     vid = video_id(url_or_id)
@@ -518,8 +518,7 @@ def condense(url_or_id: str, *, model: str | None = None, refresh: bool = False)
         return Condensed(**json.loads(path.read_text()), cached=True)
     llm.last_cost = None
     try:
-        text = llm.run("Write up the attached video.", model=model or condensed_model(), system=body,
-                       attachments=[VideoUrl(url=f"https://www.youtube.com/watch?v={vid}")])
+        text = _watch(vid, body, model)
     except Exception as e:  # a cut-short answer is still billed: say what it cost
         spent = f" ({llm.last_cost.note} spent)" if llm.last_cost else ""
         raise YtError(f"write-up of {vid} failed: {e}{spent}") from None
@@ -530,11 +529,37 @@ def condense(url_or_id: str, *, model: str | None = None, refresh: bool = False)
     return done
 
 
+def _watch(vid: str, body: str, model: str | None) -> str:
+    """One write-up run. With no `-m` and GEMINI_FREE_API_KEY set, Google's free tier first; when
+    it's busy, out of quota or slow (503/429/timeout — it serves free traffic last), the paid gateway, with a note."""
+    import sys
+
+    from pydantic_ai import VideoUrl
+    from pydantic_ai.exceptions import (
+        ModelConnectionError,  # incl. timeouts
+        ModelQuotaExceededError,
+        ModelRateLimitError,
+        ModelUnavailableError,  # incl. 503 overloaded
+    )
+
+    from . import llm, models
+
+    video = [VideoUrl(url=f"https://www.youtube.com/watch?v={vid}")]
+    free = None if model else models.free_gemini(condensed_model())
+    if free:
+        try:
+            return llm.run("Write up the attached video.", model=free, system=body, attachments=video)
+        except (ModelConnectionError, ModelRateLimitError, ModelQuotaExceededError, ModelUnavailableError) as e:
+            print(f"[free tier busy ({type(e).__name__}) — paying via the gateway instead]", file=sys.stderr)
+    return llm.run("Write up the attached video.", model=model or condensed_model(), system=body, attachments=video)
+
+
 def _condensed_path(vid: str, model: str | None) -> tuple[str, Path]:
-    """The prompt body and the cache file for a write-up of `vid` by `model` with today's prompt."""
+    """The prompt body and the cache file for a write-up of `vid` by `model` with today's prompt.
+    Keyed on the model, not the route: `vercel:google/x` and `openrouter:google/x` share a file."""
     from . import prompt
 
-    model = model or condensed_model()
+    model = (model or condensed_model()).split(":", 1)[-1]
     body = prompt.get_prompt("yt-condense").body
     sha = hashlib.sha256(body.encode()).hexdigest()[:8]
     return body, _cache("condensed", f"{vid}-{re.sub(r'[^A-Za-z0-9.-]+', '_', model)}-{sha}.json")

@@ -62,6 +62,7 @@ MODELS = {
         ModelSpec("moonshotai/kimi-k3.1-pro", "smart (research), $2/$10; slow to first token (~5 s)"),
         ModelSpec("google/gemini-4-argon", "smart peer, $2/$10"),
         ModelSpec("google/gemini-3.5-flash-lite", "ko sum: fast, long context, $0.30/$2.50"),
+        ModelSpec("google/gemini-3.8-flash", "ko yt -s: watches the video, caught every drive event; Flash-Lite missed them, $0.75/$3.75"),
     ]
 }
 
@@ -129,7 +130,40 @@ def _gateway_model(name: str) -> Model:
         settings["extra_body"] = {"providerOptions": {"gateway": gateway}}
     if spec:
         settings = _merge(settings, spec.settings)  # a spec's own providerOptions must not drop the host order
-    return OpenAIChatModel(name, provider=VercelProvider(api_key=key), settings=settings or None)
+
+    class GatewayChatModel(OpenAIChatModel):
+        """pydantic-ai's Chat Completions model refuses VideoUrl; the gateway takes a video URL as
+        a `file` part (a YouTube link included, Gemini watches it; tested 2026-11-04). Overrides a
+        private method: re-check on pydantic-ai upgrades (`ko yt -s` is the test)."""
+
+        async def _map_video_url_item(self, item):
+            media = item.media_type if item.media_type.startswith("video/") else "video/mp4"
+            return {"type": "file", "file": {"file_data": item.url, "media_type": media}}
+
+    return GatewayChatModel(name, provider=VercelProvider(api_key=key), settings=settings or None)
+
+
+FREE_GEMINI_KEY = "GEMINI_FREE_API_KEY"
+
+
+def free_gemini(model: str) -> Model | None:
+    """A `google/…` model (bare or `vercel:`) on Google's free tier, when GEMINI_FREE_API_KEY is
+    set; else None. Free tier = Google may use the content to improve its products, so public data
+    only (`ko yt -s`). Its responses carry provider `google-free`, which `run_cost` prices at $0."""
+    name = model.removeprefix("vercel:")
+    key = os.environ.get(FREE_GEMINI_KEY)
+    if not key or not name.startswith("google/"):
+        return None
+    from pydantic_ai.models.google import GoogleModel
+    from pydantic_ai.providers.google import GoogleProvider
+
+    class FreeTierProvider(GoogleProvider):
+        @property
+        def name(self) -> str:
+            return "google-free"
+
+    # Overloaded free tier hangs for minutes before failing; give up early and let the caller pay.
+    return GoogleModel(name.removeprefix("google/"), provider=FreeTierProvider(api_key=key), settings={"timeout": 120})
 
 
 # provider prefix -> env var that makes it usable; drives -m autocomplete.

@@ -121,7 +121,7 @@ app.add_typer(gmail_app, name="gmail")
 gmail_draft_app = _GoogleTyper(
     help=(
         "Compose Gmail drafts: new / reply / list / show / update / send. Drafts are the default workflow; "
-        "`draft send` is opt-in (`[gmail] allow_send = true` / KO_GMAIL_SEND=1). "
+        "`draft send` is opt-in (`\\[gmail] allow_send = true` / KO_GMAIL_SEND=1). "
         "Write bodies in Markdown via `--md <file>`: headings, **bold**/*italic*, bulleted + "
         "numbered lists, [links](url), GFM tables, ~~strikethrough~~, `code` all render as "
         "formatted mail (no underline — Markdown has none). Plain `--body` stays plain text."
@@ -1715,7 +1715,7 @@ def gmail_draft_send(
     draft_id: str = typer.Argument(..., help="draft id to send"),
     yes: bool = typer.Option(False, "--yes", "-y", help="skip the confirm (required when not a TTY)"),
 ) -> None:
-    """Send a draft. OPT-IN: refuses unless `[gmail] allow_send = true` in config.toml or
+    """Send a draft. OPT-IN: refuses unless `\\[gmail] allow_send = true` in config.toml or
     KO_GMAIL_SEND=1 — drafting is the default; a human sends from Gmail. Confirms first (shows
     to/subject/attachment count). Also refuses if the body says 'attached' but nothing is attached
     (--yes overrides). No scheduled-send API — create the draft, schedule it in Gmail's UI."""

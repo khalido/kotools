@@ -21,6 +21,7 @@ from ko.models import gateway_price, model_for, resolve
 
 if TYPE_CHECKING:
     from pydantic_ai import Agent
+    from pydantic_ai.models import Model
 
 # `ko sum`'s default: fast, cheap, long-context. Gemini Flash-Lite is strong on content and
 # transcripts (field-tested in koevguide). Override per run with -m, or `[llm] sum` in config.toml.
@@ -61,7 +62,8 @@ def _default_agent() -> Agent:
 class RunCost:
     """What one run cost: tokens always; USD when known. `source` says how good the
     number is — 'actual' = OpenRouter's billed cost from provider_details (exact),
-    'estimate' = the gateway's listed price or a genai-prices lookup (approximate)."""
+    'estimate' = the gateway's listed price or a genai-prices lookup (approximate), 'free' =
+    Google's free tier (`models.free_gemini`)."""
 
     model: str
     input_tokens: int
@@ -73,7 +75,9 @@ class RunCost:
     def note(self) -> str:
         """One stderr-ready line: `[model · 11→43 tok · $0.0012]`."""
         cost = ""
-        if self.usd is not None:
+        if self.source == "free":
+            cost = " · free tier"
+        elif self.usd is not None:
             approx = "" if self.source == "actual" else "~"
             amount = f"{approx}${self.usd:.4f}" if self.usd >= 0.0001 else "<$0.0001"
             cost = f" · {amount}"
@@ -113,17 +117,25 @@ def run_cost(messages: list) -> RunCost:
     provider_details['cost'] — prefer it. The gateway reports cost only ~20 s later
     (/v1/generation), so its calls are estimated from the cached catalog price (all input at
     full price — cache-read discounts ignored, so it errs high); anything
-    else falls back to genai-prices, which can miss brand-new models (then tokens only)."""
-    from pydantic_ai.messages import ModelResponse
+    else falls back to genai-prices, which can miss brand-new models (then tokens only).
 
-    model, tin, tout, usd, source = "?", 0, 0, None, ""
+    Also adds the run onto the command's log event (tokens, cost, requests, tool calls) — so
+    call it once per run, over that run's new messages only."""
+    from pydantic_ai.messages import ModelResponse, ToolCallPart
+
+    model, tin, tout, usd, source, requests, tools = "?", 0, 0, None, "", 0, 0
     for m in messages:
         if not isinstance(m, ModelResponse):
             continue
+        requests += 1
+        tools += sum(isinstance(p, ToolCallPart) for p in m.parts)
         model = m.model_name or model
         if m.usage:
             tin += m.usage.input_tokens or 0
             tout += m.usage.output_tokens or 0
+        if m.provider_name == "google-free":  # Google's free tier bills nothing
+            usd, source = usd or 0.0, source or "free"
+            continue
         actual = (m.provider_details or {}).get("cost")
         if actual is not None:
             usd, source = (usd or 0.0) + float(actual), "actual"
@@ -137,6 +149,11 @@ def run_cost(messages: list) -> RunCost:
                 usd, source = (usd or 0.0) + float(m.cost().total_price), "estimate"
             except Exception:
                 pass  # model not in the genai-prices snapshot yet — tokens only
+    from ko import logs
+
+    prior = logs.get("cost_source")
+    logs.add(model=model, cost_source=source if prior in (None, source) else "mixed")
+    logs.inc(llm_requests=requests, tool_calls=tools, input_tokens=tin, output_tokens=tout, cost_usd=usd)
     return RunCost(model=model, input_tokens=tin, output_tokens=tout, usd=usd, source=source)
 
 
@@ -147,8 +164,8 @@ def run_cost(messages: list) -> RunCost:
 DECISION_PREFIXES = ("typesafe:", "system-one:", "openai-decisions:")
 
 
-def is_decision_model(model: str | None) -> bool:
-    return bool(model) and (model == "jev" or model.startswith(DECISION_PREFIXES))
+def is_decision_model(model: str | Model | None) -> bool:
+    return isinstance(model, str) and (model == "jev" or model.startswith(DECISION_PREFIXES))
 
 
 @dataclass
@@ -269,7 +286,7 @@ def load_schema(path: Path) -> dict:
 def run(
     prompt: str,
     stdin: str | None = None,
-    model: str | None = None,
+    model: str | Model | None = None,  # a Model for routes resolve() doesn't build (models.free_gemini)
     system: str | None = None,
     schema: dict | None = None,
     attachments: list | None = None,
