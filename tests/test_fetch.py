@@ -1,6 +1,7 @@
 """Offline tests for ko.fetch — routing logic + extraction, no network."""
 
 import json
+
 import httpx2 as httpx
 import pytest
 from typer.testing import CliRunner
