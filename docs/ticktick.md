@@ -1,6 +1,6 @@
 # TickTick
 
-`ko tt` sits on TickTick's REST Open API. This page records which TickTick surface ko uses and why; `ko tt --help` is the contract.
+`ko tt` uses TickTick's REST Open API, not the MCP or the official CLI. This page records why; `ko tt --help` is the contract.
 
 ## References
 

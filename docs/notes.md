@@ -1,31 +1,24 @@
 # ko notes — a private, agent-managed notes repo
 
-> **Status: planning (2026-06-27).** The notes repo is a **separate git repo** (not this one); this doc
-> plans the concept + how it relates to the memory store. Pair: `docs/memory.md`.
+> **Status: planning (2026-06-27), not built.** The notes repo is a **separate git repo**, not this one. This doc plans the concept and how it relates to the memory store. Pair: `docs/memory.md`. There is no `ko notes` command.
 
 ## Overview
 
-A private GitHub repo for my notes — the **agentic successor to my old Google-Drive notes**, used in
-conjunction with AI (Claude Code, `ko ai`). Structured like `~/code/labs`: a **mixture** of
+A private GitHub repo for my notes: the **agentic successor to my old Google-Drive notes**, used with AI (Claude Code, `ko ai`). It's structured like `~/code/labs`, a mix of:
 - **plain markdown notes** at the root (`python-logging.md`, `favourite-python-libs.md`, …), and
 - **full artifacts / mini-projects** in folders (a robot-arm build, a published site, a notebook).
 
-Agent-managed: agents read, write, and maintain it; an `AGENTS.md` at the root sets the conventions
-(how to file a note, when to append to `log.jsonl`, commit etiquette). **This is the full content — the
-depth.** Durable, inspectable, `git diff`-able, mine.
+Agents read, write and maintain it. An `AGENTS.md` at the root sets the conventions: how to file a note, when to append to `log.jsonl`, commit etiquette. The repo holds the full content. It's durable, inspectable, `git diff`-able, and mine.
 
 ## Notes vs memory — two things, one crossover
 
 - **Notes = full content** (rich markdown + artifacts). The authoritative source.
 - **Memory = tight 1–2 line summaries, vector-indexed** (the libSQL store in `memory.md`). The *search surface*.
-- **Crossover = the memory DB.** Memory rows are summaries sourced from **two** places:
-  - **Notes** — each useful note → one or more memory rows: a 1–2 line summary + a **pointer back to the
-    full note** (`source = path/in/notes/repo.md`).
-  - **Sessions** — the overnight distiller turns session learnings into memory rows that *aren't* notes (yet).
+- **Crossover = the memory DB.** Memory rows are summaries from **two** sources:
+  - **Notes.** Each useful note becomes one or more rows: a 1–2 line summary plus a **pointer back to the full note** (`source = path/in/notes/repo.md`).
+  - **Sessions.** The overnight distiller turns session learnings into rows that *aren't* notes (yet).
 
-**Retrieval = progressive disclosure** (same pattern as `ko prompt` / skills): an agent searches memory →
-gets tight summaries → that's *often enough*; if not, the pointer says **"open the full version"** → load
-the full note. Memory is the catalog; the note is the document.
+**Retrieval is progressive disclosure** (same pattern as `ko prompt` and skills). An agent searches memory and gets tight summaries, which are often enough. If not, the pointer says to open the full note. Memory is the catalog; the note is the document.
 
 > Example — search `python`: memory returns
 > `python logging — use loguru; structured JSONL, sinks make syncs trivial  [→ python-logging.md]` and
@@ -34,14 +27,10 @@ the full note. Memory is the catalog; the note is the document.
 
 ## How ko relates (don't over-build a notes CLI)
 
-The notes repo is mostly **just git + agents working in it** — ko's value isn't managing the notes, it's
-the **memory index over them**:
-- ko's **memory extractor** (`memory.md`) reads **both** the notes repo and ko sessions → builds the
-  vector index. A memory row's `source` points to a note path *or* a session id.
-- A thin `ko notes` (open / grep / new) *might* be worth it later, but resist building a notes manager —
-  the repo + `AGENTS.md` + the memory surface is the system. The notes themselves are just files.
+The notes repo is mostly git plus agents working in it. ko's value is the **memory index over the notes**, not managing them:
+- ko's **memory extractor** (`memory.md`) reads **both** the notes repo and ko sessions and builds the vector index. A row's `source` points to a note path *or* a session id.
+- A thin `ko notes` (open / grep / new) might be worth it later. Resist building a notes manager: the repo, `AGENTS.md` and the memory surface are the system.
 
 ## Old → new
 
-Old: static personal notes in Google Drive (aging, passive). New: a git repo agents actively maintain,
-with a vector memory surface over it. Migrate the Drive notes in as markdown where useful — no rush.
+Old: static personal notes in Google Drive (aging, passive). New: a git repo agents actively maintain, with a vector memory surface over it. Migrate the Drive notes in as markdown where useful. No rush.

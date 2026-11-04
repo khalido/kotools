@@ -1,24 +1,24 @@
 # ko — ideas
 
-The single list of candidate subcommands. WORKLOG tracks what happened; this tracks what might.
+Candidate subcommands. WORKLOG tracks what happened; this tracks what might.
 
 **The thesis:** for each thing I do often, research the best open-source library/API *once*, bake it in with defaults I've already picked, expose 2–3 flags max. Then neither I nor my agents ever think about it again. Agents calling `ko fetch` instead of curl'ing raw HTML saves tokens and parsing pain.
 
-**Skill or no skill:** the goal is a CLI so intuitive that `--help` *is* the skill — short, opinionated, example-rich. If that fails, ship a `using-ko` skill later. Treat needing a skill as a design smell.
+**Skill or no skill:** the goal is a CLI where `--help` *is* the skill — short, opinionated, example-rich. If that fails, ship a `using-ko` skill later. Needing a skill is a design smell.
 
 ## Status & roadmap (updated 2026-06-27)
 
 **Shipped this session (2026-06-22 → 27):** gmail `thread`; Google lib shared-spine refactor (errors/http/id in `google_auth`); CLI agent-friendliness pass (clean errors, no stdout leaks, fuller `--json`, `AGENTS.md`, trailing-`help`); **`ko prompt`** (kickoff briefs); `ko cal --calendar` allowlist; `ko exa search` summaries + human dates; hn `--min-comments` fix; **`ko mcp` inspect/call/overview/servers** (client + `mcp.json` registry with `${ENV}` expansion + an agent that summarizes a server); **`ko billing`** (OpenRouter); **local logging via loguru** + `ko logs`; repo made public + PyPI-ready; `cli.py` split into `_cli_shared`/`cli_google`/`cli_web`/`cli_ai`; `pydantic-ai-slim[mcp]` added.
 
-**The one blocker (USER action):** finish Google auth — APIs enabled ✓ (gcloud, project `kotools-500611`); now **publish the consent app** (External) + `ko google auth <tag>` per account. Everything Google-shaped waits on this.
+**The one blocker (user action):** finish Google auth — APIs enabled ✓ (gcloud, project `kotools-500611`); now **publish the consent app** (External) + `ko google auth <tag>` per account. Everything Google-shaped waits on this.
 
 **Build queue (decided, in order):**
 1. **Google auth live** (user) → smoke-test `ko cal` / `gmail` / `gdocs` / `gsheets`.
-2. **PyPI publish** (user, token coming): `uv build --no-sources && uv publish`.
+2. ~~PyPI publish~~ — SHIPPED 2026-07-14 (tag push → trusted publisher, see Infra).
 3. **`ko note`** — append-and-review Google Doc (tiny; prepend timestamped blocks; needs gdocs auth). See the `ko note` entry below.
-4. **`ko brief`** — morning brief: deterministic gather (`cal` filtered + `gmail` unread + `hn`/papers + `tt`) → one cheap-model synthesis in my voice; `--raw` skips the LLM. A scripted pipeline, NOT an agent loop.
-5. **`ko ai`** — SHIPPED 2026-07-13 (v1: all toolsets + own memory, medium tier, 30-request cap; skills/MCP-toolsets still future — design below).
-6. **Telemetry → PostHog** (auto-on when key set): command-log loguru sink; LLM traces via pydantic-ai `InstrumentationSettings` → local + PostHog (rides on `ko ai`). See Infra (a)/(b).
+4. **`ko brief`** — SHIPPED. Morning brief: deterministic gather (`cal` filtered + `gmail` unread + `hn`/papers + `tt`) → one cheap-model synthesis in my voice; `--raw` skips the LLM. A scripted pipeline, NOT an agent loop.
+5. **`ko ai`** — SHIPPED 2026-07-13 (v1: all toolsets + own memory, 30-request cap, now on the basic tier; skills/MCP-toolsets still future — design below).
+6. **Telemetry → PostHog**: LLM traces via pydantic-ai `InstrumentationSettings` SHIPPED as `telemetry.py` (opt-in, `[telemetry] enabled`, off by default). The command-log loguru sink is not built. See Infra (a)/(b).
 7. **MCP server** (`ko mcp serve`, FastMCP) + **bundled default servers** (railway/context7); **Telegram bridge** — all ride on `ko ai`.
 8. **Far future:** agent fleet / remote sandboxes — `docs/remote.md` (planning) + `docs/fleet.md` (brief).
 
@@ -30,201 +30,72 @@ The single list of candidate subcommands. WORKLOG tracks what happened; this tra
 
 - [x] **`ko fetch <url>`** — SHIPPED 2026-06-13 as designed: trafilatura markdown (live-verified on real articles), arxiv links → arxiv2md, PDF links → ~/Downloads + liteparse (`--no-save`). Bare shortcut `ko <url>` routes here. Gotcha found: the Wayback availability API chokes on percent-encoded `url=` params — query built by hand. `--jina` escape hatch still future.
   - **Fallback chain refined (2026-06-13, archive.today added):** dead link (HTTP error) → Wayback (page is gone). 200-but-empty (paywall) → **archive.today first** (`archive.ph/newest/<url>`, JS-rendered capture beats Wayback on hard paywalls like SMH/NYT/FT — latest snapshot, we don't pick versions), then Wayback. Force with `--archive` (Wayback) / `--archive-is`. ⚠️ archive.today gates datacenter IPs behind a CAPTCHA/429 — best-effort, fails loud and cascades; works from residential (my Mac/home server), flaky from a cloud VM. Verified the block-detection + cascade; live snapshot retrieval is residential-only so untested from the sandbox.
-- [x] **`ko llm "<prompt>"`** — SHIPPED 2026-06-13 per the settled design: model-less v2 Agent + per-run `model=`, default `google:gemini-3.5-flash` (`KO_DEFAULT_MODEL`; note v2 renamed the prefix — `google-gla:` is gone), stdin appended as `<input>` block, `-s` swaps system prompt, no tools ever. `-m` tab-completion via `known_model_names()` filtered to providers with env keys set (OpenRouter live-catalog completion still future).
+- [x] **`ko llm "<prompt>"`** — SHIPPED 2026-06-13 per the settled design: model-less v2 Agent + per-run `model=`, default was `google:gemini-3.5-flash` (v2 renamed the prefix — `google-gla:` is gone); since moved to the basic tier via Vercel AI Gateway (`models.py`; `KO_DEFAULT_MODEL` still overrides), stdin appended as `<input>` block, `-s` swaps system prompt, no tools ever. `-m` tab-completion via `known_model_names()` filtered to providers with env keys set; the gateway and OpenRouter catalogs are now cached for completion and prices (`ko models`, `ko models info`).
 - [x] **`ko x search|list|lists`** — SHIPPED 2026-06-12 (untested live — no X_BEARER_TOKEN in env yet; ⚠️ verify tier covers reads on first run: free is ~write-only, Basic is the read floor; fallback if reads are off-plan: xai-sdk's `x_search` Grok digest). Official XDK. `search` = recent index (~7 days), author expansion, `--top`. `list <name>` = posts from my list by name, owned+followed, case-insensitive, name→id cached at `~/.config/ko/x_cache.json`; bare `ko x ai` sugar via the main() dispatcher. Home timeline deliberately absent: needs OAuth user-context, not app-only bearer.
 - [x] **Bare-link shortcut: `ko <url>`** — SHIPPED 2026-06-13 with fetch. — paste a link as the only arg, ko detects it's a URL (deterministic: scheme/domain pattern, no LLM) and routes to `ko fetch`, which sniffs YouTube/PDF/article/dead-link under the hood. The "I just want the markdown of this thing" zero-thought path.
 - [x] **`ko papers search|get|cites|refs|similar`** — SHIPPED 2026-07-03 as designed (`docs/papers-cli-design.md`): OpenAlex backbone (no key), S2 tldr/similar behind optional `S2_API_KEY`, DOI routing in `fetch.py` (doi.org URLs → OA copy first — verified live on a Nature DOI that previously extracted to nothing), `papers_search`/`papers_cites` added to the research agent's toolset. Zero new deps. ⚠️ found live: occasional OpenAlex bad-merge records (wrong title, right abstract) — search the title and use the W-id when a record looks off.
 
 ## `ko agent repo` — cheap repo-explorer agent (SHIPPED 2026-07-10, as designed below)
 
-Built same day: `agents/_files.py` + `files` toolset + `agents/repo.py` + `ko agent repo`.
-Live: answered "how does harness prevent path traversal" with exact quotes + file:line,
-using the refs/CLAUDE.md takeaways, for $0.0005/run on deepseek-flash. Design notes kept:
+Built same day: `agents/_files.py` + `files` toolset + `agents/repo.py` + `ko agent repo`. Live: answered "how does harness prevent path traversal" with exact quotes + file:line, using the refs/CLAUDE.md takeaways, for $0.0005/run on deepseek-flash. Design notes kept:
 
-The want: "how does reference repo X do Y / find me something relevant" answered by a
-**basic-tier** model with read-only access to `~/code` (+ refs). Decision after a source
-dive on `pydantic-ai-harness` (now in refs — takeaways in refs/CLAUDE.md):
+The want: "how does reference repo X do Y / find me something relevant" answered by a **basic-tier** model with read-only access to `~/code` (+ refs). Decision after a source dive on `pydantic-ai-harness` (now in refs — takeaways in refs/CLAUDE.md):
 
-- **v1: hand-roll a read-only `files` FunctionToolset** in `_toolsets.py` (~5 tools:
-  `list_dir`, `read_file` (line-capped, binary guard), `grep` (shell out to `rg`, capped),
-  `find_files`, maybe `git_log`), rooted at `~/code`. **Read-only by construction — no
-  write tools exist**, which beats harness's approach (its FileSystem has no `read_only`
-  flag; write tools stay in the model's tool list and fail via ModelRetry — token waste
-  and confusion for a cheap model). Port ONE thing from harness: its TOCTTOU-safe path
-  containment (resolve symlinks with `realpath` BEFORE the `is_relative_to(root)` check).
-  Then `ko agent repo` = the usual ~15-line agent file: basic tier, instructions = the
-  refs CLAUDE.md explore method (survey cheap → read only the few files that matter →
-  cite file:line; docs/ and examples/ first).
-- **Don't adopt `pydantic-ai-harness` yet** — same call as fastmcp (adopt late): it's
-  explicitly alpha (0.x, "minor releases may break"), imports pydantic-ai *private*
-  internals with cross-version shims, and monty (the Rust sandboxed-Python interpreter
-  behind CodeMode) is 0.0.17. **Adoption triggers**: harness ~0.1/stable or bundled into
-  pydantic-ai; FileSystem grows a real read-only mode; or we want CodeMode.
-- **CodeMode: skip for this use case.** Its win is batching many tool calls into one
-  model round-trip of generated Python — valuable for strong models with big tool
-  surfaces, wrong for a cheap explorer (monty's Python subset: no classes, no time, no
-  third-party imports — a flailing hazard for basic-tier models; plain tool calls are
-  the right altitude). **But monty itself is the watch item**: a local Rust-sandboxed
-  Python is a lighter answer than the Cloudflare Sandbox idea (Infra) for the "agent
-  writes + runs a throwaway script" need. Revisit when monty isn't 0.0.x.
-- Harness's `RepoContext` (experimental) auto-loads CLAUDE.md/AGENTS.md up the tree —
-  nice idea to steal as one cheap tool (`read_repo_context(repo)`) rather than adopt.
+- **v1: hand-roll a read-only `files` FunctionToolset** in `_toolsets.py` (~5 tools: `list_dir`, `read_file` (line-capped, binary guard), `grep` (shell out to `rg`, capped), `find_files`, maybe `git_log`), rooted at `~/code`. **Read-only by construction — no write tools exist**, which beats harness's approach (its FileSystem has no `read_only` flag; write tools stay in the model's tool list and fail via ModelRetry — token waste and confusion for a cheap model). Port ONE thing from harness: its TOCTTOU-safe path containment (resolve symlinks with `realpath` BEFORE the `is_relative_to(root)` check). Then `ko agent repo` = the usual ~15-line agent file: basic tier, instructions = the refs CLAUDE.md explore method (survey cheap → read only the few files that matter → cite file:line; docs/ and examples/ first).
+- **Don't adopt `pydantic-ai-harness` yet** — same call as fastmcp (adopt late): it's explicitly alpha (0.x, "minor releases may break"), imports pydantic-ai *private* internals with cross-version shims, and monty (the Rust sandboxed-Python interpreter behind CodeMode) is 0.0.17. **Adoption triggers**: harness ~0.1/stable or bundled into pydantic-ai; FileSystem grows a real read-only mode; or we want CodeMode.
+- **CodeMode: skip for this use case.** Its win is batching many tool calls into one model round-trip of generated Python — valuable for strong models with big tool surfaces, wrong for a cheap explorer (monty's Python subset: no classes, no time, no third-party imports — a flailing hazard for basic-tier models; plain tool calls are the right altitude). **But monty itself is the watch item**: a local Rust-sandboxed Python is a lighter answer than the Cloudflare Sandbox idea (Infra) for the "agent writes + runs a throwaway script" need. Revisit when monty isn't 0.0.x.
+- Harness's `RepoContext` (experimental) auto-loads CLAUDE.md/AGENTS.md up the tree — nice idea to steal as one cheap tool (`read_repo_context(repo)`) rather than adopt.
 
 ## `ko agent repo` friction (from the 2026-07-12 refs-map sweep — 21 real runs, $0.09)
 
-The sweep that filled refs/CLAUDE.md (19 missing + 2 stub entries) doubled as an eval. Candidates,
-none urgent:
-- [ ] **Hard scope constraint** — the `pi` run confidently described sibling `pi-autoresearch`
-  instead (context bleed between adjacent refs). Instructions ask for scope discipline; a real
-  `--root refs/<name>` that re-roots the files toolset would make it impossible rather than polite.
-- [ ] **Structured output for bulk use** — orchestrators distilling free-markdown answers into map
-  bullets is post-processing an agent could skip: `ko agent repo --json` with a small output_type
-  (answer, key_files, one_liner). Only worth it if bulk sweeps recur.
-- Noted, no action: cheap model ignores "2-3 sentences" brevity asks (returns 3-8 paragraphs —
-  prompt-side, not tool-side); cost notes could carry a caller label (orchestrators can label their
-  own logs); 4-way parallel `ko agent repo` runs were flawless.
+The sweep that filled refs/CLAUDE.md (19 missing + 2 stub entries) doubled as an eval. Candidates, none urgent:
+- [ ] **Hard scope constraint** — the `pi` run confidently described sibling `pi-autoresearch` instead (context bleed between adjacent refs). Instructions ask for scope discipline; a real `--root refs/<name>` that re-roots the files toolset would make it impossible rather than polite.
+- [ ] **Structured output for bulk use** — orchestrators distilling free-markdown answers into map bullets is post-processing an agent could skip: `ko agent repo --json` with a small output_type (answer, key_files, one_liner). Only worth it if bulk sweeps recur.
+- Noted, no action: cheap model ignores "2-3 sentences" brevity asks (returns 3-8 paragraphs — prompt-side, not tool-side); cost notes could carry a caller label (orchestrators can label their own logs); 4-way parallel `ko agent repo` runs were flawless.
 
 ## Backlog (priority order; library picks researched 2026-06-11)
 
-- [ ] **Skills to build** (from the 2026-07-06 mining + Fable review; each lives in its *home repo's*
-  `.claude/skills/`, not centralized here — see WORKLOG). Build order:
-  1. **invoice** (ops) — scan WORKLOGs → hours by client → next invoice # → CSV + cover email. Bundle
-     the tally as a *script* (money needs reproducibility); LLM only does client-mapping + email.
-  2. **sheets-bulk-fix** (nibbleedge-sheets) — apply a change across ~88 client sheets via the `ne` loop;
-     encodes dry-run-on-1-first + write-then-reread verify + partial-failure resumability.
-  3. **pit-privacy-check** (thinker) — audit a change vs the privacy/PIT invariants before commit; wire
-     thinker's CLAUDE.md to point at it (maybe fold into a thinker-local code-review wrapper).
-  4. **data-pipeline-review** (global, `~/.claude/skills/`) — end-to-end audit for *silently-wrong numbers*
-     (hardcoded FY, partial-row→0); highest value-per-fire, thinnest evidence — write short, tune the
-     description hard against over-triggering vs code-review/security-review, iterate after 2-3 runs.
-  5. **drizzle-migration** (global, optional) — schema edit → generate → *review the SQL* → apply →
-     `svelte-kit sync` → repo's gate. Trigger on editing `schema.ts`, not the word "migration".
-  - Killed by review: project-orient (habit, CLAUDE.md auto-loads), gh-issue-sync (habit + no session-end
-    trigger; the sub-issue `gh api` incantation → a docs snippet instead). Skipped: semver-release, everx-feature-gate.
+- [ ] **Skills to build** (from the 2026-07-06 mining + Fable review; each lives in its *home repo's* `.claude/skills/`, not centralized here — see WORKLOG). Build order:
+  1. **invoice** (ops) — scan WORKLOGs → hours by client → next invoice # → CSV + cover email. Bundle the tally as a *script* (money needs reproducibility); LLM only does client-mapping + email.
+  2. **sheets-bulk-fix** (nibbleedge-sheets) — apply a change across ~88 client sheets via the `ne` loop; encodes dry-run-on-1-first + write-then-reread verify + partial-failure resumability.
+  3. **pit-privacy-check** (thinker) — audit a change vs the privacy/PIT invariants before commit; wire thinker's CLAUDE.md to point at it (maybe fold into a thinker-local code-review wrapper).
+  4. **data-pipeline-review** (global, `~/.claude/skills/`) — end-to-end audit for *silently-wrong numbers* (hardcoded FY, partial-row→0); highest value-per-fire, thinnest evidence — write short, tune the description hard against over-triggering vs code-review/security-review, iterate after 2-3 runs.
+  5. **drizzle-migration** (global, optional) — schema edit → generate → *review the SQL* → apply → `svelte-kit sync` → repo's gate. Trigger on editing `schema.ts`, not the word "migration".
+  - Killed by review: project-orient (habit, CLAUDE.md auto-loads), gh-issue-sync (habit + no session-end trigger; the sub-issue `gh api` incantation → a docs snippet instead). Skipped: semver-release, everx-feature-gate.
   - Possible `ko skill new` scaffolder (frontmatter/description templater) if skill authoring becomes frequent.
 
 
 
-- [ ] **satteri for `ko publish --md`** (considered 2026-07-14, [satteri.bruits.org](https://satteri.bruits.org/)) —
-  Rust-core markdown pipeline with JS plugins (npm/WASM). NOT now: the `--md` scaffold is
-  deliberately no-build (markdown-it via CDN + a 15-line client TOC builder), and satteri's
-  speed only bites in build pipelines over many files. Trigger = adding pre-rendering
-  (static HTML / MDX) to publish; then satteri vs remark is the real comparison. Its docs
-  don't advertise a TOC block — TOC would come from its AST plugin hooks either way.
-- [ ] **llms.txt for `ko publish` + the kotools site** (designed 2026-07-14; Opus study of
-  khalido.org + llmstxt.org). khalido.org's pattern: md is source, each post serves a raw twin at
-  `slug.md` (clean variant of the spec's `page.html.md`), `/llms.txt` = H1 + blockquote + H2 link
-  sections pointing at the twins (no llms-full.txt — the .md pages ARE the full content).
-  For ko publish: `--md`/`--hono` sites already serve raw `.md`; the only gap is the index →
-  **scaffold-time `llms.txt` stub** (H1 + blockquote + `## Pages` seeded with README.md) + one
-  `_MD_CLAUDE` line telling the agent to keep it in sync when adding pages. NOT deploy-time
-  generation — deploy stays a pure `wrangler deploy` passthrough ("ko publish == wrangler deploy"
-  identity), and no build step. Static pathway: skip (trafilatura-from-HTML would be a lossy
-  shadow of an interactive page); author index.md deliberately if wanted.
-  **kotools-site**: grow from one README into a real --md docs site — `/llms.txt` + per-topic
-  pages ported from repo docs (install.md, keys.md, google.md, agents.md, publish.md, commands.md),
-  each fetchable raw; repo README stays the PyPI/GitHub front page. Dogfoods the scaffold stub.
-- [ ] **`ko llms` — llms.txt for a repo's deps** (idea 2026-07-14, via balazshevesi/get-llms —
-  npm-only, 4 stars, probes `{homepage}/llms.txt`). ko version: read pyproject/package.json/
-  requirements.txt, resolve each main dep's homepage (PyPI JSON API `project_urls` / npm registry),
-  probe `/llms.txt` + `/docs/llms.txt`, print name→URL TSV (`--fetch` saves via `ko fetch`).
-  Keyless, composes with the agent layer (a repo agent could load a dep's llms.txt on demand).
-  Build when the want recurs — get-llms itself is too new/npm-bound to lean on.
-- [ ] **`ko publish` lifecycle + polish** (from the 2026-07-14 pathway review):
-  - **`ko publish rm <name|dir>`** — the missing delete verb (`wrangler delete` + registry cleanup
-    + custom-domain DNS note). Evidence: `ko-test` from June still live in the registry.
-  - **`list` shows age** — registry already stamps `updated_at`, list doesn't print it; a month-stale
-    kotools-site went unnoticed until 2026-07-14. Add the column; optional `--check` pings each URL.
-  - **Auto-OG at scaffold** — the scaffold CLAUDE.md calls `og:description` "the ONE index.html edit
-    worth making"; fill it from title/first paragraph automatically instead.
-  - (Considered, skipped: a `ko publish docs` repo-docs pathway — kotools-site being curated separately
-    from internal docs/ is deliberate.)
+- [ ] **satteri for `ko publish --md`** (considered 2026-07-14, [satteri.bruits.org](https://satteri.bruits.org/)) — Rust-core markdown pipeline with JS plugins (npm/WASM). NOT now: the `--md` scaffold is deliberately no-build (markdown-it via CDN + a 15-line client TOC builder), and satteri's speed only bites in build pipelines over many files. Trigger = adding pre-rendering (static HTML / MDX) to publish; then satteri vs remark is the real comparison. Its docs don't advertise a TOC block — TOC would come from its AST plugin hooks either way.
+- [ ] **llms.txt for `ko publish` + the kotools site** (designed 2026-07-14; Opus study of khalido.org + llmstxt.org). khalido.org's pattern: md is source, each post serves a raw twin at `slug.md` (clean variant of the spec's `page.html.md`), `/llms.txt` = H1 + blockquote + H2 link sections pointing at the twins (no llms-full.txt — the .md pages ARE the full content). For ko publish: `--md`/`--hono` sites already serve raw `.md`; the only gap is the index → **scaffold-time `llms.txt` stub** (H1 + blockquote + `## Pages` seeded with README.md) + one `_MD_CLAUDE` line telling the agent to keep it in sync when adding pages. NOT deploy-time generation — deploy stays a pure `wrangler deploy` passthrough ("ko publish == wrangler deploy" identity), and no build step. Static pathway: skip (trafilatura-from-HTML would be a lossy shadow of an interactive page); author index.md deliberately if wanted. **kotools-site**: grow from one README into a real --md docs site — `/llms.txt` + per-topic pages ported from repo docs (install.md, keys.md, google.md, agents.md, publish.md, commands.md), each fetchable raw; repo README stays the PyPI/GitHub front page. Dogfoods the scaffold stub.
+- [ ] **`ko llms` — llms.txt for a repo's deps** (idea 2026-07-14, via balazshevesi/get-llms — npm-only, 4 stars, probes `{homepage}/llms.txt`). ko version: read pyproject/package.json/ requirements.txt, resolve each main dep's homepage (PyPI JSON API `project_urls` / npm registry), probe `/llms.txt` + `/docs/llms.txt`, print name→URL TSV (`--fetch` saves via `ko fetch`). Keyless, composes with the agent layer (a repo agent could load a dep's llms.txt on demand). Build when the want recurs — get-llms itself is too new/npm-bound to lean on.
+- [ ] **`ko publish` lifecycle + polish** (from the 2026-07-14 pathway review; `rm` and the `list` date column have since shipped, `list --cf` added):
+  - **`ko publish rm <name|dir>`** — the missing delete verb (`wrangler delete` + registry cleanup + custom-domain DNS note). Evidence: `ko-test` from June still live in the registry.
+  - **`list` shows age** — registry already stamps `updated_at`, list doesn't print it; a month-stale kotools-site went unnoticed until 2026-07-14. Add the column; optional `--check` pings each URL.
+  - **Auto-OG at scaffold** — the scaffold CLAUDE.md calls `og:description` "the ONE index.html edit worth making"; fill it from title/first paragraph automatically instead.
+  - (Considered, skipped: a `ko publish docs` repo-docs pathway — kotools-site being curated separately from internal docs/ is deliberate.)
 - [ ] **`ko publish` hardening** — deferred from the 2026-07-03 Fable review (real, non-urgent):
-  - **`deploy` rewrites `--md` sites to SPA mode** (`publish.py` `ensure_config` defaults `spa=True`;
-    md scaffolds are `spa=False`) — renaming an md site silently breaks its 404 handling (every bad
-    `?page=` serves index.html). Behavioral bug, most worth fixing.
-  - **Registry not recorded when the URL is unparseable** (`if url:` guard) → poisons the *next*
-    deploy with a false "already a Worker, use --force".
-  - **Takeover guard disarms for `wrangler login` users** (`worker_exists` returns `None` without API
-    creds) — the "won't silently take over" promise holds only in the token path.
-  - **JSONC name parsed with a first-match regex** — fine for scaffolded files, unsafe for the
-    hand-edited D1/R2 configs the module invites.
+  - **`deploy` rewrites `--md` sites to SPA mode** (`publish.py` `ensure_config` defaults `spa=True`; md scaffolds are `spa=False`) — renaming an md site silently breaks its 404 handling (every bad `?page=` serves index.html). Behavioral bug, most worth fixing.
+  - **Registry not recorded when the URL is unparseable** (`if url:` guard) → poisons the *next* deploy with a false "already a Worker, use --force".
+  - **Takeover guard disarms for `wrangler login` users** (`worker_exists` returns `None` without API creds) — the "won't silently take over" promise holds only in the token path.
+  - **JSONC name parsed with a first-match regex** — fine for scaffolded files, unsafe for the hand-edited D1/R2 configs the module invites.
   - (Done in that pass: subprocess timeouts on npm/​wrangler.)
-- [ ] **`ko x` OAuth 2.0 user-context** (deferred 2026-07-05) — the app-only bearer can't reach
-  `get_me` (auto-handle), **bookmarks** (X's "save"), likes, home timeline, or *followed* lists;
-  all need a UserToken. Mirror the Google OAuth pattern (PKCE local-server flow + token cache +
-  refresh; X access tokens ~2h). Worth it mainly for **`ko x bookmarks`** (curated saves) — the
-  rest is niche. Skip unless bookmarks/likes become a habit; the bearer already covers lists +
-  search + user timelines + full-archive.
-- [ ] **Shared `http.get_json()` helper + the httpx2 migration path** — hn/hf/papers/tmdb each
-  hand-roll a near-identical httpx `_get` (now over the CLAUDE.md "three things" bar, and the
-  planned `ko reddit` would be the fifth). One chokepoint = one place for timeout/retry policy,
-  and makes the httpx→httpx2 swap a one-line change.
-  **httpx2 status (verified 2026-08-31, HN 49477212 + our own uv.lock):** the shift is real —
-  OpenAI SDK 3.3.0 **and Anthropic's SDK have migrated**; httpxyz (the other fork) folded itself
-  into httpx2 as "the blessed fork"; httpx2 is Pydantic-sponsored with Kludex (new Starlette
-  maintainer) and promises to *keep* the existing API. Upstream httpx is dormant: no stable
-  release since 2024-12, issues/discussions closed, 1.0 work in a private repo. **Our venv
-  already runs BOTH**: openai 3.3.0 and genai-prices depend on httpx2 today, while
-  pydantic-ai-slim core, mcp, and google-genai still pin plain httpx (12 of our modules import
-  it directly).
-  **Decision: DONE 2026-08-31, same day — the trigger fired.** `uv lock --upgrade` took
-  pydantic-ai-slim 2.32 → **2.36.0, which depends on httpx2** (its own HTTP — every LLM
-  call — now rides httpx2's OS trust store, accepted and live-smoked). We added
-  `httpx2>=2.12,<3` as our own dep and swapped all 22 of our import sites to
-  `import httpx2 as httpx` (src + tests — tests construct Response/Request and raise
-  the exceptions our code catches, so they must be the same package). Plain `httpx`
-  stays installed for the libs that pin it (exa-py, arxiv2markdown, mcp/fastmcp-slim,
-  google-genai, pydantic-ai-harness) — both stacks ship, which is the fork's design,
-  not our problem. Verified: 531 tests, live generic fetch, reddit ladder end-to-end,
-  `ko billing` (Client + auth headers). One 2.36 break found+fixed:
-  `agent._instructions` entries are now `SourcedInstruction` wrappers (the guard test
-  looks through `.instruction`; pre-2.36 bare-callable shape still handled).
-  **Left as the standing pattern:** the shared `http.get_json()` chokepoint is still
-  worth building (hn/hf/papers/tmdb hand-roll `_get`; `ko reddit` would be the fifth) —
-  and now it starts life importing httpx2.
-- [ ] **`ko papers bib <id>` / `ko papers watch`** — extensions to the shipped `ko papers`
-  (lab-motivated but generic, noted 2026-07-03): `bib` = DOI→BibTeX (doi.org content
-  negotiation `Accept: application/x-bibtex`, or from OpenAlex fields; ~flag-sized).
-  `watch` = saved queries + only-new-since-last-check (OpenAlex `from_publication_date`
-  + state file in `~/.local/state/ko`); "RSS for papers", cron+`ko ai` digestible.
-- [ ] **`ko dataset get <doi|zenodo-id>`** — research-dataset fetcher. Zenodo REST is
-  keyless (`/api/records/{id}` → files + checksums): list, selectively download,
-  verify. figshare/OSF later behind the same verb. First real use: the 2DMatGMM
-  in-focus set (10.5281/zenodo.8042834) for the UTS autofocus benchmark.
-- [ ] **`ko reddit search "<query>" [--sub] [--months N]`** — Reddit thread search over
-  the official API (motivated 2026-08-31 by the EV research habit: "threads on the
-  Xpeng X9 in the last six months"). Research done:
-  - **Credentials: the OAuth app "kotools"** (developers.reddit.com/apps/kotools,
-    registered 2026-08-31) — `REDDIT_CLIENT_ID`/`REDDIT_CLIENT_SECRET`, already in the
-    README keys table. **App-only flow** (client_credentials, HTTP Basic auth to
-    `/api/v1/access_token`) = read-only, no user login, no password; token per run,
-    nothing to cache (100 req/min free tier is plenty for CLI use).
-  - **Not Devvit** (dead end, researched): Devvit is reddit's platform for apps that
-    RUN ON reddit (games, mod tools, custom posts); its "Reddit API" client
-    authenticates automatically inside their infra — "you don't need to create an app
-    or manage API keys" applies to Devvit apps only, and a Devvit token can't
-    authenticate an external CLI. The `npm create devvit` app is inert for ko.
-  - **No library** — hand-roll httpx like hn/hf/papers/tmdb (ko precedent; surface is
-    two endpoints). `POST /api/v1/access_token` (Basic id:secret, grant_type=
-    client_credentials) → `GET oauth.reddit.com/search?q=…&sort=&t=` or
-    `/r/<sub>/search?restrict_sr=1`; `GET /comments/{id}` gives the true comment tree
-    (the thing mirrors can't). PRAW is the reach-for IF ambitions grow to user-context
-    (bookmarks/home timeline — same tier wall as `ko x`) or streaming; for read-search
-    it's a heavy dep wrapping two GETs.
-  - **`--months N`**: the API's `t=` granularity is hour/day/week/month/year/all — no
-    "six months" — so `t=year` + client-side `created_utc` filter, the same shape as
-    `ko hn search`'s 1-year default. Output TSV in the hn pattern (date, score,
-    comments, sub, title, url) → composes with `ko fetch <url>` (mirror ladder) today
-    and an OAuth thread route later.
-  - UA best practice per reddit's guidance: keep our real `kotools/…` UA (identify,
-    don't disguise — same stance as the BROWSER bundle).
+- [ ] **`ko x` OAuth 2.0 user-context** (deferred 2026-07-05) — the app-only bearer can't reach `get_me` (auto-handle), **bookmarks** (X's "save"), likes, home timeline, or *followed* lists; all need a UserToken. Mirror the Google OAuth pattern (PKCE local-server flow + token cache + refresh; X access tokens ~2h). Worth it mainly for **`ko x bookmarks`** (curated saves) — the rest is niche. Skip unless bookmarks/likes become a habit; the bearer already covers lists + search + user timelines + full-archive.
+- [ ] **Shared `http.get_json()` helper + the httpx2 migration path** — hn/hf/papers/tmdb each hand-roll a near-identical httpx `_get` (now over the CLAUDE.md "three things" bar, and the planned `ko reddit` would be the fifth). One chokepoint = one place for timeout/retry policy, and makes the httpx→httpx2 swap a one-line change. **httpx2 status (verified 2026-08-31, HN 49477212 + our own uv.lock):** the shift is real — OpenAI SDK 3.3.0 **and Anthropic's SDK have migrated**; httpxyz (the other fork) folded itself into httpx2 as "the blessed fork"; httpx2 is Pydantic-sponsored with Kludex (new Starlette maintainer) and promises to *keep* the existing API. Upstream httpx is dormant: no stable release since 2024-12, issues/discussions closed, 1.0 work in a private repo. **Our venv already runs BOTH**: openai 3.3.0 and genai-prices depend on httpx2 today, while pydantic-ai-slim core, mcp, and google-genai still pin plain httpx (12 of our modules import it directly). **Decision: DONE 2026-08-31, same day — the trigger fired.** `uv lock --upgrade` took pydantic-ai-slim 2.32 → **2.36.0, which depends on httpx2** (its own HTTP — every LLM call — now rides httpx2's OS trust store, accepted and live-smoked). We added `httpx2>=2.12,<3` as our own dep and swapped all 22 of our import sites to `import httpx2 as httpx` (src + tests — tests construct Response/Request and raise the exceptions our code catches, so they must be the same package). Plain `httpx` stays installed for the libs that pin it (exa-py, arxiv2markdown, mcp/fastmcp-slim, google-genai, pydantic-ai-harness) — both stacks ship, which is the fork's design, not our problem. Verified: 531 tests, live generic fetch, reddit ladder end-to-end, `ko billing` (Client + auth headers). One 2.36 break found+fixed: `agent._instructions` entries are now `SourcedInstruction` wrappers (the guard test looks through `.instruction`; pre-2.36 bare-callable shape still handled). **Left as the standing pattern:** the shared `http.get_json()` chokepoint is still worth building (hn/hf/papers/tmdb hand-roll `_get`; `ko reddit` would be the fifth) — and now it starts life importing httpx2.
+- [ ] **`ko papers bib <id>` / `ko papers watch`** — extensions to the shipped `ko papers` (lab-motivated but generic, noted 2026-07-03): `bib` = DOI→BibTeX (doi.org content negotiation `Accept: application/x-bibtex`, or from OpenAlex fields; ~flag-sized). `watch` = saved queries + only-new-since-last-check (OpenAlex `from_publication_date` + state file in `~/.local/state/ko`); "RSS for papers", cron+`ko ai` digestible.
+- [ ] **`ko dataset get <doi|zenodo-id>`** — research-dataset fetcher. Zenodo REST is keyless (`/api/records/{id}` → files + checksums): list, selectively download, verify. figshare/OSF later behind the same verb. First real use: the 2DMatGMM in-focus set (10.5281/zenodo.8042834) for the UTS autofocus benchmark.
+- [ ] **`ko reddit search "<query>" [--sub] [--months N]`** — Reddit thread search over the official API (motivated 2026-08-31 by the EV research habit: "threads on the Xpeng X9 in the last six months"). Research done:
+  - **Credentials: the OAuth app "kotools"** (developers.reddit.com/apps/kotools, registered 2026-08-31) — `REDDIT_CLIENT_ID`/`REDDIT_CLIENT_SECRET`, already in the README keys table. **App-only flow** (client_credentials, HTTP Basic auth to `/api/v1/access_token`) = read-only, no user login, no password; token per run, nothing to cache (100 req/min free tier is plenty for CLI use).
+  - **Not Devvit** (dead end, researched): Devvit is reddit's platform for apps that RUN ON reddit (games, mod tools, custom posts); its "Reddit API" client authenticates automatically inside their infra — "you don't need to create an app or manage API keys" applies to Devvit apps only, and a Devvit token can't authenticate an external CLI. The `npm create devvit` app is inert for ko.
+  - **No library** — hand-roll httpx like hn/hf/papers/tmdb (ko precedent; surface is two endpoints). `POST /api/v1/access_token` (Basic id:secret, grant_type= client_credentials) → `GET oauth.reddit.com/search?q=…&sort=&t=` or `/r/<sub>/search?restrict_sr=1`; `GET /comments/{id}` gives the true comment tree (the thing mirrors can't). PRAW is the reach-for IF ambitions grow to user-context (bookmarks/home timeline — same tier wall as `ko x`) or streaming; for read-search it's a heavy dep wrapping two GETs.
+  - **`--months N`**: the API's `t=` granularity is hour/day/week/month/year/all — no "six months" — so `t=year` + client-side `created_utc` filter, the same shape as `ko hn search`'s 1-year default. Output TSV in the hn pattern (date, score, comments, sub, title, url) → composes with `ko fetch <url>` (mirror ladder) today and an OAuth thread route later.
+  - UA best practice per reddit's guidance: keep our real `kotools/…` UA (identify, don't disguise — same stance as the BROWSER bundle).
 
 
-- [x] **`ko yt <url>`** — SHIPPED. YouTube → transcript / summary.
+- [x] **`ko yt <url>`** — SHIPPED. YouTube → transcript / summary; also `info` and `channel`.
   - Transcript: **youtube-transcript-api** (v1.2.4) — hits YouTube's transcript endpoint directly, no video download; auto-captions, manual subs, translation. (yt-dlp is overkill for transcript-only.)
-  - `--summarise`: pydantic-ai over the transcript (we already ship pydantic-ai).
-  - Fallback when no transcript exists: Gemini native video understanding — pass URL as `file_data` part + JSON prompt. Pattern proven in a private project (`get_youtube_summary`: gemini-3-flash, ~fractions of a cent per video).
+  - `-s` shipped as a Gemini write-up of the video itself (`vercel:google/gemini-3.8-flash` through the AI Gateway, cached by video, model and prompt) rather than a summary of the transcript.
+  - Gemini native video understanding (URL as a `file_data` part) came from a private project (`get_youtube_summary`: gemini-3-flash, fractions of a cent per video); it is now the `-s` path.
 - [ ] **`ko q "SELECT ..."`** — **duckdb** Python package: SQL over CSV/JSON/Parquet, zero schema setup, pipeable. (duckdb already in my brew list — confirmed habit.)
 - [ ] **`ko news` / `ko aus`** — curated news headlines, idea 2026-06-13. The real want: "quickly see today's AU news" — headlines + a line of text + link. Build on feedparser over a *baked* feed bundle, not a generic feed arg: `ko news aus` loads a curated AU set, `ko news ai`/`tech` other bundles. Feeds give headlines+summary free even when the article is paywalled. AU sources: ABC News AU (no paywall, clean RSS — the backbone), Guardian AU (free RSS + a proper free API if we want more), SMH/The Age (Nine — RSS headlines fine; full article via `ko fetch`, which now has the archive.today paywall fallback + the user's note that SMH serves non-JS browsers so plain httpx often works). Composes: `ko news aus | ko llm "what's the gist of today"`, or `ko fetch <link>` to read one. Supersedes the generic `ko rss` below — curation is more ko than a feed arg.
 - [ ] **`ko nyt`** — NYT APIs (developer.nytimes.com, free key, generous limits): Top Stories / Most Popular / Article Search return headline + abstract + url, clean JSON, no scraping. A tidy fit *if* I want US news — but the actual habit is AU news, so lower priority than `ko news aus`. Could fold in as a `ko news` source rather than its own command.
@@ -249,7 +120,7 @@ none urgent:
 HN consensus 2025–26: CLI beats MCP for agent tooling (~10–32× lower token cost) — ko's exact thesis. These had confirmed gaps (no decent CLI exists) + ready SDKs:
 
 - [x] **`ko tv`** — SHIPPED 2026-06-13 (ported from my chota-bot TS tool — the "is it good and where do I stream it" check I do often). TMDB v4 Read Access Token (free tier), searches movies+TV merged by popularity, AU watch providers by default (`--country`; data is JustWatch-supplied via TMDB partnership — no scraping). Provider dedupe keeps each service's best offer (stream > free > ads > rent > buy). Live-verified.
-- **`ko cal`** — Google Calendar readonly. Reuses our existing OAuth flow + token cache, just one more scope; `gcalcli` is display-oriented, not pipeable. Cheapest possible add.
+- [x] **`ko cal`** — SHIPPED (merged across accounts, plus `add`). Google Calendar readonly. Reuses our existing OAuth flow + token cache, just one more scope; `gcalcli` is display-oriented, not pipeable. Cheapest possible add.
 - **`ko fred`** — FRED economic data (844K series, free key, no CLI anywhere). Time-series → TSV matches the gsheets pattern.
 - **`ko certs`** — crt.sh cert-transparency/subdomain lookup. No SDK, undocumented JSON endpoint, maximally curl-hostile.
 - **`ko translate`** — DeepL, 500K chars/mo free (un-skipped: the free tier kills the old cost objection). Official CLI is Node/display-y; Python `deepl` SDK is clean. `ko fetch url | ko translate --to en`.
@@ -282,13 +153,13 @@ Three Sonnet sub-agents swept HN + Exa + web for what builders are doing in 2026
 ### From the "where is this going" chats (2026-06-26)
 - [ ] **`ko publish --md` mobile nav** — research-notes-to-phone-site is already this command (local md folder → Cloudflare, no Drive). Gap: phone-friendly browse — hamburger menu + a simple tappable list of pages. A scaffold/template tweak, not a new integration. (Drive API enabled 2026-06-26, but this use case doesn't use it.)
   - **Free backup/phone trick:** point the md folder at a **Drive-for-Desktop synced folder** — it's just a local folder to ko (no Drive API), but Drive gives free backup + phone access (Drive app), and `ko publish --md` deploys it (private folder, PIN-gated public site). Works for a *local* agent only — a remote Sprite agent can't reach it (use git/R2 — see `docs/fleet.md`).
-- [ ] **`ko gdocs` review/comment (needs Drive scope)** — "have the agent read my doc and comment on it." Key facts: the Docs API has **no suggested-edits** (direct edits only via batchUpdate — insert/delete/replace/style/tables), and **comments live in the Drive API** (`comments`/`replies`), not Docs. So commenting = the non-destructive review channel (agent leaves comments, I decide) and it requires Drive. Pair with `drive.readonly` + a configured folder id for "read the docs in this folder" (per-folder OAuth grant isn't a thing — scope is per-API; the folder limit is ko's behavior, or use a service-account + folder-share for a true grant).
+- [ ] **`ko gdocs` review/comment (needs Drive scope)** — partly shipped: `ko gdocs comments` / `reply` exist and `ko drive` brought the Drive scope; no agent review flow yet. The want: "have the agent read my doc and comment on it." Key facts: the Docs API has **no suggested-edits** (direct edits only via batchUpdate — insert/delete/replace/style/tables), and **comments live in the Drive API** (`comments`/`replies`), not Docs. So commenting = the non-destructive review channel (agent leaves comments, I decide) and it requires Drive. Pair with `drive.readonly` + a configured folder id for "read the docs in this folder" (per-folder OAuth grant isn't a thing — scope is per-API; the folder limit is ko's behavior, or use a service-account + folder-share for a true grant).
 - ko's MCP = **my curated subset**, deliberately NOT Google's giant official Workspace MCP. The point is the 10 tools I actually use (concise, low-context), not 80 generic ones.
 
 ### `ko mcp` verbs + investigation upgrades (decided 2026-06-26, implement after the cli refactor)
 Disambiguation rule: **a verb that takes `<url>` acts on someone else's server (client); `serve` (no url) makes ko the server.** Keeps "probe" vs "be a server" unconfusable.
-- [ ] **Rename `ko mcp test` → `ko mcp inspect <url>`** — clearer than "test" (the ambiguous word) and matches the ecosystem ("MCP **Inspector**"). Brand new, cheap to rename.
-- [ ] **Split `call` out as its own verb** — `ko mcp call <url> <tool> [--arg k=v]` (was the `--call` flag). inspect *reads*, call *invokes*.
+- [x] **Rename `ko mcp test` → `ko mcp inspect <url>`** (SHIPPED) — clearer than "test" (the ambiguous word) and matches the ecosystem ("MCP **Inspector**"). Brand new, cheap to rename.
+- [x] **Split `call` out as its own verb** (SHIPPED) — `ko mcp call <url> <tool> [--arg k=v]` (was the `--call` flag). inspect *reads*, call *invokes*.
 - [ ] **`ko mcp serve [--http]`** — run ko's OWN server (the FastMCP task, later). The no-url verb. Tool-design *principles* carry from `everx/docs/mcp-tool-design.md` (few powerful tools, progressive disclosure, low tool count, markdown-to-read vs JSON-to-render, helpful errors) — but the *shapes* don't: that's a CRM (find/detail/deep-dive/bulk over entities); ko's surface is SDK-wrapper verbs, so map the discipline, not the four entity tools.
 - [ ] **`inspect` = all surfaces, not just tools.** Use the raw `ClientSession` to also `list_resources` (+ `list_resource_templates`) and `list_prompts`, shown only if advertised. Surface the full `initialize` response — protocol, capabilities, and the server's **`instructions`** field. `--tool <name>` dumps one tool's full JSON Schema. Keep the raw-503 error fallback (the best part). Optional: `ko mcp ping <url>` via `session.send_ping()` for liveness+timing.
 
@@ -301,7 +172,7 @@ Disambiguation rule: **a verb that takes `<url>` acts on someone else's server (
   - **Decided 2026-06-27: don't bake localhost dev ports into the checked-in defaults** (sveltekit `:5180/mcp`, FastMCP default `:8000/mcp`). They're personal + ephemeral — pass ad-hoc (`ko mcp overview http://localhost:5180/mcp`) or alias in personal `~/.config/ko/mcp.json`. Checked-in = universal servers only.
   - **No enable/disable for the CLI** (name one server per command). Enable/disable is a *run-time server selection* for the agent (`ko ai` picks which servers to attach per run), not persistent state.
   - **Validated:** pydantic-ai v2's `load_mcp_toolsets(path)` reads our exact `mcpServers` shape (+ `${VAR}`/`${VAR:-default}`). So one mcp.json serves the CLI registry, `ko mcp overview`, AND the future `ko ai` agent.
-- [ ] **`ko billing` — more providers.** v1 is OpenRouter (`/api/v1/credits` balance + `/key` usage). Add a provider = a function returning `Balance`. Check which others expose a simple balance/usage endpoint (Anthropic/OpenAI usage APIs are org/admin-key gated; OpenRouter is the easy aggregate win since it fronts many models). Exa/TMDB/X likely have no public balance endpoint — confirm before adding.
+- [ ] **`ko billing` — more providers.** Now covers the AI Gateway and OpenRouter (`/api/v1/credits` balance + `/key` usage). Add a provider = a function returning `Balance`. Check which others expose a simple balance/usage endpoint (Anthropic/OpenAI usage APIs are org/admin-key gated; OpenRouter is the easy aggregate win since it fronts many models). Exa/TMDB/X likely have no public balance endpoint — confirm before adding.
 
 ### Infra note
 - **Progressive disclosure for `ko mcp`** — when the MCP server lands, expose **one** `ko` tool taking an argv array (agent calls `--help`, drills in, executes) rather than one MCP tool per subcommand. Measured ~91% token cut vs flat tool lists as the CLI grows. [solo.io/blog/keeping-context-and-tokens-low-with-progressive-disclosure-in-agentgateway](https://www.solo.io/blog/keeping-context-and-tokens-low-with-progressive-disclosure-in-agentgateway)
@@ -319,7 +190,7 @@ Decisions:
 - **Skills as markdown recipes**, agentskills format. Editable text, not code — same pattern as Claude skills, applied to my own CLI.
 - **Skills folder strategy (decided 2026-06-12): curated manual drop-in, never an installer.** Repo `skills/` holds the curated set — ours (`ko-tools/`) plus world skills manually copied *after reading them* (skills are prompt-injection vectors; reading-before-adopting is the security model, and git gives provenance + diffable updates). Convention: dropped-in skills get a `source:` URL + date in frontmatter metadata. Optional overlay: `~/.config/ko/skills/` merged at load for private/experimental skills, same loader.
 - **Agent declarations as data**: `agents/<name>.toml` — `model`, `system`, `toolsets = ["exa", "hf", …]` (names → module `FunctionToolset` registry), `skills = ["ko-tools", …]` (names → skill-loader capabilities). One ~15-line assembly function builds the `Agent`; `ko ai -a researcher "…"`, default agent when no flag. Deliberately NOT pydantic's `Agent.from_file` YAML — audited: it can't reference custom toolsets/function capabilities, ours must.
-- **The hn skill, spec'd (2026-06-12).** `ko ai hn gemini` = everything after `ai` goes to the agent; `hn` matches the skill, `gemini` is the topic. Baked judgment: last ~2 weeks, sorted by time, **drop anything under ~50 comments** (the "actually worth reading" filter), read top ≤5 stories — url content via the free in-house fetcher (`ko fetch`/trafilatura, NOT exa — no paid calls for this) + comment trees via `hn item`. Output contract (terminal): half-page overview — per story the HN link, a line or two on what it says, and interesting comment highlights. `--short` = a few lines + link refs only. Default model for skills like this: cheap tier (gemini-flash-class via OpenRouter), not the smart default.
+- **The hn skill, spec'd (2026-06-12).** `ko ai hn gemini` = everything after `ai` goes to the agent; `hn` matches the skill, `gemini` is the topic. Baked judgment: last ~2 weeks, sorted by time, **drop anything under ~50 comments** (the "actually worth reading" filter), read top ≤5 stories — url content via the free in-house fetcher (`ko fetch`/trafilatura, NOT exa — no paid calls for this) + comment trees via `hn item`. Output contract (terminal): half-page overview — per story the HN link, a line or two on what it says, and interesting comment highlights. `--short` = a few lines + link refs only. Default model for skills like this: the basic tier (AI Gateway), not the smart default.
 - **Two callers, two verbosities.** I call `ko ai` from the terminal (half-page default, `--short` available); my *outer* agents (Claude Code) also call it from bash instead of re-deriving the pipeline themselves — they pass `--long` for an expanded summary they can digest. Flags, not caller-detection.
 - **Build-order implication:** the hn skill needs the free URL→markdown fetcher, so `ko fetch` (already fully specified above) unblocks `ko ai` v1.
 - **SQLite, not DuckDB, at `~/.local/share/ko/ko.db`** (considered 2026-06-11): the db's jobs are transactional KV (conversation blobs, fetch cache) — SQLite's home turf, stdlib, zero deps. DuckDB is columnar/analytical, weaker as a KV store. No loss: `ko q` brings DuckDB anyway, and DuckDB ATTACHes SQLite files directly — analytics over ko.db ("what do I fetch most?") via `ko q` for free. Two tables:
@@ -335,7 +206,7 @@ Decisions:
 
 ### Implementation notes (research 2026-06-11: pydantic.dev docs + pydantic-ai source + private prior art)
 
-**On pydantic-ai v2.0.0b7 as of 2026-06-12** (was 1.87; switched before building anything — v2 is harness-first with `capabilities=[...]` as the core primitive, exactly our skills plan). Verified on upgrade: research agent + all tests pass untouched; clai internals we read are v2-current (diff vs beta: 10 trivial lines); `Capability` imports from `pydantic_ai.capabilities` (not top-level); `known_model_names()` exists (480 qualified names — the `ko llm` completion source, no fallback needed); `openrouter:`/`anthropic:` both resolve with the default extras. Gotchas: pin the exact beta (`==2.0.0b7`, bump deliberately; stable v2 imminent — un-pin then); `[tool.uv] prerelease = "allow"` needed for the slim sub-package; **`openai:` now means the Responses API** (`openai-chat:` for Chat Completions). Upgrade guide: pydantic.dev/docs/ai/changelog/.
+**On pydantic-ai v2.0.0b7 as of 2026-06-12** (now `>=2.56,<3` with a lockfile; was 1.87; switched before building anything — v2 is harness-first with `capabilities=[...]` as the core primitive, exactly our skills plan). Verified on upgrade: research agent + all tests pass untouched; clai internals we read are v2-current (diff vs beta: 10 trivial lines); `Capability` imports from `pydantic_ai.capabilities` (not top-level); `known_model_names()` exists (480 qualified names — the `ko llm` completion source, no fallback needed); `openrouter:`/`anthropic:` both resolve with the default extras. Gotchas: pin the exact beta (`==2.0.0b7`, bump deliberately; stable v2 imminent — un-pin then); `[tool.uv] prerelease = "allow"` needed for the slim sub-package; **`openai:` now means the Responses API** (`openai-chat:` for Chat Completions). Upgrade guide: pydantic.dev/docs/ai/changelog/.
 
 The skills system is ~zero custom code — pydantic-ai 2026 ships the pieces:
 
@@ -357,47 +228,15 @@ Two separate artifacts per tool — don't conflate them:
 
 ## Infra
 
-PostHog = the durable backend (logs survive crashes / reinstalls / new machines). **Two separate
-integrations — don't conflate them:**
+PostHog = the durable backend (logs survive crashes / reinstalls / new machines). **Two separate integrations — don't conflate them:**
 
-- [ ] **(a) Command logs → PostHog, auto-enabled on env var.** Local logging shipped 2026-06-27 via
-  loguru (`logs.py`: one wide event per command, scalar-only, no secrets). The sync is just a second
-  **`logger.add(posthog_sink)`** — `logs.setup()` adds it when **`POSTHOG_API_KEY`** (+ `POSTHOG_HOST`,
-  default `https://us.i.posthog.com`) is set. The sink forwards each loguru `record` → PostHog
-  **capture/batch API** (`POST /capture`) as a `ko_command` event (props: cmd, duration_ms, exit_code,
-  error, ko_version), `distinct_id` = a stable anon machine id. Buffer/flush since it's low-volume.
-  Easy because it's loguru. Ref: posthog.com/docs/logs/best-practices.
-- [ ] **(b) LLM/agent traces → PostHog AI Observability (OTel) — separate product.** PostHog ingests
-  OpenTelemetry **`gen_ai.*`** spans → `$ai_generation` events with model, tokens, **cost USD**, latency,
-  prompts, responses, tools; multi-step traces reconstruct via `$ai_trace_id`/`$ai_span_id`/`$ai_parent_id`.
-  PostHog OTLP endpoint: **`https://us.i.posthog.com/i/v0/ai/otel`** (`Authorization: Bearer <project_token>`).
-  Two homes — instrument at the **pydantic-ai layer** is preferred (provider-agnostic + local+cloud + control):
-  - **pydantic-ai `InstrumentationSettings` (PREFERRED).** `Agent.instrument_all(InstrumentationSettings(
-    tracer_provider=<ours>, include_content=<bool>))` in ko's agent bootstrap covers `ko llm`/`agent`/`ai`.
-    Why it wins (matches the multi-provider future): (1) **provider-agnostic** — wraps the model call *inside*
-    pydantic-ai, so it captures DeepSeek-direct/Gemini-direct/OR alike (OR Broadcast can't see non-OR calls;
-    DeepSeek-direct is a stated goal for cheap agents); (2) **one `tracer_provider`, N exporters** → save
-    **locally** (file/SQLite for analysis) *and* to PostHog (OTLP `/i/v0/ai/otel`) at once; (3) **`include_content`**
-    natively toggles prompt/completion capture — the scrub PostHog's path lacks. Emits `gen_ai.*` spans +
-    token/cost histograms. Cost: ko writes the TracerProvider+exporter setup + an OTel-sdk dep (pydantic-ai
-    `logfire` extra bundles OTel). Code: refs/pydantic-ai `models/instrumented.py`.
-  - **OpenRouter Broadcast → PostHog (zero ko code, fallback).** OR's native OTel sink (Settings →
-    Observability → Broadcast → OTLP + headers; Privacy Mode scrubs content). Server-side, but **OR-routed
-    calls only** — disqualified the moment a DeepSeek-direct/Gemini-direct agent exists. Path detail:
-    OR posts OTLP `/v1/traces`-style; PostHog wants `/i/v0/ai/otel` (maybe a Collector between).
-    Ref: openrouter.ai/docs/guides/features/broadcast/otel-collector.
-  Refs: posthog.com/docs/llm-analytics/installation/opentelemetry, /llm-analytics/start-here.
-  **Not building yet — research done 2026-06-27.**
+- [ ] **(a) Command logs → PostHog, auto-enabled on env var.** Local logging shipped 2026-06-27 via loguru (`logs.py`: one wide event per command, scalar-only, no secrets). The sync is just a second **`logger.add(posthog_sink)`** — `logs.setup()` adds it when **`POSTHOG_API_KEY`** (+ `POSTHOG_HOST`, default `https://us.i.posthog.com`) is set. The sink forwards each loguru `record` → PostHog **capture/batch API** (`POST /capture`) as a `ko_command` event (props: cmd, duration_ms, exit_code, error, ko_version), `distinct_id` = a stable anon machine id. Buffer/flush since it's low-volume. Ref: posthog.com/docs/logs/best-practices.
+- [x] **(b) LLM/agent traces → PostHog AI Observability (OTel) — separate product.** PostHog ingests OpenTelemetry **`gen_ai.*`** spans → `$ai_generation` events with model, tokens, **cost USD**, latency, prompts, responses, tools; multi-step traces reconstruct via `$ai_trace_id`/`$ai_span_id`/`$ai_parent_id`. PostHog OTLP endpoint: **`https://us.i.posthog.com/i/v0/ai/otel`** (`Authorization: Bearer <project_token>`). Two homes — instrument at the **pydantic-ai layer** is preferred (provider-agnostic + local+cloud + control):
+  - **pydantic-ai `InstrumentationSettings` (PREFERRED).** `Agent.instrument_all(InstrumentationSettings( tracer_provider=<ours>, include_content=<bool>))` in ko's agent bootstrap covers `ko llm`/`agent`/`ai`. Why it wins (matches the multi-provider future): (1) **provider-agnostic** — wraps the model call *inside* pydantic-ai, so it captures DeepSeek-direct/Gemini-direct/OR alike (OR Broadcast can't see non-OR calls; DeepSeek-direct is a stated goal for cheap agents); (2) **one `tracer_provider`, N exporters** → save **locally** (file/SQLite for analysis) *and* to PostHog (OTLP `/i/v0/ai/otel`) at once; (3) **`include_content`** natively toggles prompt/completion capture — the scrub PostHog's path lacks. Emits `gen_ai.*` spans + token/cost histograms. Cost: ko writes the TracerProvider+exporter setup + an OTel-sdk dep (pydantic-ai `logfire` extra bundles OTel). Code: refs/pydantic-ai `models/instrumented.py`.
+  - **OpenRouter Broadcast → PostHog (zero ko code, fallback).** OR's native OTel sink (Settings → Observability → Broadcast → OTLP + headers; Privacy Mode scrubs content). Server-side, but **OR-routed calls only** — disqualified the moment a DeepSeek-direct/Gemini-direct agent exists. Path detail: OR posts OTLP `/v1/traces`-style; PostHog wants `/i/v0/ai/otel` (maybe a Collector between). Ref: openrouter.ai/docs/guides/features/broadcast/otel-collector. Refs: posthog.com/docs/llm-analytics/installation/opentelemetry, /llm-analytics/start-here. **(b) shipped as `telemetry.py` (opt-in, off by default, `include_content` false); (a) not built. Research 2026-06-27.**
 - [x] PyPI trusted publisher + tag-push GitHub Action — SHIPPED 2026-07-14 (`.github/workflows/publish.yml`: tag push → `uv build` → `uv publish` via OIDC, environment `pypi`; no tokens).
-- [ ] **`ko costs` — local LLM-spend totals** (considered 2026-07-14). What exists: per-run cost
-  notes to stderr (`llm.run_cost`, actual-or-estimate), `llm.last_cost` global, full traces in
-  session files, `ko billing` = OpenRouter-side today/week/month (misses direct-key `google:`/
-  `openai:` calls, no per-command split). Build: (1) attach `last_cost` to the wide event in
-  `command_event` (usd, tokens, model, cost_source — scalar binds, ~5 lines); (2) `ko costs`
-  aggregates the logs JSONL: today/week/month by cmd + model, `~` marks estimates (retention
-  caps it at a rolling month — `ko billing` stays the long-horizon truth); (3) doctor footer
-  gets one summary line from the same aggregation.
-- [ ] **Tier fallback on 402** — when the OpenRouter pool runs dry, *every* tier fails together (llm default, `ko ai` medium, research smart) since all four route through one prepaid key; observed 2026-07-14 — exercising `ko ai` needed a manual `-m google:gemini-3-flash-preview`. Idea: optional `[llm] fallback` (a direct-key model, e.g. `google:gemini-3-flash-preview`) tried once when an `openrouter:` tier model 402s, with a loud stderr note — keeps the one-pool default, degrades to "still works" when credits run out.
+- [ ] **`ko costs` — local LLM-spend totals** (considered 2026-07-14). What exists: per-run cost notes to stderr (`llm.run_cost`, actual-or-estimate), `llm.last_cost` global, full traces in session files, `ko billing` = gateway/OpenRouter-side balances (misses direct-key `google:`/ `openai:` calls, no per-command split). Build: (1) attach `last_cost` to the wide event in `command_event` (SHIPPED: `ko logs` shows cost); (2) `ko costs` aggregates the logs JSONL: today/week/month by cmd + model, `~` marks estimates (retention caps it at a rolling month — `ko billing` stays the long-horizon truth); (3) doctor footer gets one summary line from the same aggregation.
+- [ ] **Tier fallback on 402** — when the prepaid pool runs dry, *every* tier fails together since all route through one key; observed 2026-07-14 on OpenRouter (exercising `ko ai` needed a manual `-m google:gemini-3-flash-preview`). Tiers now ride one AI Gateway key, so the shape is unchanged; no fallback built. Idea: optional `[llm] fallback` (a direct-key model, e.g. `google:gemini-3-flash-preview`) tried once when a gateway tier model 402s, with a loud stderr note — keeps the one-pool default, degrades to "still works" when credits run out.
 - [x] **Inject the current date into agent instructions** — SHIPPED 2026-07-14 as `_shared.preamble()` (date in `[cal] timezone` + ko-agent framing + brevity), injected into all four agents via `@agent.instructions def _context`. Verified: tv now stamps memory entries with the real date (was guessing "2024" in 2026).
 - [ ] **Past-sessions line in the agent preamble** (deferred 2026-07-14, the "later" half of the date/context work). Add a few recent session summaries to `_shared.preamble()` so an agent has ambient continuity ("last time you researched X / recommended Y"). Prereqs already exist: `ko agent sessions summarize` writes title+takeaway+tags to `ko.db`; `sessions.list_session_rows` reads them. Design Qs to settle first: scope to the *same* agent's sessions (tv sees tv history) or all; how many (token cost — 3-5 one-liners); only summarized sessions (unsummarized ones are invisible unless we auto-summarize on save). Keep it a preamble line, not a tool — it's ambient context, not something to query.
 - [ ] **Keys on a remote install** (noted 2026-07-14). Today's easy path: `scp ~/.config/ko/config.toml server:~/.config/ko/` (the `[keys]` table loads into env at startup — one file, zero shell config), `chmod 600`, then `ko doctor` as the acceptance test (per-key source + live OpenRouter `/credits` check). Google commands also need `google_client.json` + the portable `~/.local/state/ko/google_token.json` (no headless browser consent). Worth doing deliberately: a **separate OpenRouter key** per box against the one credit pool → per-key spend in `ko billing`, and kill it without rotating the laptop. Possible thin wrapper `ko keys push <host>` (scp config + tokens, chmod, remote `ko doctor`) if the pattern recurs — don't build until it does.

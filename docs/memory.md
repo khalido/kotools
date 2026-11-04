@@ -1,114 +1,59 @@
 # ko memory — a personal, owned, cross-agent memory store
 
-> **Status: planning (2026-06-27), not built.** A *separable component* — designed so it could later
-> graduate to its own GitHub repo. Companion research at the bottom.
+> **Status.** Part 1, per-agent `memory.md`, is **built** (shipped 2026-07-11, `src/ko/agents/_memory.py`). Part 2, the cross-agent store (libSQL index, `ko memory`, MCP server, overnight distiller), is **planned, not built** (2026-06-27). It is a separable component, designed so it could graduate to its own repo. Research is at the bottom.
 
-## v1 first: per-agent memory.md (SHIPPED 2026-07-11 as designed — `agents/_memory.py`)
+**Principle: own the memory layer.** The learning is the point, and I reach for this tool when I need it. Outsourcing to an all-in-one (mem0, Zep, Letta) puts it out of my hands. So I build a fraction of it on a solid DB backend and steal the patterns, not the dependency.
 
-Live-verified same day: repo agent appended to its memory, a FRESH run answered from the
-injection alone (zero tool calls, $0.0003). Design notes kept:
+## Part 1: per-agent memory.md (built)
 
-Researched against thinker's working SiftWorkspace, pydantic-deepagents, and hermes-agent (all in
-refs; subagent report). memory.md = **what an agent holds in its head** (working context +
-accumulated judgment); the vector store below = searchable external memory. Complementary — build
-the cheap one first, defer everything else in this doc.
+Live-verified on 2026-07-11: the repo agent appended to its memory, then a fresh run answered from the injection alone (zero tool calls, $0.0003). I researched it against thinker's SiftWorkspace, pydantic-deepagents and hermes-agent (all in refs). `memory.md` is what an agent holds in its head: working context plus accumulated judgment. The vector store in part 2 is searchable external memory. They complement each other; I built the cheap one first.
 
-- **Two tiers.** Per-agent `~/.local/state/ko/memory/<agent>/memory.md` (machine-local learned
-  knowledge — state dir; sessions remain the source of truth) + one shared
-  `~/.config/ko/memory.md` (user preferences / standing context — dotfile-synced; this IS
-  ideas.md's `context.md`, upgraded to agent-writable). Shared injects into every agent first,
-  then the agent's own. tv agent: also gets memory (added 2026-07, after shipping — taste notes recur).
-- **Injection** = the exact `@agent.instructions` mechanism repo.py already uses for
-  refs/CLAUDE.md: head-cap 200 lines + truncation pointer (thinker), plus deepagents' **pin
-  marker** (`<!-- ko:pin-end -->`): foundational notes above the pin always survive; the tail
-  below is recency-truncated. Prefix-cache-friendly (same string per step).
-- **Write tools** (`agents/_memory.py`, 4 tools as shipped): `read_note`, `append_memory`
-  (append-only — safer than overwrite), `write_note` (anchor memory.md protected from overwrite),
-  `edit_note` (thinker's uniqueness-guarded find-and-replace: old_string must occur exactly once,
-  ModelRetry otherwise).
-  Scoped to the agent's own memory dir — NOT the general files toolset (which stays read-only by
-  construction).
-- **Curation lives in instructions, not code** (thinker's discipline, observed working over 8
-  months of real memories — 22-52 lines/agent, no bloat): update slowly (only likely-to-recur
-  items), bump dates/counts in-place, DELETE stale entries, keep under ~100 lines. Shared memory
-  gets different rules: durable user-style facts only, no topic findings.
-- **Relation to the big plan**: skip libSQL/vector/MCP/distiller/decay for now. When the
-  distiller eventually exists it reads memory.md files as one of its sources. refs/CLAUDE.md is
-  effectively the repo agent's domain memory already — the subagent's own dogfood run measured
-  ~2x token cost exploring a repo missing from that map, which is the strongest evidence memory
-  injection pays for itself.
->
-> **Principle: own the memory layer.** The learning is the point, and it's a tool I reach for when I
-> need it. Outsourcing to an all-in-one (mem0 / Zep / Letta) puts it out of my hands. So: build a
-> *fraction* on a solid DB backend, steal the patterns, not the dependency.
+- **Two tiers.** Per-agent `~/.local/state/ko/memory/<agent>/memory.md` holds machine-local learned knowledge (state dir; sessions remain the source of truth). One shared `~/.config/ko/memory.md` holds user preferences and standing context (dotfile-synced; it is ideas.md's `context.md`, made agent-readable and hand-edited). Shared memory injects into every agent first, then the agent's own. The `ai`, `repo`, `research` and `tv` agents carry memory.
+- **Injection.** An `@agent.instructions` function, the same mechanism `repo.py` uses for refs/CLAUDE.md. It caps the head at 200 lines and adds a truncation pointer (thinker). It also supports deepagents' **pin marker** (`<!-- ko:pin-end -->`): notes above the pin always survive, and the tail below is recency-truncated. The string is the same on every step, so it is prefix-cache-friendly.
+- **Write tools** (`agents/_memory.py`, four): `read_note`; `append_memory` (append-only, safer than overwrite); `write_note` (the anchor `memory.md` is protected from overwrite); `edit_note` (thinker's find-and-replace: `old_string` must occur exactly once, else `ModelRetry`). They are scoped to the agent's own memory dir and `.md` files. The general files toolset stays read-only by construction.
+- **Curation lives in instructions, not code.** Thinker ran this for 8 months of real memories with no bloat (22-52 lines per agent). The rules: update slowly (only items likely to recur), bump dates and counts in place, delete stale entries, stay under ~100 lines. Shared memory gets different rules: durable user-style facts only, no topic findings.
+- **Relation to part 2.** Skip libSQL, vectors, MCP, the distiller and decay for now. When the distiller exists, it reads `memory.md` files as one source. refs/CLAUDE.md is already the repo agent's domain memory. The dogfood run measured ~2x token cost exploring a repo missing from that map, which is the strongest evidence that injection pays for itself.
 
-## Overview
+## Part 2: cross-agent store (planned)
 
-One cheap, **cross-agent** memory store. Any agent — Claude Code, `ko ai`, a fleet box, on my PC or
-wherever — reads/writes the *same* space. It holds **tight 1–2 line summaries** (facts, decisions,
-preferences, learnings) — it's the **search *surface*, not the full content**. **Retrieval is
-deterministic** — vector search, no LLM in the read path.
+### Overview
 
-**Two sources, and the depth lives elsewhere** (see `docs/notes.md`): a memory row is a summary derived
-from either (a) my **notes repo** — pointing back to the full note ("open the full version") — or (b) a
-**session** (the overnight distiller). So memory = the catalog; the **notes repo** = the depth; a row's
-`source` is a note path or a session id. This is progressive disclosure (same as `ko prompt` / skills).
+One cheap memory store shared by every agent: Claude Code, `ko ai`, a fleet box, on my PC or anywhere. It holds **tight 1-2 line summaries** (facts, decisions, preferences, learnings). It is the search *surface*, not the full content. **Retrieval is deterministic**: vector search, no LLM in the read path.
 
-Three pieces that click together (each reuses something ko already has):
+A memory row is a summary derived from one of two sources, and the depth lives elsewhere (see `docs/notes.md`). Either it comes from my **notes repo**, pointing back to the full note, or from a **session**, via the overnight distiller. So memory is the catalog and the notes repo is the depth. A row's `source` is a note path or a session id. This is progressive disclosure, the same as `ko prompt` and skills.
 
-- **Store** — libSQL (Turso) single file + native vector. Local-first; an *embedded replica*
-  auto-syncs to a central hosted DB → local-cheap **and** accessible-everywhere, same SQL both modes.
-- **Access** — `ko memory search/add` (deterministic, cheap), *also wrapped as an MCP server* → one
-  `mcp.json` line and every agent shares it. (Reuses this repo's MCP registry/client work.)
-- **Population** — an overnight `ko ai` skill distills sessions → typed facts. A *curated projection*
-  of the session log (the "log is the agent" projection rule), not a dump.
+Three pieces, each reusing something ko already has:
 
-## Plan
+- **Store.** A libSQL (Turso) single file with native vectors. Local-first; an *embedded replica* auto-syncs to a central hosted DB. Local-cheap and reachable everywhere, with the same SQL in both modes.
+- **Access.** `ko memory search/add` (deterministic, cheap), also wrapped as an MCP server, so one `mcp.json` line gives every agent the same memory. It reuses ko's MCP registry and client work.
+- **Population.** An overnight `ko ai` skill distills sessions into typed facts. It is a curated projection of the session log (the "log is the agent" projection rule), not a dump.
 
-### Source of truth: markdown-in-git; libSQL is a projection (refinement 2026-06-27, from a Gemini sketch)
+### Source of truth: markdown in git; libSQL is a projection
 
-**The inversion that improves the plan:** the **human-readable markdown in a private git repo is the
-source of truth; the libSQL vector DB is a *rebuildable index* over it** (not the store). Why it's the
-right call here:
-- It *is* the projection rule (markdown = truth, vector DB = disposable; rebuild from markdown anytime).
-- **Inspectable + hand-editable** — read / `git diff` / edit memory as plain markdown. Maximum "own it".
-- **Git is the durable, multi-machine sync of the source** — free, versioned, survives DB loss.
-- The markdown source IS the **notes repo** (`docs/notes.md`) — full notes + artifacts, `labs`-style.
-  Memory indexes *summaries* of it (plus sessions); the vector DB rebuilds from the notes anytime.
-  (Claude Code's `MEMORY.md` is a related lightweight cousin — could live in the same notes repo.)
+Refined 2026-06-27, from a Gemini sketch. The human-readable markdown in a private git repo is the source of truth. The libSQL vector DB is a *rebuildable index* over it, not the store. Why:
 
-**Sync — simpler than syncing both:** **git syncs the source**; each machine **rebuilds its own local
-libSQL** from the markdown (re-embedding a few hundred curated facts with a small local model is cheap).
-A **central Turso (or the edge-mcp MCP server) is *optional* — only for *remote* agents** (fleet/edge)
-that query without running an embedder. So Turso is a remote-query convenience, not the sync backbone.
+- It is the projection rule: markdown is truth, the vector DB is disposable, and a rebuild from markdown works anytime.
+- It is inspectable and hand-editable. I can read, `git diff` and edit memory as plain markdown.
+- Git is free, versioned, multi-machine sync of the source, and it survives DB loss.
+- The markdown source *is* the **notes repo** (`docs/notes.md`): full notes and artifacts, `labs`-style. Memory indexes summaries of it plus sessions. (Claude Code's `MEMORY.md` is a lightweight cousin and could live in the same repo.)
 
-**Workspace anchor files** (ko already uses the `AGENTS.md` pattern — same idea, pointed at the notes repo):
-- `AGENTS.md` in the notes root — the protocol: read/append markdown in-domain, and on a novel
-  fact/decision append one line to `log.jsonl`, then commit.
-- `log.jsonl` — append-only `{ts, agent, action, file, summary, vector_dirty}` per change. The real-time
-  loop writes markdown + this line (zero latency, **no embedding mid-flight**); the overnight loop scans
-  for `vector_dirty:true` and **re-embeds just those** (incremental re-index). (Overlaps git history a
-  little; the `vector_dirty` flag + cheap-scan summary are the value-add.)
+**Sync is simpler than syncing both.** Git syncs the source. Each machine rebuilds its own local libSQL from the markdown; re-embedding a few hundred curated facts with a small local model is cheap. A central Turso (or the edge-mcp MCP server) is *optional*, only for *remote* agents (fleet, edge) that query without running an embedder. Turso is a remote-query convenience, not the sync backbone.
 
-Embeddings stay **small + local**: 384-dim int8 (MiniLM), *not* 1536-dim float32 (~16× storage + a paid
-API call per fact) — bump only if retrieval visibly misses.
+**Workspace anchor files.** ko already uses the `AGENTS.md` pattern; this points it at the notes repo.
+- `AGENTS.md` in the notes root holds the protocol: read and append markdown in-domain; on a novel fact or decision, append one line to `log.jsonl`, then commit.
+- `log.jsonl` is append-only, one `{ts, agent, action, file, summary, vector_dirty}` per change. The real-time loop writes markdown plus this line (zero latency, **no embedding mid-flight**). The overnight loop scans for `vector_dirty:true` and re-embeds just those (incremental re-index). It overlaps git history a little; the `vector_dirty` flag and the cheap-scan summary are the added value.
 
-### Backend decision: Turso / libSQL  (over Cloudflare, over the managed layers)
+Embeddings stay **small and local**: 384-dim int8 (MiniLM), not 1536-dim float32 (~16x the storage, plus a paid API call per fact). Bump only if retrieval visibly misses.
 
-- **Turso / libSQL ✓ (chosen).** One file does storage *and* vector; **embedded replica** = local DB
-  that syncs overnight to a central hosted DB (exactly the model I want); SQLite-native (familiar SQL,
-  `ko q` can analyze it). Turso's own AI-memory guide ships the exact schema + decay SQL, and
-  **`memelord`** is a reference impl: an MCP server + hooks with reinforcement-style weight decay.
-  Free tier to start; the **$5/mo plan** covers sync/scale when it goes multi-machine.
-- **Cloudflare (alternative, not chosen).** D1 + Vectorize + Workers AI behind a Worker on
-  `edge-mcp.khalido.dev` — works (several `*-memory-mcp` projects do it), edge-native, already in my
-  stack, Workers AI gives edge embeddings for free. **But:** two *strictly separate* stores to keep in
-  sync (D1 for rows, Vectorize for vectors), and **cloud-only — no local-first / embedded replica.**
-  That loses the "local DB synced overnight" property. Use only if I later want pure-edge / no Turso.
-- **mem0 / Zep / Letta (no).** Managed all-in-one memory layers — out of my hands. *Steal the patterns
-  (below), not the dependency.*
+### Backend: Turso / libSQL
 
-### Schema (from Turso's guide, adapted — deliberately minimal)
+- **Turso / libSQL (chosen).** One file does storage and vectors. The **embedded replica** is a local DB that syncs overnight to a central hosted DB, exactly the model I want. It is SQLite-native (familiar SQL; the planned `ko q` could analyze it). Turso's own AI-memory guide ships the exact schema and decay SQL. **`memelord`** is a reference implementation: an MCP server plus hooks with reinforcement-style weight decay. Free tier to start; the $5/mo plan covers sync and scale when it goes multi-machine.
+- **Cloudflare (not chosen).** D1 + Vectorize + Workers AI behind a Worker on `edge-mcp.khalido.dev`. It works (several `*-memory-mcp` projects do it), it is edge-native, it is already in my stack, and Workers AI gives free edge embeddings. But it needs two *strictly separate* stores kept in sync (D1 for rows, Vectorize for vectors), and it is **cloud-only, with no local-first replica**. That loses the "local DB synced overnight" property. Use it only if I later want pure edge with no Turso.
+- **mem0 / Zep / Letta (no).** Managed all-in-one layers, out of my hands. Steal the patterns (below).
+
+### Schema
+
+From Turso's guide, adapted and deliberately minimal.
 
 ```sql
 CREATE TABLE memories (
@@ -124,7 +69,7 @@ CREATE TABLE memories (
 );
 ```
 
-Retrieval — no vector index needed at personal scale; a full scan + `ORDER BY distance LIMIT k` is fast:
+Retrieval needs no vector index at personal scale. A full scan with `ORDER BY distance LIMIT k` is fast:
 
 ```sql
 SELECT id, content, type, vector_distance_cos(embedding, vector8(?)) AS dist
@@ -132,76 +77,52 @@ FROM memories WHERE embedding IS NOT NULL
 ORDER BY dist ASC LIMIT ?;
 ```
 
-### Read — deterministic + cheap
-`ko memory search "<q>"` = one embedding call (cheap model / Workers AI / local MiniLM) → vector top-k
-→ facts. No agent loop, no LLM reasoning. `ko memory add "<fact>" [--type --tags]` for manual writes.
-Both exposed as an **MCP server** (`memory_search` / `memory_add`) so every agent gets it via `mcp.json`.
+### Read: deterministic and cheap
 
-### Write / population — overnight, ADD-only
-A nightly `ko ai` skill: read new sessions → distill **atomic typed facts** using mem0's **ADD-only,
-one-LLM-call-per-add** pattern (accumulate, skip complex UPDATE/DELETE logic — let decay do the pruning)
-with a **small/cheap model** (cf. LightMem) → embed → insert. **Only from my own sessions/work —
-never raw external content as a "fact"** (poisoning, see MemoryGraft).
+`ko memory search "<q>"` makes one embedding call (cheap model, Workers AI or local MiniLM), takes the vector top-k, and returns facts. No agent loop, no LLM reasoning. `ko memory add "<fact>" [--type --tags]` writes manually. Both are exposed as an **MCP server** (`memory_search`, `memory_add`), so every agent gets them via `mcp.json`.
 
-### Decay / forgetting — the curation that keeps it useful
-Forgetting is a *feature*, not an afterthought (SuperLocalMemory). On retrieval, bump `last_used` /
-`use_count`. Periodic GC: weight ≈ `use_count * POWER(0.95, days_since_last_used)`; prune low-weight +
-never-retrieved rows. This keeps the store a small curated set, not a junk drawer — **curation beats
-vector tech** (the "memory fallacy" critique).
+### Write: overnight, ADD-only
 
-### Thin slice (build order)
-1. **Markdown notes repo + `ko memory add` / `search`.** `add` appends a markdown fact (+ a `log.jsonl`
-   line); `search` queries a **local libSQL index rebuilt from the markdown**. Prove retrieval is useful.
-2. **Incremental re-index** — scan `log.jsonl` for `vector_dirty`, re-embed just those + decay/GC.
-3. **Expose as an MCP server** → Claude Code + `ko ai` share one memory (and the same markdown repo).
-4. **Overnight session-distiller skill** (ADD-only, small model) → writes markdown facts, not DB rows.
-5. **Central Turso / edge-mcp** only when a *remote* agent (fleet/edge) must query without an embedder.
+A nightly `ko ai` skill reads new sessions and distills **atomic typed facts**. It uses mem0's **ADD-only, one-LLM-call-per-add** pattern: accumulate, skip UPDATE/DELETE logic, let decay do the pruning. It runs a small, cheap model (cf. LightMem), then embeds and inserts. It ingests **only my own sessions and work**, never raw external content as a "fact" (poisoning; see MemoryGraft).
 
-Skip for v1: knowledge graph (Zep / MAGMA), temporal fact-validity, UPDATE/merge logic. Add only if the
-simple version visibly underdelivers.
+### Decay
+
+Forgetting is a feature (SuperLocalMemory). On retrieval, bump `last_used` and `use_count`. A periodic GC computes weight ≈ `use_count * POWER(0.95, days_since_last_used)` and prunes low-weight and never-retrieved rows. That keeps the store a small curated set, not a junk drawer. **Curation beats vector tech** (the "memory fallacy" critique).
+
+### Build order
+
+1. **Markdown notes repo plus `ko memory add` / `search`.** `add` appends a markdown fact and a `log.jsonl` line. `search` queries a local libSQL index rebuilt from the markdown. Prove that retrieval is useful.
+2. **Incremental re-index.** Scan `log.jsonl` for `vector_dirty`, re-embed just those, add decay and GC.
+3. **Expose as an MCP server.** Claude Code and `ko ai` then share one memory and the same markdown repo.
+4. **Overnight session-distiller skill** (ADD-only, small model). It writes markdown facts, not DB rows.
+5. **Central Turso / edge-mcp**, only when a *remote* agent (fleet, edge) must query without an embedder.
+
+Skip for v1: knowledge graph (Zep, MAGMA), temporal fact-validity, UPDATE/merge logic. Add them only if the simple version visibly underdelivers.
 
 ---
 
 ## Research (2026-06-27)
 
-Gathered by dogfooding `ko exa` / `ko hn` / `ko hf`.
+Gathered by dogfooding `ko exa`, `ko hn` and `ko hf`.
 
-### Reference implementation — Turso AI memory + `memelord`
-- Turso's [AI memory guide](https://docs.turso.tech/guides/ai-memory): two tables (`memories`, `tasks`);
-  `F8_BLOB(384)` int8-quantized vectors; search via `vector_distance_cos(embedding, vector8(?))`;
-  **full table scan is fast enough at per-project scale** (no ANN index); int8 = 75% storage cut.
-  Embeddings from an external model (`all-MiniLM-L6-v2`). Decay is left as experiments: EMA weights,
-  `POWER(0.95, days_since_last_retrieved)` time-decay, GC of low-weight/never-retrieved.
-- **`memelord`** — an MCP server + hooks implementing the pattern with reinforcement-style weight decay
-  for coding agents. This is essentially the shape we want; read it before building.
+### Reference implementation: Turso AI memory and `memelord`
+- Turso's [AI memory guide](https://docs.turso.tech/guides/ai-memory) uses two tables (`memories`, `tasks`) and `F8_BLOB(384)` int8-quantized vectors. Search is `vector_distance_cos(embedding, vector8(?))`. A **full table scan is fast enough at per-project scale** (no ANN index), and int8 cuts storage 75%. Embeddings come from an external model (`all-MiniLM-L6-v2`). Decay is left as experiments: EMA weights, `POWER(0.95, days_since_last_retrieved)` time decay, GC of low-weight and never-retrieved rows.
+- **`memelord`** is an MCP server plus hooks that implement the pattern with reinforcement-style weight decay for coding agents. It is essentially the shape I want. Read it before building.
 
-### Cloudflare option (edge-native, two-store)
-- Native CF memory-MCP servers exist: `MrSnowGlobe/cf-memory-mcp` (D1 + Vectorize + KV + Workers AI),
-  `Avik-creator/mcp-memory-cloudflare`, `jmbish04/mcp-memory-v3`. [Vectorize + Workers AI embeddings
-  tutorial](https://developers.cloudflare.com/vectorize/get-started/embeddings/).
-- The honest write-up: ["challenges of a semantic memory layer on Workers + D1 + Vectorize"](https://dev.to/rahil_pirani_c48446facc8c/the-challenges-of-creating-a-semantic-memory-layer-on-cloudflare-workers-d1-and-vectorize-3c7a)
-  — **two strictly separate stores** (D1 rows + Vectorize vectors) you must keep consistent; works on
-  the free tier. Edge-native but **no local-first replica**.
+### Cloudflare option (edge-native, two stores)
+- Native CF memory-MCP servers exist: `MrSnowGlobe/cf-memory-mcp` (D1 + Vectorize + KV + Workers AI), `Avik-creator/mcp-memory-cloudflare`, `jmbish04/mcp-memory-v3`. See the [Vectorize + Workers AI embeddings tutorial](https://developers.cloudflare.com/vectorize/get-started/embeddings/).
+- The honest write-up: ["challenges of a semantic memory layer on Workers + D1 + Vectorize"](https://dev.to/rahil_pirani_c48446facc8c/the-challenges-of-creating-a-semantic-memory-layer-on-cloudflare-workers-d1-and-vectorize-3c7a). It means **two strictly separate stores** (D1 rows, Vectorize vectors) that you must keep consistent. It works on the free tier. Edge-native, but **no local-first replica**.
 
-### Managed layers — steal patterns, not the dependency
-- **mem0** ([arxiv 2504.19413](https://arxiv.org/html/2504.19413)): two-phase (extraction + update),
-  three-step loop (retrieve → enrich → store). **OSS v3 is ADD-only**: one LLM call per add, accumulate,
-  no UPDATE/DELETE + multi-signal hybrid retrieval. ← the write pattern to copy.
-- **Zep** (Graphiti): temporal knowledge graph, fact-validity over time. **Letta** (MemGPT): tiered,
-  self-editing memory. Both heavier than v1 needs.
+### Managed layers: patterns, not the dependency
+- **mem0** ([arxiv 2504.19413](https://arxiv.org/html/2504.19413)): two phases (extraction, update) and a three-step loop (retrieve, enrich, store). **OSS v3 is ADD-only**: one LLM call per add, accumulate, no UPDATE/DELETE, multi-signal hybrid retrieval. This is the write pattern to copy.
+- **Zep** (Graphiti): temporal knowledge graph with fact-validity over time. **Letta** (MemGPT): tiered, self-editing memory. Both are heavier than v1 needs.
 
-### HF papers (decay / extraction / typing / security)
-- **SuperLocalMemory V3.3** (2604.04514) — local-first, **zero-LLM retrieval** (validates the
-  deterministic read) + **biologically-inspired forgetting**.
-- **LightMem** (2604.07798) — memory extraction with **small language models** (cheap write path).
-- **Memanto** (2604.22085) — **typed** semantic memory + information-theoretic retrieval (store
-  high-information items; the `type` field earns its place).
-- **MemoryGraft** (2512.16962) — **poisoned-experience-retrieval attack**: malicious "memories" cause
-  persistent behavioral drift. ⇒ only ingest distilled-from-my-own-work; treat memory like skills
-  (read-before-trust).
-- **Zep: A Temporal Knowledge Graph Architecture** (2501.13956, the paper behind the product).
+### HF papers (decay, extraction, typing, security)
+- **SuperLocalMemory V3.3** (2604.04514): local-first, **zero-LLM retrieval** (validates the deterministic read) and **biologically-inspired forgetting**.
+- **LightMem** (2604.07798): memory extraction with **small language models** (cheap write path).
+- **Memanto** (2604.22085): **typed** semantic memory with information-theoretic retrieval (store high-information items; the `type` field earns its place).
+- **MemoryGraft** (2512.16962): a **poisoned-experience-retrieval attack**. Malicious "memories" cause persistent behavioral drift. So ingest only what is distilled from my own work, and treat memory like skills (read before trust).
+- **Zep: A Temporal Knowledge Graph Architecture** (2501.13956), the paper behind the product.
 
 ### Skeptic
-- ["The private agent memory fallacy"](https://blog.getzep.com/the-ai-memory-wallet-fallacy/) — naive
-  vector-memory underdelivers (missed retrieval, stale junk). Lesson baked into the plan: **small,
-  curated, decaying** > a big vector dump.
+- ["The private agent memory fallacy"](https://blog.getzep.com/the-ai-memory-wallet-fallacy/): naive vector memory underdelivers (missed retrieval, stale junk). The lesson baked into the plan: **small, curated, decaying** beats a big vector dump.

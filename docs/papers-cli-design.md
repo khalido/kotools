@@ -1,25 +1,12 @@
 # ko papers — design (built 2026-07-03)
 
-> Implemented as designed. One deviation found in live testing: OpenAlex has
-> occasional bad-merge records (e.g. `doi:10.1002/jemt.20118` returns the right
-> abstract under a wrong title/author) — upstream data, not fixable here;
-> `search` for the title and use the W-id when a record looks off.
+Cross-publisher literature scouting, implemented as designed in `src/ko/papers.py`. One deviation found in live testing: OpenAlex has occasional bad-merge records (e.g. `doi:10.1002/jemt.20118` returns the right abstract under a wrong title/author). That is upstream data and not fixable here. If a record looks off, `search` for the title and use the W-id.
 
-Cross-publisher literature scouting. Motivated by the UTS TMOS lab project, where
-`ko arxiv` covers arXiv but real gaps showed up in practice: no fetch path for
-DOI-only papers (Wiley/MDPI/ACS/IOP), `ko fetch` 403s on publisher sites, and no
-citation-graph queries ("who cites the eXfoliator paper?"). APIs below were
-**verified live** during design (2026-07-03).
+Motivation came from the UTS TMOS lab project. `ko arxiv` covers arXiv, but real gaps showed up: no fetch path for DOI-only papers (Wiley/MDPI/ACS/IOP), `ko fetch` 403s on publisher sites, and no citation-graph queries ("who cites the eXfoliator paper?"). The APIs below were **verified live** during design (2026-07-03).
 
 ## Verdict
 
-New `src/ko/papers.py` module. **OpenAlex is the backbone** (search, DOI lookup,
-OA-URL resolution, citation graph — no key, ~10k req/day, polite pool via
-`?mailto=`). **Semantic Scholar is enrichment only** (`tldr`, `similar`) and needs a
-free `S2_API_KEY` — without a key it 429s after ~2 calls (verified), so it's opt-in
-and degrades gracefully. **Skip Unpaywall** (OpenAlex's `open_access.oa_url` IS
-Unpaywall's data — it's the upstream), **skip Crossref/CORE/Europe PMC** (subsumed /
-too narrow). Zero new deps (httpx already present).
+**OpenAlex is the backbone**: search, DOI lookup, OA-URL resolution and the citation graph, with no key, ~10k req/day, and a polite pool via `?mailto=`. **Semantic Scholar is enrichment only** (`tldr`, `similar`) and needs a free `S2_API_KEY`. Without a key it 429s after ~2 calls (verified), so it's opt-in and degrades quietly to an empty tldr. **Skip Unpaywall**: OpenAlex's `open_access.oa_url` is Unpaywall's data, with Unpaywall as the upstream. **Skip Crossref, CORE and Europe PMC** (subsumed, or too narrow). No new deps (httpx was already present).
 
 ## Commands
 
@@ -31,28 +18,15 @@ ko papers refs <id> [--n] [--json]             # referenced_works → batch reso
 ko papers similar <id> [--n 5] [--json]        # S2 recommendations (needs S2_API_KEY)
 ```
 
-`get` flow: OpenAlex `/works/doi:{doi}` → try each open-access candidate in
-`Work.full_text_urls` (direct PDFs from `best_oa_location`/`locations[]` first, the
-`open_access.oa_url` landing page last), fetching via the existing liteparse pipeline
-until one yields text. Trying every OA location — not just OpenAlex's single `oa_url`
-pick — is what dodges bot-blocks: a green-OA Nature paper carries the Nature PDF *plus*
-an arXiv PDF *plus* an OSTI mirror, so if the publisher blocks us a repository copy
-still lands (added 2026-07-03, from the Sonnet-agent review). If every candidate fails
-(or it's genuinely paywalled): print a **metadata card** — title, year, authors,
-journal, DOI, S2 tldr, and the abstract reconstructed from `abstract_inverted_index`
-(invert word→positions, sort, join — 5 lines). Often enough.
+`get` also takes `--info` (card only), `-o <path>` (write the full text there) and `--json` (implies `--info`). Every `<id>` accepts a DOI, a doi.org URL, an arxiv id or an OpenAlex W-id.
 
-Deferred access pathways (reviewed 2026-07-03, not built): **EZproxy deep-link** print
-(`ezproxy.lib.<uni>/login?url=<doi>` for the owner to click — no uni login yet) and a
-**`--scihub` opt-in** fallback (off by default; skipped for now — the full OA-location
-chain covers more than expected first).
+`get` flow: OpenAlex `/works/doi:{doi}` → try each open-access candidate in `Work.full_text_urls` through the existing liteparse pipeline until one yields text. Direct PDFs from `best_oa_location`/`locations[]` go first; the `open_access.oa_url` landing page goes last. Trying every OA location, not just OpenAlex's single `oa_url` pick, is what dodges bot-blocks. A green-OA Nature paper carries the Nature PDF *plus* an arXiv PDF *plus* an OSTI mirror, so if the publisher blocks us, a repository copy still lands (added 2026-07-03 after the Sonnet-agent review). If every candidate fails, or the paper is genuinely paywalled, `get` prints a **metadata card**: title, year, authors, journal, DOI, S2 tldr, and the abstract reconstructed from `abstract_inverted_index` (invert word→positions, sort, join; 5 lines). Often enough.
 
-## Also: DOI routing in fetch.py (~15 lines)
+Deferred access pathways (reviewed 2026-07-03, not built): an **EZproxy deep-link** print (`ezproxy.lib.<uni>/login?url=<doi>` for the owner to click; no uni login yet) and a **`--scihub` opt-in** fallback (off by default). The full OA-location chain covered more than expected, so both were skipped.
 
-SHIPPED (`fetch.py`). `ko fetch https://doi.org/...` used to land trafilatura on a publisher
-landing page and return nothing. Now DOI detection
-(`(?:doi\.org/|doi:|^)(10\.\d{4,}/\S+)`) runs before the existing routing → resolves
-`open_access.oa_url` via OpenAlex → tries that first → falls through to the old path.
+## Also: DOI routing in fetch.py
+
+Shipped in `fetch.py`. `ko fetch https://doi.org/...` used to land trafilatura on a publisher landing page and return nothing. Now DOI detection (`_DOI_RE`, `(?:doi\.org/|doi:|^)(10\.\d{4,}/[^\s?#]+)`) runs before the existing routing, resolves `open_access.oa_url` via OpenAlex, tries that first, and falls through to the old path.
 
 ## Key endpoints/fields (verified)
 
@@ -70,14 +44,10 @@ Semantic Scholar (`api.semanticscholar.org`, header `x-api-key`):
 - `GET /recommendations/v1/papers/forpaper/{id}?fields=title,year,externalIds,citationCount&limit={n}`
 - 1 req/s with key; unusable without (429 after ~2 calls).
 
-## Implementation sketch
+## Implementation as built
 
-- `src/ko/papers.py` ~200 lines: `_resolve_id` (doi vs arxiv), `_oa_get/_oa_search/
-  _oa_cites/_oa_refs`, `_reconstruct_abstract`, `_s2_tldr` (graceful no-key), thin
-  public `search/get/cites/refs/similar`.
-- `cli.py`: `papers_app` typer sub-app, 5 commands, TSV default + `--json` (~40 lines).
-- `agents/_toolsets.py`: add `papers_search` + `papers_cites` to the existing `papers`
-  toolset (~20 lines) — the research agent gets the citation graph for free.
-- Config: `S2_API_KEY` env or `config.toml [keys]`; `ko doctor` lists it as optional.
-- Not adding: author search (query covers it), local caching/indexing, venue/date
-  filter flags (OpenAlex filters slot in later without reshaping the module).
+- `src/ko/papers.py`, 290 lines (the sketch said ~200): id resolution (doi vs arxiv), OpenAlex search/cites/refs, abstract reconstruction, `_s2_tldr` (empty without a key), and thin public `search/get/cites/refs/similar`.
+- `cli_web.py`: the `ko papers` Typer sub-app, 5 commands, TSV default + `--json`.
+- `agents/_toolsets.py`: `papers_search`, `papers_cites` and `papers_refs` in the `papers` toolset, so the research agent gets the citation graph.
+- Config: `S2_API_KEY` from env or `config.toml [keys]`; `ko doctor` lists it as optional.
+- Not added: author search (the query covers it), local caching/indexing, venue/date filter flags (OpenAlex filters slot in later without reshaping the module).
