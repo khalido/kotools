@@ -66,6 +66,13 @@ papers_app = typer.Typer(
 )
 app.add_typer(papers_app, name="papers")
 
+_ENGINE_HELP = (
+    "OCR engine: a gateway vision model id (`llm` = the default, DeepSeek v4.1 Flash; paid) | "
+    "vision (Apple, free) | tesseract; else `\\[ocr] engine`"
+)
+ocr_app = typer.Typer(help="OCR server for liteparse (`ko doc` starts its own when none is up).", no_args_is_help=True)
+app.add_typer(ocr_app, name="ocr")
+
 pkg_app = typer.Typer(help="npm/PyPI packages: `info <name>...` (no key).", no_args_is_help=True)
 app.add_typer(pkg_app, name="pkg")
 
@@ -700,7 +707,7 @@ def doc(
         None, "--out", "-o", help="write text to this path; prints to stdout if omitted"
     ),
     ocr: bool = typer.Option(
-        None, "--ocr/--no-ocr", help="OCR every page / none (default: only PDF pages with no text layer)"
+        None, "--ocr/--no-ocr", help="OCR every page / none (default: only pages with no text layer)"
     ),
     md: bool = typer.Option(False, "--md", help="markdown per page (tables as pipe tables)"),
     as_json: bool = typer.Option(False, "--json", help="emit [{page, label, text}]"),
@@ -708,10 +715,11 @@ def doc(
         False, "--deep", help="docling: reads multi-column layouts in order; figures saved beside -o (slow, ~3 s a page)"
     ),
     describe: bool = typer.Option(False, "--describe", help="with --deep: a Gemini description under each figure (paid)"),
+    engine: str = typer.Option(None, "--engine", "-e", help=_ENGINE_HELP),
 ) -> None:
     """Document → text via liteparse, each page under a `<!-- page N -->` line so claims can cite
     it. A .docx reads directly as markdown (no pages); `--pages`/`--json` lay it out via
-    LibreOffice instead. Local + fast, no models. Shortcut: `ko <file>`."""
+    LibreOffice instead. OCR only for pages with no text layer (`-e`). Shortcut: `ko <file>`."""
     if describe and not deep:
         _die("--describe needs --deep", code="usage")
     if deep:
@@ -738,7 +746,7 @@ def doc(
         _write_doc(f"{head}\n\n{body}", out)
         return
     try:
-        parsed = doc_mod.parse_pages(file, pages=pages, ocr=ocr, markdown=md)
+        parsed = doc_mod.parse_pages(file, pages=pages, ocr=ocr, markdown=md, engine=engine)
     except Exception as e:
         _die(str(e), as_json=as_json)
     if as_json:
@@ -748,6 +756,43 @@ def doc(
     else:
         text = doc_mod.marked(parsed)
     _write_doc(text, out)
+
+
+@ocr_app.command("serve")
+def ocr_serve(
+    engine: str = typer.Option(None, "--engine", "-e", help=_ENGINE_HELP),
+    port: int = typer.Option(8828, "--port", help="localhost port"),
+) -> None:
+    """Serve liteparse's OCR API on 127.0.0.1 until Ctrl-C; prints the --ocr-server-url to use."""
+    from . import ocr
+
+    name = ocr.engine(engine)
+    if name == "tesseract":
+        _die("tesseract runs inside liteparse; it has no server", code="usage")
+    try:
+        read = ocr.reader(name)
+    except Exception as e:  # a missing key, no swiftc, not macOS
+        _die(str(e))
+    try:
+        srv = ocr.server(name, port=port, read=read)
+    except OSError as e:
+        _die(f"port {port}: {e.strerror}", code="usage")
+    typer.echo(f"--ocr-server-url http://127.0.0.1:{port}/ocr --num-workers {ocr.workers(name)}")
+    typer.echo(f"[ocr: {name.removeprefix('vercel:')} on 127.0.0.1:{port}; Ctrl-C stops]", err=True)
+    import signal
+
+    def _stop(*_):
+        raise KeyboardInterrupt  # `kill` stops it like Ctrl-C: cost note, port freed
+
+    signal.signal(signal.SIGTERM, _stop)
+    try:
+        srv.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        srv.server_close()
+        if isinstance(srv.reader, ocr.Model) and (note := srv.reader.note()):
+            typer.echo(note, err=True)
 
 
 def _write_doc(text: str, out: Path | None) -> None:

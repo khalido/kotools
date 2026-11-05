@@ -88,3 +88,10 @@ def _clean_gateway_models():
     yield
     models._gateway_model.cache_clear()
     models._live_catalog.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def _free_ocr(monkeypatch):
+    """`ko doc`'s default OCR engine is a paid gateway model; a test that reaches OCR uses
+    liteparse's local Tesseract unless it picks an engine itself."""
+    monkeypatch.setenv("KO_OCR_ENGINE", "tesseract")

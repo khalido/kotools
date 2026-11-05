@@ -93,7 +93,7 @@ class TruncatedOutput(RuntimeError):
     """The model stopped before finishing — partial text must never pass as an answer."""
 
 
-def _raise_if_cut_short(messages: list, model: str) -> None:
+def raise_if_cut_short(messages: list, model: str) -> None:
     """A provider can abort mid-generation and still return 200 with partial text and
     finish_reason "error" (seen 2026-10-01: Gemini Flash via OpenRouter on a page image, cut
     mid-sentence, 0 usage). pydantic-ai hands that back as a normal result; ko refuses it."""
@@ -315,10 +315,10 @@ def run(
         agent = Agent(instructions=system or SCHEMA_SYSTEM, output_type=StructuredDict(schema))
         result = agent.run_sync(user_prompt, model=resolve(model or default_model()))
         last_cost = run_cost(result.all_messages())
-        _raise_if_cut_short(result.all_messages(), model or default_model())
+        raise_if_cut_short(result.all_messages(), model or default_model())
         return json.dumps(result.output, separators=(",", ":"), default=str)
     agent = Agent(instructions=system) if system else _default_agent()
     result = agent.run_sync(user_prompt, model=resolve(model or default_model()))
     last_cost = run_cost(result.all_messages())
-    _raise_if_cut_short(result.all_messages(), model or default_model())
+    raise_if_cut_short(result.all_messages(), model or default_model())
     return str(result.output)

@@ -336,10 +336,10 @@ def test_a_response_cut_short_raises_instead_of_passing_as_an_answer():
         )
 
     with pytest.raises(llm.TruncatedOutput, match=r"provider errored mid-answer \(upstream: Google\)"):
-        llm._raise_if_cut_short([resp("error")], "openrouter:google/gemini-3-flash-preview")
+        llm.raise_if_cut_short([resp("error")], "openrouter:google/gemini-3-flash-preview")
     with pytest.raises(llm.TruncatedOutput, match="output-token limit"):
-        llm._raise_if_cut_short([resp("length")], "m")
-    llm._raise_if_cut_short([resp("stop")], "m")  # a finished answer passes
+        llm.raise_if_cut_short([resp("length")], "m")
+    llm.raise_if_cut_short([resp("stop")], "m")  # a finished answer passes
 
 
 # --- decision models (`-m jev`, --choice, --score) ---

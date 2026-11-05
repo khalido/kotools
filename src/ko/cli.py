@@ -73,6 +73,12 @@ def _online(host: str = "ai-gateway.vercel.sh", timeout: float = 1.5) -> bool:
         return False
 
 
+def _ocr_engine() -> str:
+    from . import ocr
+
+    return ocr.engine().removeprefix("vercel:")
+
+
 @app.command("doctor")
 def doctor(
     as_json: bool = typer.Option(
@@ -161,8 +167,8 @@ def doctor(
         ),
         (
             "doc",
-            "PDF/Office/image → text (local)",
-            "LibreOffice for Office files (not .docx)",
+            "PDF/Office/image → text; OCR for pages with no text layer",
+            "LibreOffice for Office files (not .docx); OCR: the gateway key (default) or -e vision/tesseract",
             ("✓ found", "green") if soffice else ("– optional", "yellow"),
         ),
         (
@@ -289,6 +295,7 @@ def doctor(
             for tier in _models.TIERS
         ),
         ("sum model", _llm.sum_model(), config.setting_source("KO_SUM_MODEL", "llm", "sum")),
+        ("ocr engine", _ocr_engine(), config.setting_source("KO_OCR_ENGINE", "ocr", "engine")),
         ("cal timezone", gcal.tz_name(), "config" if config.get("cal", "timezone") else "default"),
         ("x handle", _default_handle(), config.setting_source("KO_X_HANDLE", "x", "handle")),
         ("google account", active_account(), config.setting_source("KO_GOOGLE_ACCOUNT", "google", "account")),

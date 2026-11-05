@@ -1,6 +1,7 @@
 """local document → text via liteparse (and python-docx for .docx).
 
-PDFs parse natively (Rust/PDFium, fully local, no models). .docx reads directly with
+PDFs with a text layer parse natively (Rust/PDFium, local, no models); pages without one go
+to OCR (`ocr.py`), by default a paid gateway model. .docx reads directly with
 python-docx (`docx_markdown`): paragraphs and tables in document order, no LibreOffice.
 Other Office docs, and a .docx when page markers are wanted, convert to PDF first —
 liteparse shells out to LibreOffice / ImageMagick and errors helpfully if they're missing
@@ -17,6 +18,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import sys
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -45,8 +47,8 @@ def _quiet_stderr():
 
 
 def pages_needing_ocr(path: str | Path) -> set[int]:
-    """1-based page numbers whose text layer is missing or unusable (PDFs only)."""
-    stats = LiteParse(quiet=True).is_complex(str(path))
+    """1-based page numbers whose text layer is missing or unusable (`is_complex` converts Office files first)."""
+    stats = LiteParse(quiet=True, max_pages=_MAX_PAGES).is_complex(str(path))
     return {s.page_number for s in stats if s.full_page_image or _NO_TEXT_LAYER & set(s.reasons)}
 
 
@@ -66,16 +68,39 @@ class Page:
     num: int | None  # 1-based position in the document; None for a pageless format
     label: str | None  # the PDF's own page label ("iv", "A-1") when it defines one
     text: str
+    md: bool = False  # a model's markdown transcript (OCR), whatever the document's mode
 
 
-def _lp(*, ocr: bool, pages: str | None, password: str | None, markdown: bool) -> LiteParse:
+def _lp(
+    *, ocr: bool, pages: str | None, password: str | None, markdown: bool, server: tuple[str | None, int | None] = (None, None)
+) -> LiteParse:
     fmt = {"output_format": "markdown", "image_mode": "none"} if markdown else {}  # "none": no
     # `![](img_p6_1.png)` links to images that were never written anywhere
     # max_pages: liteparse stops at 1,000 by default — silently (a 1,113-page manual came back
     # as pages 1-1000, exit 0). ko wants the whole document; parse_pages checks it got it.
+    url, workers = server  # ocr.running(): our OCR server, or (None, None) = liteparse's Tesseract
+    via = {"ocr_server_url": url, "num_workers": workers} if url else {}
     return LiteParse(
-        ocr_enabled=ocr, target_pages=pages, password=password, quiet=True, max_pages=_MAX_PAGES, **fmt
+        ocr_enabled=ocr, target_pages=pages, password=password, quiet=True, max_pages=_MAX_PAGES, **fmt, **via
     )
+
+
+@contextmanager
+def _ocr_server(name: str):
+    """Vision/Tesseract go through liteparse (ocr.running), Tesseract's stray stderr muted."""
+    from ko import ocr
+
+    with ocr.running(name) as server:
+        if name == "tesseract":
+            with _quiet_stderr():
+                yield server
+        else:
+            yield server
+
+
+# An image has no text layer: all of it is OCR. Anything else (PDF, or Office via LibreOffice)
+# gets the text-layer read, then OCR only for pages without one.
+_IMAGES = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".webp", ".bmp", ".gif", ".heic"}
 
 
 def parse_pages(
@@ -84,10 +109,14 @@ def parse_pages(
     ocr: bool | None = None,
     password: str | None = None,
     markdown: bool = False,
+    engine: str | None = None,
 ) -> Doc:
     """Each page's text (or markdown: tables as pipe tables), in order — so a claim can cite
-    its page. `ocr`: None (default) = OCR only the PDF pages that lack a text layer
-    (non-PDFs: always); True = OCR every page; False = never."""
+    its page. `ocr`: None (default) = OCR only the pages that lack a text layer (an image:
+    all of it); True = OCR every page; False = never. `engine`: see `ocr.engine` — a model
+    transcribes the page images and its transcript replaces the page's text."""
+    from ko import ocr as ocr_mod
+
     p = Path(path)
     if not p.is_file():
         raise FileNotFoundError(p)
@@ -100,19 +129,26 @@ def parse_pages(
         total = max(total, r.total_pages)
         return [Page(pg.page_num, pg.page_label, pg.markdown if markdown else pg.text) for pg in r.pages]
 
-    if ocr is not None or p.suffix.lower() != ".pdf":
-        with _quiet_stderr():
-            out = read(_lp(ocr=ocr is not False, pages=pages, password=password, markdown=markdown))
-        return Doc(p, total or len(out), out, markdown)
     out = read(_lp(ocr=False, pages=pages, password=password, markdown=markdown))
+    if ocr is False:
+        return Doc(p, total or len(out), out, markdown)
     if pages is None and len(out) < total:  # never hand back part of a document as if whole
         raise RuntimeError(f"{p.name}: liteparse returned {len(out)} of {total} pages")
-    need = pages_needing_ocr(p) & {pg.num for pg in out}
-    if need:
-        with _quiet_stderr():
+    nums = {pg.num for pg in out}
+    need = nums if ocr or p.suffix.lower() in _IMAGES else pages_needing_ocr(p) & nums
+    if not need:
+        return Doc(p, total or len(out), out, markdown)
+    name = ocr_mod.engine(engine)
+    if name in ocr_mod.LOCAL:
+        with _ocr_server(name) as server:
             target = ",".join(map(str, sorted(need)))
-            ocred = {pg.num: pg for pg in read(_lp(ocr=True, pages=target, password=password, markdown=markdown))}
-        out = [ocred.get(pg.num, pg) for pg in out]
+            ocred = {pg.num: pg for pg in read(_lp(ocr=True, pages=target, password=password, markdown=markdown, server=server))}
+        return Doc(p, total or len(out), [ocred.get(pg.num, pg) for pg in out], markdown)
+    shots = LiteParse(password=password, quiet=True).screenshot(str(p), page_numbers=sorted(need))
+    text = ocr_mod.transcribe(name, {s.page_num: s.image_bytes for s in shots if not s.is_solid_fill})
+    if empty := sorted(pg.num for pg in out if pg.num in text and not text[pg.num] and pg.text.strip()):
+        print(f"[ocr: no transcript for page(s) {', '.join(map(str, empty))}; kept their text layer]", file=sys.stderr)
+    out = [Page(pg.num, pg.label, text[pg.num], md=True) if text.get(pg.num) else pg for pg in out]
     return Doc(p, total or len(out), out, markdown)
 
 
@@ -139,7 +175,7 @@ def marked(doc: Doc) -> str:
         text = pg.text.strip("\n")
         if not text.strip():
             return "(no text on this page)"
-        return text.strip() if doc.markdown else _fence(text)
+        return text.strip() if doc.markdown or pg.md else _fence(text)
 
     md5 = hashlib.md5(doc.path.read_bytes()).hexdigest()
     empty = sum(1 for pg in doc.pages if not pg.text.strip())

@@ -84,14 +84,16 @@ def model_for(tier: str) -> str:
 _OPENROUTER_SYSTEMONE = "https://openrouter.ai/api"  # OpenRouter's /v1/systemone, TypeSafe's API shape
 
 
-def resolve(model: str | Model) -> str | Model:
+def resolve(model: str | Model, fresh: bool = False) -> str | Model:
     """A model string → what Agent.run takes. `vercel:` gets its ModelSpec (host order,
     settings) and the key check; `jev` / `typesafe:` get their provider; anything else (or a
-    Model) passes through."""
+    Model) passes through. `fresh`: a gateway model with its own HTTP client, not the cached
+    one — the client is tied to the event loop that first used it (ocr.Model)."""
     if not isinstance(model, str):
         return model
     if model.startswith("vercel:"):
-        return _gateway_model(model.removeprefix("vercel:"))
+        build = _gateway_model.__wrapped__ if fresh else _gateway_model
+        return build(model.removeprefix("vercel:"))
     if model != "jev" and not model.startswith("typesafe:"):
         return model
     from pydantic_ai.models.typesafe import TypeSafeModel

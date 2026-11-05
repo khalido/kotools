@@ -85,8 +85,8 @@ app.add_typer(agent_app, name="a", hidden=True)  # shortcut: `ko a research`
 def _media_type(inp: str) -> str | None:
     """image/audio/video mime type guessed from the filename/URL, else None (text pipeline).
 
-    PDFs/Office deliberately stay on the text path (doc.parse is free and works with
-    non-vision models); only media with no useful local text form attaches as binary."""
+    PDFs/Office deliberately stay on the text path (doc.parse reads text layers for free, OCRs
+    scanned pages, and works with non-vision models); only media with no useful local text form attaches as binary."""
     mt, _ = mimetypes.guess_type(inp.split("?", 1)[0].split("#", 1)[0])
     if mt == "image/svg+xml":
         return None  # SVG is text — _gather reads it directly; vision models mostly reject it
