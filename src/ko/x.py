@@ -141,7 +141,7 @@ def search(
         "query": query,
         "max_results": max(10, min(n, 100)),  # API floor is 10, cap 100
         "start_time": start.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "tweet_fields": ["created_at", "public_metrics", "author_id"],
+        "post_fields": ["created_at", "public_metrics", "author_id"],
         "expansions": ["author_id"],
         "user_fields": ["username"],
     }
@@ -277,7 +277,7 @@ def list_posts(
     pages = _client().lists.get_posts(
         id=_resolve_list(name, handle),
         max_results=max(10, min(n, 100)),
-        tweet_fields=["created_at", "public_metrics", "author_id"],
+        post_fields=["created_at", "public_metrics", "author_id"],
         expansions=["author_id"],
         user_fields=["username"],
     )
@@ -298,7 +298,7 @@ def user_posts(handle: str, n: int = DEFAULT_MAX_RESULTS) -> list[Post]:
     pages = _client().users.get_posts(
         id=uid,
         max_results=max(5, min(n, 100)),  # user-timeline floor is 5
-        tweet_fields=["created_at", "public_metrics", "author_id"],
+        post_fields=["created_at", "public_metrics", "author_id"],
         expansions=["author_id"],
         user_fields=["username"],
     )

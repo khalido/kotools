@@ -217,3 +217,39 @@ def test_search_returns_posts_live():
     posts = x.search("ai", n=3)
     assert posts
     assert all(p.url.startswith("https://x.com/") for p in posts)
+
+
+def test_every_call_fits_the_installed_sdk(monkeypatch):
+    """xdk renamed `tweet_fields` to `post_fields` and every read broke; nothing noticed, because
+    no test reached the SDK. Bind each call's arguments to the real method's signature."""
+    import inspect
+
+    from xdk import Client
+
+    real = Client(bearer_token="x")
+    bound = []
+
+    def check(method):
+        def call(**kwargs):
+            inspect.signature(method).bind(**kwargs)
+            bound.append(method.__name__)
+            return []
+
+        return call
+
+    monkeypatch.setattr(
+        x,
+        "_client",
+        lambda: SimpleNamespace(
+            posts=SimpleNamespace(search_recent=check(real.posts.search_recent), search_all=check(real.posts.search_all)),
+            lists=SimpleNamespace(get_posts=check(real.lists.get_posts)),
+            users=SimpleNamespace(get_posts=check(real.users.get_posts)),
+        ),
+    )
+    monkeypatch.setattr(x, "_resolve_list", lambda name, handle: "1")
+    monkeypatch.setattr(x, "_user_id", lambda handle: "1")
+    x.search("q")
+    x.search("q", days=30)
+    x.list_posts("ai", handle="me")
+    x.user_posts("jack")
+    assert bound == ["search_recent", "search_all", "get_posts", "get_posts"]
