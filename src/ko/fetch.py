@@ -140,6 +140,10 @@ def _walled(text: str) -> bool:
     return len(text) < _WALL_MAX_CHARS and any(p in low for p in _WALL_PHRASES)
 
 
+class _WrongSubreddit(LookupError):
+    """The thread exists, in another subreddit: a wrong URL, not a dead mirror."""
+
+
 def _reddit_check(html: str, url: str) -> None:
     """A thread URL must come back as that thread. A mirror shown an id that lives in another
     subreddit serves that thread instead (r/LocalLLaMA/comments/1ft0000 gave r/Line6Helix), so
@@ -152,7 +156,7 @@ def _reddit_check(html: str, url: str) -> None:
     if any(f.lower() == sub.lower() for f in found):
         return
     if found:
-        raise LookupError(f"reddit thread {post} is in r/{found[0]}, not r/{sub} — check the URL")
+        raise _WrongSubreddit(f"reddit thread {post} is in r/{found[0]}, not r/{sub} — check the URL")
     raise LookupError(f"the mirror page doesn't show thread {post}")
 
 
@@ -544,9 +548,9 @@ def _fetch(
             if text:
                 try:
                     _reddit_check(resp.text, url)
-                except LookupError as e:
-                    if " is in r/" in str(e):
-                        raise RuntimeError(f"{url}: {e}") from None  # a wrong URL, not a dead mirror
+                except _WrongSubreddit as e:
+                    raise RuntimeError(f"{url}: {e}") from None
+                except LookupError:
                     continue
                 return Fetched(text=text, source="reddit-mirror", note=f"reddit → {mirror}")
         # Whole ladder dead/empty — someone else's infrastructure, so say so LOUDLY (a

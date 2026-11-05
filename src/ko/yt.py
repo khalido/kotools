@@ -27,6 +27,8 @@ from pathlib import Path
 
 from . import config
 
+WRITEUP_COST = "~10–15c"  # a `-s` write-up on the default model; measured 9–15c (WORKLOG 2026-11-04)
+
 # A URL must carry a youtube domain to be searched for an id; a bare id must be
 # EXACTLY 11 id-chars. Anything looser silently grabs 11-char runs from arbitrary
 # strings (playlist ids, prose) and fetches the wrong transcript.

@@ -1118,7 +1118,7 @@ def gdocs_comments(
 @gdocs_app.command("reply")
 def gdocs_reply(
     doc: str = typer.Argument(..., help="Google Doc ID or URL"),
-    comment_id: str = typer.Argument(..., help="comment ID (the [bracketed] id from `ko gdocs comments`)"),
+    comment_id: str = typer.Argument(..., help="comment ID (the \\[bracketed] id from `ko gdocs comments`)"),
     text: str = typer.Argument(None, help="reply text (omit to read stdin)"),
 ) -> None:
     """Reply to a comment thread on a Doc (needs the read+write grant)."""

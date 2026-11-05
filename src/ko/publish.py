@@ -227,6 +227,10 @@ def worker_domains() -> dict[str, str]:
         return {}
 
 
+class WorkerNotFound(RuntimeError):
+    """Cloudflare has no Worker by that name (`rm` then clears the local registry row)."""
+
+
 def delete_worker(name: str) -> None:
     """Delete Worker `name` from the account (`force` also detaches custom domains, which
     removes their DNS records). Raises RuntimeError with the reason on any failure."""
@@ -243,7 +247,7 @@ def delete_worker(name: str) -> None:
     except Exception as e:
         raise RuntimeError(f"delete failed: {e}") from None
     if r.status_code == 404:
-        raise RuntimeError(f"no Worker named {name!r} on the account")
+        raise WorkerNotFound(f"no Worker named {name!r} on the account")
     if not (200 <= r.status_code < 300):
         raise RuntimeError(f"delete failed (HTTP {r.status_code}): {r.text[:200]}")
 

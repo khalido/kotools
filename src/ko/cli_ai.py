@@ -1311,7 +1311,7 @@ def publish_rm(
     try:
         publish_mod.delete_worker(name)
     except RuntimeError as e:
-        if "no Worker named" in str(e) and publish_mod.forget(name):
+        if isinstance(e, publish_mod.WorkerNotFound) and publish_mod.forget(name):
             typer.echo(
                 f"{name}: not on Cloudflare — removed from the local registry", err=True
             )
@@ -1563,7 +1563,7 @@ def mcp_overview(
         None,
         "--model",
         "-m",
-        help="agent model (default: KO_AGENT_MODEL, [agents] model, else the medium tier)",
+        help="agent model (default: KO_AGENT_MODEL, \\[agents] model, else the medium tier)",
     ),
 ) -> None:
     """An LLM agent connects to an MCP server, explores it, and summarizes what it's for and what's

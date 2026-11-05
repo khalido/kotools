@@ -1187,7 +1187,7 @@ def yt_transcript(
     try:
         segs = yt_mod.snippets(vid, refresh=refresh)
     except yt_mod.YtError as e:
-        paid = " — `-s` has a model watch the video instead (~10–30c)" if e.code in ("ip_blocked", "no_captions") else ""
+        paid = f" — `-s` has a model watch the video instead ({yt_mod.WRITEUP_COST})" if e.code in ("ip_blocked", "no_captions") else ""
         _die(f"{e}{paid}", as_json=as_json, code=e.code)
     text = yt_mod.join(segs)
     if as_json:
@@ -1212,7 +1212,7 @@ def yt_info(
         uncached = [u for u in urls if condense and not yt_mod.is_condensed(u)]
         if len(uncached) > _MAX_WRITEUPS:
             raise ValueError(
-                f"-s would pay for {len(uncached)} new write-ups (~10–30c each); ask for {_MAX_WRITEUPS} or fewer "
+                f"-s would pay for {len(uncached)} new write-ups ({yt_mod.WRITEUP_COST} each); ask for {_MAX_WRITEUPS} or fewer "
                 "at a time, or one by one with `ko yt <url> -s`"
             )
         videos, missing = yt_mod.infos(urls)
