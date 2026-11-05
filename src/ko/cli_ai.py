@@ -9,6 +9,7 @@ import re
 import sys
 from dataclasses import asdict
 from pathlib import Path
+from typing import NoReturn
 
 import typer
 
@@ -1111,6 +1112,10 @@ def tt_search(
 # --- publish commands ---
 
 
+def _publish_die(e: publish_mod.PublishError) -> NoReturn:
+    _die(str(e), code=e.code, fix=e.fix)
+
+
 @publish_app.command("new")
 def publish_new(
     path: str = typer.Argument(..., help="folder to scaffold (created if missing)"),
@@ -1140,14 +1145,16 @@ def publish_new(
     if pin:
         hono = True
     if sum([md, bare, hono]) > 1:
-        typer.echo("--md / --bare / --hono are mutually exclusive", err=True)
-        raise typer.Exit(2)
+        _die("--md / --bare / --hono are mutually exclusive (--pin implies --hono)", code="usage")
     mode = "md" if md else "bare" if bare else "hono" if hono else "static"
     folder = Path(path)
-    written = publish_mod.scaffold(folder, title=title, mode=mode, pin=pin, name=name)
+    try:
+        written = publish_mod.scaffold(folder, title=title, mode=mode, pin=pin, name=name)
+    except publish_mod.PublishError as e:
+        _publish_die(e)
     if written:
         for p in written:
-            typer.echo(f"created {p}")
+            typer.echo(p)
     else:
         typer.echo(f"{folder} already scaffolded (nothing overwritten)", err=True)
     edit = {"md": "README.md", "hono": "public/README.md"}.get(mode, "index.html")
@@ -1156,6 +1163,8 @@ def publish_new(
     else:
         hint = f"edit {folder}/{edit}, then: ko publish {folder}"
     typer.echo(f"\n{hint}", err=True)
+    if pin and (gate_pin := publish_mod.config_pin(folder)):
+        typer.echo(f"🔒 PIN: {gate_pin}", err=True)
 
 
 @publish_app.command("preview")
@@ -1169,9 +1178,8 @@ def publish_preview(
     modules + fetch work (a `file://` open doesn't); for --hono it runs the real worker. Ctrl-C to stop."""
     try:
         code = publish_mod.preview(Path(path), port=port)
-    except RuntimeError as e:
-        typer.echo(str(e), err=True)
-        raise typer.Exit(1) from None
+    except publish_mod.PublishError as e:
+        _publish_die(e)
     raise typer.Exit(code)
 
 
@@ -1195,14 +1203,9 @@ def publish_up(
 ) -> None:
     """Deploy a folder to Cloudflare. Prints the URL. Re-running overwrites the same URL."""
     try:
-        if pin is not None:
-            publish_mod.set_pin(
-                Path(path), pin
-            )  # rotate before deploy so the new PIN ships
-        url = publish_mod.deploy(Path(path), name=name, force=force)
-    except RuntimeError as e:
-        typer.echo(str(e), err=True)
-        raise typer.Exit(1) from None
+        url = publish_mod.deploy(Path(path), name=name, force=force, pin=pin)
+    except publish_mod.PublishError as e:
+        _publish_die(e)
     if url:
         typer.echo(url)  # stdout: the URL itself (pipeable)
         gate_pin = publish_mod.config_pin(Path(path))
@@ -1289,15 +1292,21 @@ def publish_rm(
 
     Removes the Worker; its custom domain (and that DNS record) detach with it. The folder
     and its files are untouched — `ko publish <dir>` brings the site back any time."""
+    if not target.strip():  # Path("") is the cwd: an unset `$NAME` must not delete this folder's site
+        _die("rm needs a site name or folder", code="usage")
     p = Path(target)
     # a folder only counts when it's an actual publish project (wrangler config or in the
     # registry) — otherwise `rm site` with a stray ./site dir would resolve, via the
     # generic-folder-name rule, to a DIFFERENT worker than the one named
-    is_project = p.is_dir() and (
-        (p / publish_mod.WRANGLER_CONFIG).exists()
-        or str(p.resolve()) in publish_mod.registry()
-    )
-    name = publish_mod.resolve_name(p) if is_project else target
+    row = publish_mod.registry().get(str(p.resolve())) if p.is_dir() else None
+    try:
+        name = publish_mod.config_name(p) if p.is_dir() else None
+        name = name or (row or {}).get("name") or target
+        if name == target and ("/" in target or target.startswith((".", "~"))):
+            _die(f"no published folder at {target}", code="usage")
+        publish_mod.check_worker_name(name)
+    except publish_mod.PublishError as e:
+        _publish_die(e)
     if name != target:
         typer.echo(f"{target} → Worker {name!r}", err=True)
     url = next((r.url for r in publish_mod.published() if r.name == name), None)
@@ -1306,18 +1315,16 @@ def publish_rm(
         if sys.stdin.isatty():
             typer.confirm(f"delete Worker {what} from Cloudflare?", abort=True)
         else:
-            typer.echo("refusing to delete without a TTY — pass --yes", err=True)
-            raise typer.Exit(2)
+            _die("refusing to delete without a TTY — pass --yes", code="usage")
     try:
         publish_mod.delete_worker(name)
-    except RuntimeError as e:
+    except publish_mod.PublishError as e:
         if isinstance(e, publish_mod.WorkerNotFound) and publish_mod.forget(name):
             typer.echo(
                 f"{name}: not on Cloudflare — removed from the local registry", err=True
             )
             return
-        typer.echo(str(e), err=True)
-        raise typer.Exit(1) from None
+        _publish_die(e)
     publish_mod.forget(name)
     typer.echo(f"deleted {what}", err=True)
 

@@ -2,7 +2,11 @@
 
 Read CLAUDE.md first, then this.
 
+**2026-11-06: `ko publish` fix pass, on branch `ocr-and-publish-fixes`, not yet on main** (WORKLOG). Existing sites need a hand patch or redeploy: three gated sites still have the old PIN redirect in `src/index.ts` (`labs/robot-arm/html`, `labs/claude-code-workshop`, `ops/proposals/uts-tmos-robot-arm`); ko-test has no `.assetsignore` and serves `wrangler.jsonc` until it's redeployed; kotools has the old ignore list.
+
 **2026-10-27: LLM calls moved to Vercel AI Gateway; `models.py` owns every model** (a `ModelSpec` per tested model: note, host order, settings; tiers basic/medium/smart; `resolve()`). `ko ai` defaults to basic (deepseek-v4.1-flash). New `ko models info <name>` (and agent tool `model_info`): price, hosts' speed, top HN threads with their best comment. HN comments now come in HN's ranked order. WORKLOG 2026-10-27 has the why and measurements. OpenRouter ($0.21, KO won't top it up: everything moves to the gateway) still serves only `ko judge` (Jev, `/v1/systemone`), which stops when it runs out; moving it is open (does the gateway serve Jev?). `ko yt -s` moved to the gateway 2026-11-04, default model 3.8 Flash, via the paid gateway. The free-tier Google key path is built but switched off (key commented out in config.toml: the free tier was overloaded on day one); uncomment to retry (WORKLOG).
+
+**Next, OCR (agreed direction, not built; KO hasn't said go):** Vision default on Mac through liteparse + its per-parse server (keeps columns; pk_legal's direct read interleaves them, tested on one two-column page), DeepSeek off Mac, Tesseract via `-e`. Pick pages by `text_length < 200`, `full_page_image`, `is_garbled`, not liteparse's reasons (23 false `vector-text` pages of 292 in pk_legal's samples). Fallback to a model off by default, `[ocr] fallback`. liteparse PR #521 adds native Vision: when it merges, drop `vision-ocr.swift`. Proposed test: Vision vs Surya 2 vs Indra on pk_legal's quotes, Urdu, two-column, tables.
 
 **2026-11-04: OCR server.** `ko ocr serve` (liteparse's OCR API on 127.0.0.1:8828) and `ko doc -e`: DeepSeek on the gateway by default (thinking off, ~$0.0006/page), `vision` (Apple, free), `tesseract`. Built for sfl-mes's book pipeline and pk_legal (WORKLOG).
 

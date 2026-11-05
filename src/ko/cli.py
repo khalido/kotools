@@ -204,7 +204,9 @@ def doctor(
                 "path": ("✓ on PATH", "green"),
                 "env": ("✓ KO_WRANGLER", "green"),
                 "npx": ("– via npx (run `npm install`)", "yellow"),
-            }.get(publish_mod.wrangler_source(), ("✗ no wrangler/npx", "red")),
+            }.get(publish_mod.wrangler_source(), ("✗ no wrangler/npx", "red"))
+            if publish_mod.cf_creds()[0] or publish_mod.wrangler_source() == "none"
+            else ("– no Cloudflare token (fine after `wrangler login`)", "yellow"),
         ),
         (
             "agent",

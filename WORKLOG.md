@@ -2,6 +2,21 @@
 
 Newest first. Big picture only — git commits have the detail; candidate ideas and decisions live in `docs/ideas.md`.
 
+## 2026-11-06 — `ko publish` fixes: PIN deep links, dotfiles, `rm`, library currency
+
+Issue #3 plus a Gemini review and a Sonnet research pass, each claim checked against `wrangler dev` (wrangler 4.152).
+- **PIN redirect:** POST of the right PIN to `/?page=second.md` gave `302 Location: /`, and to `//evil.com` gave `302 Location: //evil.com`, an open redirect. Now `303`, `http://localhost:8812/?page=second.md` and `http://localhost:8812//evil.com`. `c.req.url` stays on localhost under `wrangler dev`, even with a custom-domain route in the config.
+- **Dotfiles:** an md site served `.env` and `.git/config` with 200 under the old ignore list; now 404, with `.well-known/security.txt` still 200 and `.well-known/.env` 404. deploy() writes the ignore file when a served folder has none, and refuses when `.env`/`.dev.vars` would pass a hand-written one. On an SPA site a 200 proves nothing: the fallback returns index.html, so compare bodies. ko-test's `wrangler.jsonc` is a real leak, checked by body.
+- **Config edits:** one small JSONC parser that records value spans replaces the regex readers. Commented-out or nested `"name"` can't win, and `--pin`/`--name` change only the values involved, so bindings, comments and SPA mode stay. None of ko's locked packages parses JSONC. A rename moves a route that starts with the old name; other routes stay, and a site with no route doesn't gain one.
+- **`rm`:** httpx normalizes `scripts/./foo` to `scripts/foo` and `scripts/../foo` to `foo`, so names are now validated (exit 2).
+- **Tailwind v4 needs cascade layers.** Unlayered CSS beats any layer, so `style.css` in its old form would beat every utility. Both stylesheets now sit in `@layer site`, between Tailwind's base and utilities, and the highlight.js theme is imported into `base` (unlayered, it put a second box inside code blocks). Measured: `text-sm` on an h1 is 14px, `p-8` on `.card` is 32px. `style.css`'s `line-height: 1.7` now applies, so prose runs slightly taller than under v3.
+- **Chart.js never ran in the md shell:** before, `Chart` was undefined and the canvas had 0 painted pixels, because `innerHTML` doesn't run `<script>`. The shell now re-creates scripts in order. After: Chart 4.6.1, canvas painted.
+- **markdown-it 15** moved its browser build to `dist/browser/markdown-it.umd.min.js` (old path 404); the global is still `markdownit`, and anchor 10 still works with it. The bare template's unversioned URL would have 404ed, so it's pinned too. three 0.187 loads and builds a mesh from esm.sh and jsDelivr.
+- **The leak guard matches the way wrangler does.** A hand-rolled matcher said `.*/` and `.env/` covered a `.env` file; they don't. `pathspec`'s `GitIgnoreSpec` matched wrangler's `ignore` package on those cases, so it replaced the matcher. Refused: any dotfile or `*.env` a hand-written ignore file lets through, not only `.env`.
+- The JSONC parser stays: `pyjson5`/`json5` only read, and the libraries that keep comments on edit are stale (`commentjson` 2020, `jsonc-parser` 2021) or small (`json-five`, 39 stars). KO can trade comments for fewer lines (`pyjson5` + rewrite).
+- Ctrl-C on `preview` now logs `info`, exit 0. Publish errors go through `_die` with a code.
+- Not done: `worker_exists` for `wrangler login` users, since it would need wrangler's OAuth token or a subprocess I can't test without real credentials.
+
 ## 2026-11-04 — OCR server for liteparse; `ko doc` OCRs through it
 
 Asked for from sfl-mes: liteparse's Tesseract took 170 s on a 943-page book (14 s with OCR off). liteparse can send its OCR to any HTTP server (`--ocr-server-url`, contract in `ocr.py`), so `ko ocr serve` serves that API and `ko doc` runs one on a thread for each parse.

@@ -7,7 +7,7 @@ in that folder: same name → same Worker → same URL. `ko publish` is a thin
 orchestrator over exactly that; you can run `wrangler deploy` by hand identically.
 
 Scaffold flavors (`ko publish new`):
-- **static** (default) — `index.html` (Tailwind Play CDN + Alpine) + `style.css`.
+- **static** (default) — `index.html` (Tailwind browser build + Alpine) + `style.css`.
 - **md** (`--md`) — write markdown; a generic shell renders it client-side
   (markdown-it) with a dark theme + right-sidebar TOC. `README.md` is the nav hub;
   link pages with `[Title](?page=other.md)`. No build, no per-project HTML edits.
@@ -25,6 +25,7 @@ import os
 import re
 import secrets
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -33,6 +34,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx2 as httpx
+from pathspec import GitIgnoreSpec
 
 from ko import config
 from ko.dirs import state_dir
@@ -44,8 +46,18 @@ DEFAULT_DOMAIN = "khalido.dev"
 
 
 def publish_domain() -> str | None:
-    """The domain for custom subdomains: `[publish] domain` in config.toml, else ko's default."""
-    return config.get("publish", "domain") or DEFAULT_DOMAIN
+    """The domain for custom subdomains: `[publish] domain` in config.toml, else ko's default.
+    `domain = ""` means no custom domain (`*.workers.dev`)."""
+    domain = config.get("publish", "domain")
+    return DEFAULT_DOMAIN if domain is None else domain or None
+
+
+class PublishError(RuntimeError):
+    """A clean publish failure. `code` is the AGENTS.md label `_die` logs and exits on."""
+
+    def __init__(self, msg: str, code: str = "error", fix: str | None = None):
+        super().__init__(msg)
+        self.code, self.fix = code, fix
 
 
 @dataclass
@@ -60,6 +72,16 @@ def slugify(name: str) -> str:
     """Worker-safe name: lowercase, alphanumeric + hyphens, trimmed, <=54 chars."""
     s = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
     return s[:54] or "site"
+
+
+def check_worker_name(name: str) -> None:
+    """Refuse anything that can't be a Worker name. It goes into API URLs, and httpx normalizes
+    `.`/`..` there, so `./foo` would delete Worker `foo`."""
+    if not re.fullmatch(r"[a-z0-9_-]{1,63}", name):
+        raise PublishError(
+            f"{name!r} isn't a valid Worker name (lowercase letters, digits, - and _)",
+            code="usage",
+        )
 
 
 # generic publish-folder names → take the worker/domain from the PARENT project folder instead
@@ -114,11 +136,17 @@ def _wrangler() -> list[str]:
     """Resolve the wrangler command. Prefer the repo-local pinned install (Cloudflare's
     recommendation; avoids `npx` pulling 'latest'); fall back to PATH, then a pinned npx."""
     if override := os.environ.get("KO_WRANGLER"):
+        if not shutil.which(override):
+            raise PublishError(f"KO_WRANGLER={override} not found", code="config")
         return [override]
     if local := _repo_wrangler():
         return [str(local)]
     if shutil.which("wrangler"):
         return ["wrangler"]
+    if not shutil.which("npx"):
+        raise PublishError(
+            "wrangler not found: install Node.js (for npx) or wrangler", code="config"
+        )
     return ["npx", "--yes", "wrangler@4"]
 
 
@@ -126,7 +154,9 @@ def _npm_install(folder: Path) -> None:
     """Install a worker site's deps (Hono) before wrangler bundles it. Cached after first run."""
     if not (folder / "package.json").exists() or (folder / "node_modules").exists():
         return
-    npm = shutil.which("npm") or "npm"
+    npm = shutil.which("npm")
+    if not npm:
+        raise PublishError(f"{folder} needs npm: install Node.js", code="config")
     try:
         proc = subprocess.run(
             [npm, "install"],
@@ -137,9 +167,9 @@ def _npm_install(folder: Path) -> None:
             check=False,
         )
     except subprocess.TimeoutExpired:
-        raise RuntimeError("npm install timed out after 5 min") from None
+        raise PublishError("npm install timed out after 5 min") from None
     if proc.returncode != 0:
-        raise RuntimeError("npm install failed:\n" + (proc.stderr or proc.stdout))
+        raise PublishError("npm install failed:\n" + (proc.stderr or proc.stdout))
 
 
 def cf_creds() -> tuple[str | None, str | None]:
@@ -227,16 +257,20 @@ def worker_domains() -> dict[str, str]:
         return {}
 
 
-class WorkerNotFound(RuntimeError):
+class WorkerNotFound(PublishError):
     """Cloudflare has no Worker by that name (`rm` then clears the local registry row)."""
+
+    def __init__(self, msg: str):
+        super().__init__(msg, code="not_found")
 
 
 def delete_worker(name: str) -> None:
     """Delete Worker `name` from the account (`force` also detaches custom domains, which
-    removes their DNS records). Raises RuntimeError with the reason on any failure."""
+    removes their DNS records). Raises PublishError with the reason on any failure."""
+    check_worker_name(name)
     token, account = cf_creds()
     if not (token and account):
-        raise RuntimeError("Cloudflare creds not set — see `ko doctor`")
+        raise PublishError("Cloudflare creds not set", code="auth", fix="ko doctor")
     try:
         r = httpx.delete(
             f"https://api.cloudflare.com/client/v4/accounts/{account}/workers/scripts/{name}",
@@ -245,11 +279,11 @@ def delete_worker(name: str) -> None:
             timeout=30,
         )
     except Exception as e:
-        raise RuntimeError(f"delete failed: {e}") from None
+        raise PublishError(f"delete failed: {e}", code="network") from None
     if r.status_code == 404:
         raise WorkerNotFound(f"no Worker named {name!r} on the account")
     if not (200 <= r.status_code < 300):
-        raise RuntimeError(f"delete failed (HTTP {r.status_code}): {r.text[:200]}")
+        raise PublishError(f"delete failed (HTTP {r.status_code}): {r.text[:200]}")
 
 
 def forget(name: str) -> list[str]:
@@ -276,11 +310,25 @@ _LLMS_EXCERPT_CHARS = 1500
 _LLMS_EXCERPT_MAX_PAGES = 2
 
 
+# Leftmost match wins, so an inline code span shields any `<script>` written inside it.
+_HTML_TOKEN = re.compile(
+    r"""(?P<code>`[^`\n]*`)
+    | <!--.*?-->
+    | <(?P<block>script|style)\b.*?</(?P=block)\s*>
+    | <(?P<url>https?://[^>\s]+)>
+    | </?[a-zA-Z][^>]*>""",
+    re.DOTALL | re.IGNORECASE | re.VERBOSE,
+)
+
+
 def _strip_html_segment(seg: str) -> str:
-    """Tags out (their text kept), autolink URLs kept, entities unescaped — one span
-    of plain prose (no code)."""
-    seg = re.sub(r"<(https?://[^>]+)>", r"\1", seg)
-    return html.unescape(re.sub(r"<[^>]+>", "", seg))
+    """Prose between code fences: tags out (their text kept, even across lines), `<script>`/
+    `<style>` bodies out, autolink URLs and inline code kept, entities unescaped."""
+    out, pos = [], 0
+    for m in _HTML_TOKEN.finditer(seg):
+        out += [html.unescape(seg[pos : m.start()]), m["code"] or m["url"] or ""]
+        pos = m.end()
+    return "".join(out) + html.unescape(seg[pos:])
 
 
 def _strip_html(md_text: str) -> str:
@@ -288,16 +336,23 @@ def _strip_html(md_text: str) -> str:
     entities unescaped (`&lt;url&gt;` → `<url>`). Code is sacred: fenced blocks AND
     inline `code` spans pass through verbatim (`ko fetch <url>` must keep its
     placeholder). Blank runs left by stripped tag-only lines collapse."""
-    out, in_fence = [], False
+    out, prose, in_fence = [], [], False
+
+    def flush():
+        if prose:
+            out.append(_strip_html_segment("\n".join(prose)))
+            prose.clear()
+
     for line in md_text.splitlines():
         if line.lstrip().startswith("```"):
+            flush()
             in_fence = not in_fence
-        elif not in_fence:
-            parts = re.split(r"(`[^`]*`)", line)  # inline code spans survive untouched
-            line = "".join(
-                p if p.startswith("`") else _strip_html_segment(p) for p in parts
-            )
-        out.append(line)
+            out.append(line)
+        elif in_fence:
+            out.append(line)
+        else:
+            prose.append(line)
+    flush()
     return re.sub(r"\n{3,}", "\n\n", "\n".join(out))
 
 
@@ -492,13 +547,86 @@ def build_hono_config(name: str, domain: str | None, pin: str | None = None) -> 
     return cfg
 
 
-def _config_value(folder: Path, key: str) -> str | None:
-    """Read a `"key": "value"` string from a folder's wrangler config (comment-safe regex)."""
+_JSONC_SKIP = re.compile(r"(?:\s+|//[^\n]*|/\*.*?\*/)*", re.DOTALL)
+_JSON = json.JSONDecoder()
+
+
+def _parse_jsonc(text: str) -> tuple[object, dict[tuple, tuple[int, int]]]:
+    """JSONC → (data, {path: (start, end) of that value}). The spans let an edit replace one
+    value and leave the rest of a hand-edited file, comments included, alone."""
+    spans = {}
+
+    def skip(i: int) -> int:
+        return _JSONC_SKIP.match(text, i).end()
+
+    def value(i: int, path: tuple) -> tuple[object, int]:
+        i = start = skip(i)
+        if text[i] not in "{[":
+            data, end = _JSON.raw_decode(text, i)
+        else:
+            is_obj, close = text[i] == "{", "}" if text[i] == "{" else "]"
+            data = {} if is_obj else []
+            i = skip(i + 1)
+            while text[i] != close:
+                if is_obj:
+                    if text[i] != '"':
+                        raise ValueError(f"expected a string key at char {i}")
+                    key, i = _JSON.raw_decode(text, i)
+                    i = skip(i)
+                    if text[i] != ":":
+                        raise ValueError(f"expected ':' at char {i}")
+                    data[key], i = value(i + 1, (*path, key))
+                else:
+                    item, i = value(i, (*path, len(data)))
+                    data.append(item)
+                i = skip(i)
+                if text[i] == ",":
+                    i = skip(i + 1)
+                elif text[i] != close:
+                    raise ValueError(f"expected ',' or '{close}' at char {i}")
+            end = i + 1
+        spans[path] = (start, end)
+        return data, end
+
+    data, end = value(0, ())
+    if skip(end) != len(text):
+        raise ValueError(f"unexpected text at char {skip(end)}")
+    return data, spans
+
+
+def _jsonc_set(text: str, path: tuple, new: object) -> str:
+    """`text` with the value at `path` replaced, or added as the parent's first member."""
+    data, spans = _parse_jsonc(text)
+    if path in spans:
+        start, end = spans[path]
+        return text[:start] + json.dumps(new) + text[end:]
+    parent = data
+    for key in path[:-1]:
+        parent = parent[key]
+    at = spans[path[:-1]][0] + 1
+    comma = "," if parent else ""
+    indent = "  " * len(path)
+    return f"{text[:at]}\n{indent}{json.dumps(path[-1])}: {json.dumps(new)}{comma}{text[at:]}"
+
+
+def _read_config(folder: Path) -> dict:
+    """A folder's parsed wrangler config, {} if it has none. Fails loud on a broken file."""
     path = folder / WRANGLER_CONFIG
     if not path.exists():
-        return None
-    m = re.search(rf'"{key}"\s*:\s*"([^"]+)"', path.read_text())
-    return m.group(1) if m else None
+        return {}
+    try:
+        data, _ = _parse_jsonc(path.read_text())
+    except (ValueError, IndexError) as e:
+        raise PublishError(f"can't parse {path}: {e}", code="config") from None
+    if not isinstance(data, dict):
+        raise PublishError(f"can't parse {path}: not an object", code="config")
+    return data
+
+
+def _config_value(folder: Path, key: str) -> str | None:
+    """A top-level string from a folder's wrangler config."""
+    value = _read_config(folder).get(key)
+    return value if isinstance(value, str) and value else None
 
 
 def config_name(folder: Path) -> str | None:
@@ -508,16 +636,16 @@ def config_name(folder: Path) -> str | None:
 
 def config_route(folder: Path) -> str | None:
     """The custom-domain route pattern from a folder's wrangler config, if it has one."""
-    return _config_value(folder, "pattern")
+    for route in _read_config(folder).get("routes") or []:
+        if isinstance(route, dict) and route.get("pattern"):
+            return route["pattern"]
+    return None
 
 
 def config_pin(folder: Path) -> str | None:
     """The PIN from a folder's wrangler config (`vars.KO_PIN`), if it's a gated site."""
-    path = folder / WRANGLER_CONFIG
-    if not path.exists():
-        return None
-    m = re.search(r'"KO_PIN"\s*:\s*"([^"]+)"', path.read_text())
-    return m.group(1) if m else None
+    vars_ = _read_config(folder).get("vars")
+    return (vars_.get("KO_PIN") or None) if isinstance(vars_, dict) else None
 
 
 def resolve_name(folder: Path, name: str | None = None) -> str:
@@ -531,18 +659,20 @@ def resolve_name(folder: Path, name: str | None = None) -> str:
 def ensure_config(folder: Path, name: str | None = None, spa: bool = True) -> str:
     """Make sure `folder` has a wrangler config; create it if missing. Returns the name.
 
-    An existing config is respected as-is unless `--name` is given (which rewrites it) —
-    this is what makes re-publish sticky. If a config exists but we can't read its name,
-    we warn and leave it untouched rather than silently overwrite the sticky name.
+    An existing config is respected as-is unless `--name` is given (which renames it in
+    place) — this is what makes re-publish sticky. If a config exists but we can't read its
+    name, we warn and leave it untouched rather than silently overwrite the sticky name.
     """
     path = folder / WRANGLER_CONFIG
-    if path.exists() and not name:
+    if path.exists() and name:
+        return _rename_config(folder, slugify(name))
+    if path.exists():
         existing = config_name(folder)
         if existing:
             return existing
         print(
             f'warning: couldn\'t read "name" from {path}; leaving it as-is '
-            "(pass --name to regenerate).",
+            "(fix the file, or pass --name to set one).",
             file=sys.stderr,
         )
         return _default_name(folder)
@@ -552,20 +682,36 @@ def ensure_config(folder: Path, name: str | None = None, spa: bool = True) -> st
     return final
 
 
+def _rename_config(folder: Path, new: str) -> str:
+    """Set the Worker name in place, and move a route that hangs off the old name with it.
+    Bindings, comments, SPA mode and any other route stay as they are."""
+    path = folder / WRANGLER_CONFIG
+    old = config_name(folder)
+    text = _jsonc_set(path.read_text(), ("name",), new)
+    for i, route in enumerate(_read_config(folder).get("routes") or []):
+        pattern = route.get("pattern", "") if isinstance(route, dict) else ""
+        if old and pattern.startswith(f"{old}."):
+            text = _jsonc_set(
+                text, ("routes", i, "pattern"), new + pattern[len(old) :]
+            )
+    path.write_text(text)
+    return new
+
+
 def _gen_pin() -> str:
     """A fresh random 6-digit gate PIN."""
     return f"{secrets.randbelow(1000000):06d}"
 
 
 def ensure_hono_config(folder: Path, name: str | None = None, pin: bool = False) -> str:
-    """Like ensure_config but for a Hono worker site. With `pin=True`, generates a random
-    6-digit PIN into `vars.KO_PIN` on creation. An existing config (and its PIN) is sticky —
-    a rename (`--name`) regenerates the config but carries the existing PIN forward."""
+    """Like ensure_config but creates a Hono worker config. With `pin=True`, generates a
+    random 6-digit PIN into `vars.KO_PIN` on creation. An existing config goes through
+    ensure_config, so it (and its PIN) stays as it is."""
     path = folder / WRANGLER_CONFIG
-    if path.exists() and not name:
-        return config_name(folder) or _default_name(folder)
+    if path.exists():
+        return ensure_config(folder, name)
     final = slugify(name) if name else _default_name(folder)
-    pin_val = config_pin(folder) or (_gen_pin() if pin else None)
+    pin_val = _gen_pin() if pin else None
     text = (
         json.dumps(build_hono_config(final, publish_domain(), pin_val), indent=2) + "\n"
     )
@@ -577,33 +723,29 @@ def set_pin(folder: Path, pin: str) -> str:
     """Set/rotate the gate PIN on a worker folder, rewriting `vars.KO_PIN` in place. `pin="new"`
     generates a random 6-digit one; any other value is used literally. Returns the resulting PIN.
 
-    Only valid on a Hono/worker folder (one with `main` in its config). If the site has a
-    `KO_PIN` already we patch just that value (preserving any hand-added D1/R2/KV bindings);
-    otherwise we add the gate by regenerating the config from the template.
+    Only valid on a Hono/worker folder (one with `main` in its config). Edits the config in
+    place, so hand-added D1/R2/KV bindings and comments stay. Adding a gate also turns on
+    `run_worker_first`, without which assets bypass the PIN.
     """
     path = folder / WRANGLER_CONFIG
-    if not path.exists() or _config_value(folder, "main") is None:
-        raise RuntimeError(
-            f"{folder} isn't a worker site (no Hono config) — only `--hono` sites take a PIN."
+    cfg = _read_config(folder)
+    if not cfg.get("main"):
+        raise PublishError(
+            f"{folder} isn't a worker site (no Hono config) — only `--hono` sites take a PIN.",
+            code="usage",
         )
+    if not pin:
+        raise PublishError("an empty --pin would open the gate", code="usage")
     value = _gen_pin() if pin == "new" else pin
     text = path.read_text()
-    if (
-        '"KO_PIN"' in text
-    ):  # patch the value, leave everything else (bindings, routes) untouched
-        text = re.sub(
-            r'("KO_PIN"\s*:\s*")[^"]*(")',
-            lambda m: m.group(1) + value + m.group(2),
-            text,
-        )
-        path.write_text(text)
-    else:  # no gate yet → rebuild from the template to add vars + flip run_worker_first on
-        name = config_name(folder) or _default_name(folder)
-        text = (
-            json.dumps(build_hono_config(name, publish_domain(), value), indent=2)
-            + "\n"
-        )
-        path.write_text(text)
+    if isinstance(cfg.get("vars"), dict):
+        text = _jsonc_set(text, ("vars", "KO_PIN"), value)
+    else:
+        text = _jsonc_set(text, ("vars",), {"KO_PIN": value})
+    assets = cfg.get("assets")
+    if isinstance(assets, dict) and assets.get("run_worker_first") is not True:
+        text = _jsonc_set(text, ("assets", "run_worker_first"), True)
+    path.write_text(text)
     return value
 
 
@@ -624,7 +766,8 @@ def registry() -> dict:
 def _record(folder: Path, name: str, url: str) -> None:
     # keyed by absolute path — a deliberate single-user simplification (moving a folder
     # orphans its entry; re-publishing from the new path just makes a fresh one).
-    reg = registry()
+    # one Worker, one folder: the last to deploy a name owns it (a --force takeover drops the rest)
+    reg = {k: v for k, v in registry().items() if v.get("name") != name}
     reg[str(folder)] = {"name": name, "url": url, "updated_at": _now()}
     _registry_file().write_text(json.dumps(reg, indent=2))
 
@@ -670,42 +813,121 @@ def _parse_url(stdout: str, out_file: Path) -> str:
     return m.group(0) if m else ""
 
 
-def deploy(folder: Path, name: str | None = None, force: bool = False) -> str:
+def _served_dir(folder: Path) -> Path | None:
+    """The folder wrangler uploads as public assets; None for a worker with no assets."""
+    cfg = _read_config(folder)
+    if isinstance(cfg.get("assets"), dict):
+        directory = cfg["assets"].get("directory", ".")
+        if not isinstance(directory, str):
+            raise PublishError(f"{folder}/{WRANGLER_CONFIG}: assets.directory isn't a path", code="config")
+        return folder / directory
+    return None if cfg.get("main") else folder
+
+
+def _assets_ignore(folder: Path) -> Path | None:
+    """Where the served folder's .assetsignore goes; None when the site serves no assets."""
+    served = _served_dir(folder)
+    return served / ".assetsignore" if served and served.is_dir() else None
+
+
+def _is_secret(rel: Path) -> bool:
+    """Should this never be public? Dotfiles and dot-folders (`.well-known` is meant to be
+    public), and `*.env`. `.env.example` is a template, and the ignore file names itself."""
+    if rel.name in (".env.example", ".assetsignore") or rel.parts[0] == ".well-known":
+        return False
+    return any(part.startswith(".") for part in rel.parts) or rel.name.endswith(".env")
+
+
+def _refuse_leaks(folder: Path) -> None:
+    """A hand-written .assetsignore is never changed, so refuse when it lets a secret through.
+    Matched the way wrangler matches: gitignore rules (its `ignore` package)."""
+    ignore = _assets_ignore(folder)
+    if ignore is None or not ignore.exists():
+        return
+    try:
+        spec = GitIgnoreSpec.from_lines(ignore.read_text().splitlines())
+    except UnicodeDecodeError:
+        raise PublishError(f"can't read {ignore}: not UTF-8", code="config") from None
+    leaks = []
+    for root, dirs, files in os.walk(ignore.parent):
+        at = Path(root).relative_to(ignore.parent)
+        dirs[:] = [d for d in dirs if not spec.match_file(f"{(at / d).as_posix()}/")]
+        leaks += [at / f for f in files if _is_secret(at / f) and not spec.match_file((at / f).as_posix())]
+    if leaks:
+        names = ", ".join(map(str, sorted(leaks)[:5])) + (" and more" if len(leaks) > 5 else "")
+        raise PublishError(
+            f"refusing to deploy: {names} would be served publicly. Add `.*` and `!.well-known` to {ignore}.",
+            code="config",
+        )
+
+
+# wrangler's own wording when it has no usable login (grepped from its dist, 4.152)
+_WRANGLER_AUTH = re.compile(
+    r"not authenticated|not logged in|non-interactive environment|authentication error",
+    re.IGNORECASE,
+)
+
+
+def _deploy_failure(proc: subprocess.CompletedProcess) -> PublishError:
+    """wrangler's own error, plus how to log in only when no token is set and it asked for one."""
+    output = proc.stderr or proc.stdout
+    if not _WRANGLER_AUTH.search(f"{proc.stderr}{proc.stdout}"):
+        return PublishError(f"wrangler deploy failed:\n{output}")
+    hint = (
+        ""
+        if cf_creds()[0]
+        else " (set KO_CLOUDFLARE_API_TOKEN + KO_CLOUDFLARE_ACCOUNT_ID, or run `wrangler login`)"
+    )
+    return PublishError(f"wrangler deploy failed{hint}:\n{output}", code="auth")
+
+
+def deploy(
+    folder: Path,
+    name: str | None = None,
+    force: bool = False,
+    pin: str | None = None,
+) -> str:
     """Deploy `folder` to Cloudflare via `wrangler deploy` run inside it. Returns the URL
     (or "" if wrangler succeeded but we couldn't parse one).
 
     Guards against silently overwriting someone else's Worker: wrangler does NOT warn if the
     name is already taken — it just overwrites. So before deploying a name this folder hasn't
     published before, we check the account and refuse (unless `force`) if it already exists.
+    `pin` sets the gate PIN (see set_pin) once those checks have passed, so a refused deploy
+    changes nothing.
     """
     folder = folder.resolve()
     if not folder.is_dir():
-        raise RuntimeError(f"not a folder: {folder}")
+        raise PublishError(f"not a folder: {folder}", code="usage")
     is_worker = (
         _config_value(folder, "main") is not None
     )  # pin/Hono sites serve via a Worker
     if not is_worker and not any(folder.glob("*.html")):
-        raise RuntimeError(
-            f"{folder} has no .html — run `ko publish new {folder}` first?"
+        raise PublishError(
+            f"{folder} has no .html — run `ko publish new {folder}` first?",
+            code="usage",
         )
 
     intended = resolve_name(folder, name)
+    check_worker_name(intended)
     prev = registry().get(str(folder))
     ours = (
         bool(prev) and prev.get("name") == intended
     )  # this folder published it before
     if not ours and not force and worker_exists(intended) is True:
-        raise RuntimeError(
+        raise PublishError(
             f"'{intended}' is already a Worker on your account, and this folder hasn't "
             f"published it before — deploying would take over its URL.\n"
-            f"Use --force to take it over, or --name <other> to pick a different subdomain."
+            f"Use --force to take it over, or --name <other> to pick a different subdomain.",
+            code="usage",
         )
 
-    # route to the right config writer — a static rewrite over a Hono folder would drop
-    # `main`/`./public`/`KO_PIN` and expose the repo root (esp. on a `--name` rename).
-    name = (
-        ensure_hono_config(folder, name) if is_worker else ensure_config(folder, name)
-    )
+    _refuse_leaks(folder)
+    if pin is not None:
+        set_pin(folder, pin)  # before wrangler, so the new PIN ships
+    if (ignore := _assets_ignore(folder)) and not ignore.exists():
+        ignore.write_text(_ASSETSIGNORE)
+    name = ensure_config(folder, name)
     write_llms_txt(folder)  # md sites: refresh the agent-facing index from the pages
     _npm_install(folder)  # worker sites (Hono) need deps bundled before deploy
     with tempfile.TemporaryDirectory() as td:
@@ -721,13 +943,9 @@ def deploy(folder: Path, name: str | None = None, force: bool = False) -> str:
                 check=False,
             )
         except subprocess.TimeoutExpired:
-            raise RuntimeError("wrangler deploy timed out after 3 min") from None
+            raise PublishError("wrangler deploy timed out after 3 min") from None
         if proc.returncode != 0:
-            raise RuntimeError(
-                "wrangler deploy failed (set KO_CLOUDFLARE_API_TOKEN + "
-                "KO_CLOUDFLARE_ACCOUNT_ID, or run `wrangler login`):\n"
-                + (proc.stderr or proc.stdout)
-            )
+            raise _deploy_failure(proc)
         # URL from the folder's ACTUAL config route (not the ambient domain, which may
         # not match a pre-existing wrangler.jsonc); else parse wrangler's workers.dev URL.
         route = config_route(folder)
@@ -743,20 +961,25 @@ def preview(folder: Path, port: int | None = None) -> int:
     static assets and, for Hono sites, runs the real worker (PIN gate + `/api/*` included). This is
     how to view a site as it builds — over http, so ES modules and `fetch()` work (a plain
     `file://` open does not). Long-running and interactive (Ctrl-C to stop); inherits the terminal.
-    Returns wrangler's exit code.
+    Returns wrangler's exit code; Ctrl-C is a normal stop, so 0.
     """
     folder = folder.resolve()
     if not folder.is_dir():
-        raise RuntimeError(f"not a folder: {folder}")
+        raise PublishError(f"not a folder: {folder}", code="usage")
     if not (folder / WRANGLER_CONFIG).exists():
-        raise RuntimeError(
-            f"{folder} has no {WRANGLER_CONFIG} — run `ko publish new {folder}` first?"
+        raise PublishError(
+            f"{folder} has no {WRANGLER_CONFIG} — run `ko publish new {folder}` first?",
+            code="usage",
         )
     _npm_install(folder)  # worker sites (Hono) need deps before wrangler can bundle
     cmd = [*_wrangler(), "dev"]
     if port:
         cmd += ["--port", str(port)]
-    return subprocess.run(cmd, cwd=str(folder), env=_cf_env(), check=False).returncode
+    try:
+        code = subprocess.run(cmd, cwd=str(folder), env=_cf_env(), check=False).returncode
+    except KeyboardInterrupt:
+        return 0
+    return 0 if code in (130, -signal.SIGINT) else code
 
 
 # --- scaffold ---
@@ -776,10 +999,11 @@ def scaffold(
     """
     folder.mkdir(parents=True, exist_ok=True)
     title = title or folder.resolve().name
+    page_title = html.escape(title)  # the HTML shells; markdown keeps the title as typed
     if mode == "md":
         files = {
             "README.md": _MD_README.replace("__TITLE__", title),
-            "index.html": _MD_INDEX.replace("__TITLE__", title),
+            "index.html": _MD_INDEX.replace("__TITLE__", page_title),
             "style.css": _MD_STYLE,
             "CLAUDE.md": _MD_CLAUDE.replace("__TITLE__", title),
             ".gitignore": _GITIGNORE,
@@ -795,8 +1019,9 @@ def scaffold(
         # the doc/app lives in public/ (served via the ASSETS binding); the worker is src/
         files = {
             "public/README.md": _MD_README.replace("__TITLE__", title),
-            "public/index.html": _MD_INDEX.replace("__TITLE__", title),
+            "public/index.html": _MD_INDEX.replace("__TITLE__", page_title),
             "public/style.css": _MD_STYLE,
+            "public/.assetsignore": _ASSETSIGNORE,
             "src/index.ts": _HONO_INDEX,
             "package.json": _HONO_PKG.replace("__NAME__", _default_name(folder)),
             "CLAUDE.md": _HONO_CLAUDE.replace("__TITLE__", title),
@@ -804,7 +1029,7 @@ def scaffold(
         }
     else:
         files = {
-            "index.html": _INDEX_HTML.replace("__TITLE__", title),
+            "index.html": _INDEX_HTML.replace("__TITLE__", page_title),
             "style.css": _STYLE_CSS,
             "app.js": _APP_JS,
             "CLAUDE.md": _CLAUDE_MD.replace("__TITLE__", title),
@@ -831,13 +1056,12 @@ def scaffold(
 
 _GITIGNORE = ".wrangler/\n"
 
-# static/md/bare serve `assets.directory: "."`, so without this wrangler would upload the dev +
-# meta files (the .wrangler preview dir, the config, CLAUDE.md) and serve them at the site root.
-# Same syntax as .gitignore. (Hono doesn't need it — its assets dir is ./public, meta files sit outside.)
+# static/md/bare serve `assets.directory: "."`, so without this wrangler would upload dotfiles
+# (.env, .git, the .wrangler preview dir), the config and CLAUDE.md, and serve them at the site
+# root. Same syntax as .gitignore. deploy() writes it into any served folder that has none.
 _ASSETSIGNORE = """\
-.assetsignore
-.gitignore
-.wrangler
+.*
+!.well-known
 CLAUDE.md
 wrangler.jsonc
 node_modules
@@ -852,11 +1076,11 @@ _INDEX_HTML = """\
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>__TITLE__</title>
-    <!-- For the EXTRAS only: Tailwind utilities + Alpine for small interactivity. -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.9/dist/cdn.min.js"></script>
-    <!-- style.css sets clean base styles for plain HTML, and loads last so it wins. -->
+    <!-- style.css sets clean base styles for plain HTML, in a layer under Tailwind's utilities. -->
     <link rel="stylesheet" href="style.css" />
+    <!-- For the EXTRAS only: Tailwind utilities + Alpine for small interactivity. -->
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.17.5/dist/cdn.min.js"></script>
   </head>
   <body>
     <main>
@@ -880,6 +1104,11 @@ _INDEX_HTML = """\
 """
 
 _STYLE_CSS = """\
+/* Tailwind v4 keeps its utilities in cascade layers, and unlayered CSS beats any layer. This
+   file stays in its own layer so utility classes still win where you add them. */
+@layer theme, base, site, components, utilities;
+
+@layer site {
 :root {
   --accent: #6366f1; /* indigo-500 — your one knob */
   --bg: #0a0a0b;
@@ -890,9 +1119,8 @@ _STYLE_CSS = """\
 }
 
 /* Minimal base styles so plain, semantic HTML already looks good — no class on every
-   element. Loads AFTER Tailwind, so these are the defaults and Tailwind utilities (or your
-   own classes) still win wherever you add them. Style with clean HTML; reach for Tailwind/
-   Alpine only for the extras. */
+   element. These are the defaults; Tailwind utilities still win wherever you add them. Style
+   with clean HTML; reach for Tailwind/Alpine only for the extras. */
 * { box-sizing: border-box; }
 body {
   margin: 0;
@@ -940,6 +1168,7 @@ img { max-width: 100%; border-radius: 8px; }
   font-size: 0.8rem;
   background: rgba(99, 102, 241, 0.15); /* accent-tinted */
 }
+}
 """
 
 # A tiny ES-module component — models the "keep index.html readable, heavy JS in its own file" pattern.
@@ -951,7 +1180,7 @@ _APP_JS = """\
 // and load it with <script type="module" src="app.js">. Import libraries straight
 // from a CDN — no build step:
 //
-//   import * as THREE from "https://esm.sh/three@0.160.0";
+//   import * as THREE from "https://esm.sh/three@0.187.0";
 //
 // Replace the demo below with your component.
 
@@ -985,8 +1214,9 @@ Single-page static site, deployed to Cloudflare via `ko publish`. No build step.
   code and blockquotes (dark theme — tweak `--accent` first). You shouldn't need a class on
   every element. **Keep body text on the bright default** — reserve grey (`.muted`, ~zinc-400)
   for captions/footnotes; greying prose down to zinc-500/600 makes it hard to read.
-- **Tailwind** (Play CDN) — reach for utility classes only for the *extras*: layout, spacing,
-  a coloured callout, a blinking heading.
+- **Tailwind** (v4 browser build) — reach for utility classes only for the *extras*: layout,
+  spacing, a coloured callout, a blinking heading. Custom theme values go in
+  `<style type="text/tailwindcss">` with `@theme`. `style.css` keeps to `@layer site`, so utilities beat it.
 - **Alpine.js** — small inline interactivity: `x-data`, `@click`, `x-show`, `x-text`
   (a toggle, an accordion).
 - **A couple of helpers, not a framework** — `style.css` ships `.card` and `.pill` to get you
@@ -1003,21 +1233,21 @@ Don't inline it. Put it in its own ES-module file and mount it:
 ```
 ```js
 // viz.js — import libs straight from a CDN, no build step
-import * as THREE from "https://esm.sh/three@0.160.0";
+import * as THREE from "https://esm.sh/three@0.187.0";
 export function mount(el) { /* ...build the widget... */ }
 mount(document.getElementById("viz"));
 ```
 `app.js` here is a tiny working example of exactly this — repurpose or delete it.
 
 ## Preview & deploy
-- **Preview locally:** `npx wrangler dev` here → http://localhost:8787 (serves over http so
+- **Preview locally:** `ko publish preview` here → http://localhost:8787 (serves over http so
   `app.js`/ES modules load; refresh on save). Double-clicking `index.html` (`file://`) won't run
   ES modules — use the dev server.
 - `wrangler.jsonc` here describes this site. `ko publish` from this folder re-deploys to the **same URL**.
 - Everything here is served at the site root; keep asset paths relative (`./img/...`).
 
 ## Going further (not yet wired)
-- 3D / graphics: **Three.js** via `https://esm.sh/three` in a module file (above) — still no build.
+- 3D / graphics: **Three.js** via `https://esm.sh/three@0.187.0` in a module file (above) — still no build.
 - Backend / API / DB or a PIN gate: a Hono Worker (`--hono`). Refs: https://hono.dev/llms.txt
 """
 
@@ -1038,7 +1268,7 @@ diagrams, dashboards directly. More flexible than a chart library. Example:
 
 <div class="my-6 rounded-lg border border-zinc-700 p-4" x-data="{ n: 0 }">
   <p>Clicked <span x-text="n"></span> times</p>
-  <button class="mt-2 rounded bg-indigo-600 px-3 py-1 text-white" @click="n++">+1</button>
+  <button class="mt-2 rounded-md bg-indigo-600 px-3 py-1 text-white" @click="n++">+1</button>
 </div>
 
 ## Writing
@@ -1060,11 +1290,12 @@ _MD_INDEX = """\
     <meta name="twitter:card" content="summary" />
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📄</text></svg>" />
     <link rel="stylesheet" href="style.css" />
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11/styles/github-dark.min.css" />
+    <!-- in a layer, or this unlayered theme would beat style.css's `.prose pre code` -->
+    <style>@import url("https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11/styles/github-dark.min.css") layer(base);</style>
     <!-- Tailwind (for inline HTML/SVG components you embed) + markdown-it (prose) -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdn.jsdelivr.net/npm/markdown-it@14/dist/markdown-it.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/markdown-it-anchor@9/dist/markdownItAnchor.umd.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <script src="https://cdn.jsdelivr.net/npm/markdown-it@15/dist/browser/markdown-it.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/markdown-it-anchor@10/dist/markdownItAnchor.umd.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11/highlight.min.js"></script>
   </head>
   <body>
@@ -1077,7 +1308,7 @@ _MD_INDEX = """\
       <aside id="toc" class="toc"></aside>
     </div>
     <script type="module">
-      import Alpine from "https://cdn.jsdelivr.net/npm/alpinejs@3.14.9/dist/module.esm.js";
+      import Alpine from "https://cdn.jsdelivr.net/npm/alpinejs@3.17.5/dist/module.esm.js";
       window.Alpine = Alpine;
 
       // Only fetch a local *.md file (no URLs, no path traversal).
@@ -1120,7 +1351,21 @@ _MD_INDEX = """\
         const h1 = content.querySelector("h1");
         if (h1) document.title = h1.textContent;
         buildToc(content);
+        await runScripts(content);
         Alpine.start();  // activate any inline Alpine (x-data) components in the rendered HTML
+      }
+
+      // innerHTML never runs <script> tags, so re-create each one, in order: a page's
+      // Chart.js <script src> has to load before the inline script that uses it.
+      async function runScripts(content) {
+        for (const old of content.querySelectorAll("script")) {
+          const s = document.createElement("script");
+          for (const a of old.attributes) s.setAttribute(a.name, a.value);
+          s.textContent = old.textContent;
+          const loaded = s.src && new Promise((done) => (s.onload = s.onerror = done));
+          old.replaceWith(s);
+          await loaded;
+        }
       }
 
       // Right-sidebar TOC from rendered h2/h3 (ids added by markdown-it-anchor).
@@ -1145,6 +1390,11 @@ _MD_INDEX = """\
 """
 
 _MD_STYLE = """\
+/* Tailwind v4 keeps its utilities in cascade layers, and unlayered CSS beats any layer. This
+   file stays in its own layer so utility classes on inline HTML still win. */
+@layer theme, base, site, components, utilities;
+
+@layer site {
 :root {
   --accent: #6366f1;
   --bg: #0a0a0b;
@@ -1255,6 +1505,7 @@ body {
   .prose h1, .prose h2, .prose h3 { break-after: avoid; }
   .prose pre, .mermaid, .prose img, .prose table { break-inside: avoid; }
 }
+}
 """
 
 _MD_CLAUDE = """\
@@ -1276,18 +1527,19 @@ dark theme + right-sidebar TOC. No build step. Deployed to Cloudflare via `ko pu
   ~zinc-400) for captions/footnotes — don't grey prose down to zinc-500/600 (too faint to read).
 
 ## Visuals & frameworks (all loaded, no build — `html: true`, so embed HTML/SVG inline)
-- **Tailwind** — utility classes on any inline HTML you write: `class="flex gap-4 rounded-lg p-4"`.
+- **Tailwind** (v4) — utility classes on any inline HTML you write: `class="flex gap-4 rounded-lg p-4"`.
+  Custom theme values go in `<style type="text/tailwindcss">` with `@theme`, in `index.html`.
 - **Alpine** — lightweight inline interactivity: `x-data`, `@click`, `x-show`, `x-text`.
   Start here: https://alpinejs.dev/start-here
 - **Diagrams / infographics** (architecture, flows) → **hand-write inline `<svg>`**. No library —
   most flexible, and the thing an agent is good at.
 - **Data charts** (bar/line/scatter/pie from real numbers) → **Chart.js, on that page only**:
-  `<script src="https://cdn.jsdelivr.net/npm/chart.js/dist/chart.umd.min.js"></script>`
+  `<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>`
   then a `<canvas>` + `new Chart(ctx, {type, data, options})`. (Per-page keeps diagram pages lean.)
 - **Heavy / stateful JS** (a Three.js viz, a big interactive widget) → don't paste it into the
   markdown. Put the code in its own file `viz.js`, and keep the prose clean with just a mount point:
   `<div id="viz"></div>` then `<script type="module" src="viz.js"></script>` (import libs from a
-  CDN, e.g. `https://esm.sh/three`). Editing the doc's text then never means scrolling past the widget.
+  CDN, e.g. `https://esm.sh/three@0.187.0`). Editing the doc's text then never means scrolling past the widget.
 
 ## Also
 - **Starter classes** — `style.css` ships `.card` / `.pill` for inline custom HTML; repeat a
@@ -1299,7 +1551,7 @@ dark theme + right-sidebar TOC. No build step. Deployed to Cloudflare via `ko pu
   `og:image`) so a shared link shows a title/description/preview.
 
 ## Preview & publish
-- **Preview locally:** `npx wrangler dev` here → http://localhost:8787, then refresh on save.
+- **Preview locally:** `ko publish preview` here → http://localhost:8787, then refresh on save.
   The page uses `fetch()` to load `.md`, which browsers block on `file://` — so preview via the
   dev server, not by double-clicking `index.html`.
 - `ko publish` from this folder re-deploys to the **same URL**.
@@ -1331,10 +1583,11 @@ here is served at the site root); `ko publish` won't deploy until one exists.
 - Keep asset paths relative (`./...`).
 
 ## No-build building blocks (all via CDN — no npm, no bundler)
-- **Tailwind** (utility CSS): `<script src="https://cdn.tailwindcss.com"></script>`
+- **Tailwind** (utility CSS): `<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>`;
+  custom theme values go in `<style type="text/tailwindcss">` with `@theme`
 - **Alpine** (interactivity): `https://cdn.jsdelivr.net/npm/alpinejs@3/dist/cdn.min.js`
-- **markdown-it** (render markdown): `https://cdn.jsdelivr.net/npm/markdown-it/dist/markdown-it.min.js`
-- **Three.js** (3D — e.g. a robot-arm viz): `https://cdn.jsdelivr.net/npm/three@0.160/build/three.module.js` via an importmap
+- **markdown-it** (render markdown): `https://cdn.jsdelivr.net/npm/markdown-it@15/dist/browser/markdown-it.umd.min.js`
+- **Three.js** (3D — e.g. a robot-arm viz): `https://cdn.jsdelivr.net/npm/three@0.187/build/three.module.js` via an importmap
 
 ## Going further
 - Backend / API / DB or a PIN gate: a Hono Worker — `ko publish new <dir> --hono` (add `--pin`).
@@ -1375,7 +1628,8 @@ app.use("*", async (c, next) => {
         // 90 days — a soft gate, so favour not re-prompting returning visitors. Bump freely.
         httpOnly: true, secure: true, sameSite: "Lax", path: "/", maxAge: 60 * 60 * 24 * 90,
       });
-      return c.redirect(new URL(c.req.url).pathname);
+      // absolute and same-origin: keeps ?page=, and a pathname of //evil.com can't leave the site
+      return c.redirect(c.req.url, 303);
     }
   }
   return c.html(pinPage(c.req.method === "POST"), 401);
@@ -1397,6 +1651,7 @@ app.get("/api/data", async (c) => {
   // Fetch + reshape your upstream here. API key? `wrangler secret put NAME` (encrypted, not
   // committed — unlike KO_PIN) and read c.env.NAME.
   const upstream = await fetch("https://api.example.com/prices?days=30");
+  if (!upstream.ok) return c.json({ error: `upstream HTTP ${upstream.status}` }, 502); // never cached
   const data = await upstream.json();
 
   const res = Response.json(data, { headers: { "cache-control": `public, max-age=${DATA_TTL}` } });
@@ -1440,7 +1695,7 @@ A Cloudflare Worker (Hono) serving the doc/app in `public/`, deployed via `ko pu
 Backend-ready: add API routes, D1, R2 in `src/index.ts`. `ko publish` runs `npm install`
 (once) then `wrangler deploy` — no build config to manage.
 
-**Preview locally:** `npx wrangler dev` here → http://localhost:8787 — runs the real worker (PIN
+**Preview locally:** `ko publish preview` here → http://localhost:8787 — runs the real worker (PIN
 gate, `/api/*`) over http and reloads on save. Opening `public/index.html` via `file://` breaks the
 markdown shell's `fetch()` and ES modules, so always preview through the dev server.
 
@@ -1467,7 +1722,7 @@ page readable:
 <div id="viz"></div>
 <script type="module" src="viz.js"></script>
 ```
-Import libs from a CDN (`import * as THREE from "https://esm.sh/three@0.160.0"`). `hono/jsx/dom`
+Import libs from a CDN (`import * as THREE from "https://esm.sh/three@0.187.0"`). `hono/jsx/dom`
 components need a bundler — only reach for them if you add a build step.
 
 ## Hono cheat-sheet (Cloudflare Workers)

@@ -1,6 +1,12 @@
 """Offline tests for ko.publish — naming, in-folder config, scaffold modes. No wrangler/network."""
 
+import subprocess
+
+import pytest
+from typer.testing import CliRunner
+
 from ko import publish
+from ko.cli import app
 
 
 def test_slugify():
@@ -80,10 +86,10 @@ def test_scaffold_static(monkeypatch, tmp_path):
         "wrangler.jsonc",
     } <= written
     # assets.directory is "." → meta/dev files must be excluded from the upload
-    assert ".wrangler" in (folder / ".assetsignore").read_text()
-    assert "wrangler.jsonc" in (folder / ".assetsignore").read_text()
+    ignore = (folder / ".assetsignore").read_text().splitlines()
+    assert {".*", "!.well-known", "wrangler.jsonc"} <= set(ignore)
     index = (folder / "index.html").read_text()
-    assert "cdn.tailwindcss.com" in index
+    assert "@tailwindcss/browser@4" in index
     assert (
         "Robot Arm" in index and "{title}" not in index
     )  # title substituted, no stray braces
@@ -461,3 +467,396 @@ def test_strip_html_preserves_inline_code_spans():
     out = publish._strip_html("An agent runs `ko fetch <url>` on <b>every</b> call.\n")
     assert "`ko fetch <url>`" in out  # placeholder inside inline code survives
     assert "every call" in out and "<b>" not in out
+
+
+def test_strip_html_multiline_tag_and_script_body():
+    md = (
+        '<div class="a"\n     id="b">kept</div>\n\n<script>\nconst x = `y`;\nboom();\n</script>\n'
+        "<style>\n.a { color: red }\n</style>\n\nSee `<script>` here and 1 < 2 and\n\n3 > 2.\n"
+    )
+    out = publish._strip_html(md)
+    assert "kept" in out and "class=" not in out and "id=" not in out
+    assert "boom" not in out and "color: red" not in out
+    assert "`<script>`" in out  # code stays verbatim
+    assert "1 < 2 and\n\n3 > 2." in out  # a stray < isn't a tag
+
+
+# --- the Hono template ---
+
+
+def test_pin_redirect_keeps_query_and_stays_on_site():
+    assert "c.redirect(c.req.url, 303)" in publish._HONO_INDEX
+    assert ".pathname" not in publish._HONO_INDEX  # //evil.com as a Location leaves the site
+
+
+def test_api_data_template_never_caches_upstream_errors():
+    src = publish._HONO_INDEX
+    assert "upstream.ok" in src
+    assert src.index("upstream.ok") < src.index("cache.put")
+
+
+def test_templates_preview_with_ko_and_current_libs():
+    templates = [
+        publish._CLAUDE_MD,
+        publish._MD_CLAUDE,
+        publish._HONO_CLAUDE,
+        publish._BARE_CLAUDE,
+        publish._INDEX_HTML,
+        publish._MD_INDEX,
+    ]
+    joined = "\n".join(templates)
+    for stale in ("npx wrangler dev", "cdn.tailwindcss.com", "three@0.160", "alpinejs@3.14"):
+        assert stale not in joined
+    assert "chart.js@4/" in publish._MD_CLAUDE
+
+
+def test_md_shell_runs_page_scripts_and_layers_css():
+    assert "await runScripts(content)" in publish._MD_INDEX  # innerHTML never runs <script>
+    assert "github-dark.min.css\") layer(base)" in publish._MD_INDEX
+    for css in (publish._MD_STYLE, publish._STYLE_CSS):  # unlayered CSS would beat utilities
+        assert "@layer theme, base, site, components, utilities;" in css
+
+
+def test_title_is_escaped_in_html_only(monkeypatch, tmp_path):
+    monkeypatch.setattr(publish, "publish_domain", lambda: None)
+    folder = tmp_path / "docs"
+    publish.scaffold(folder, title='A & "B" <i>', mode="md")
+    index = (folder / "index.html").read_text()
+    assert "A &amp; &quot;B&quot; &lt;i&gt;" in index and "<i>" not in index
+    assert '# A & "B" <i>' in (folder / "README.md").read_text()
+
+
+# --- config: JSONC, edited in place ---
+
+_HAND_EDITED = """\
+// my site
+{
+  // "name": "commented-out",
+  "d1_databases": [{ "binding": "DB", "name": "db-name", "database_id": "x" }],
+  "name": "real", /* keep me */
+  "main": "src/index.ts",
+  "assets": { "directory": "./public", "binding": "ASSETS", "run_worker_first": false, },
+  "routes": [{ "pattern": "real.example.com", "custom_domain": true }],
+}
+"""
+
+
+def _parsed(folder):
+    data, _ = publish._parse_jsonc((folder / "wrangler.jsonc").read_text())
+    return data
+
+
+def _hand_edited(tmp_path, text=_HAND_EDITED):
+    folder = tmp_path / "app"
+    folder.mkdir()
+    (folder / "wrangler.jsonc").write_text(text)
+    return folder
+
+
+def test_config_name_ignores_comments_and_nested_names(tmp_path):
+    folder = _hand_edited(tmp_path)
+    assert publish.config_name(folder) == "real"
+    assert publish.config_route(folder) == "real.example.com"
+
+
+def test_broken_config_fails_loud(tmp_path):
+    folder = _hand_edited(tmp_path, '{ "name": ')
+    with pytest.raises(publish.PublishError, match="can't parse"):
+        publish.config_name(folder)
+
+
+def test_add_pin_keeps_bindings_and_comments(tmp_path):
+    folder = _hand_edited(tmp_path)
+    publish.set_pin(folder, 'a"b')
+    text = (folder / "wrangler.jsonc").read_text()
+    assert "// my site" in text and "/* keep me */" in text and "db-name" in text
+    cfg = _parsed(folder)
+    assert cfg["vars"]["KO_PIN"] == 'a"b' == publish.config_pin(folder)  # escaped, parses
+    assert cfg["assets"]["run_worker_first"] is True
+    publish.set_pin(folder, "424242")  # the rotate path, on the same file
+    assert publish.config_pin(folder) == "424242"
+
+
+def test_empty_pin_refused(tmp_path):
+    folder = _hand_edited(tmp_path)
+    with pytest.raises(publish.PublishError, match="empty"):
+        publish.set_pin(folder, "")
+
+
+def test_rename_keeps_bindings_comments_and_moves_route(tmp_path):
+    folder = _hand_edited(tmp_path)
+    assert publish.ensure_config(folder, "New Name") == "new-name"
+    text = (folder / "wrangler.jsonc").read_text()
+    assert "// my site" in text and "db-name" in text
+    assert publish.config_name(folder) == "new-name"
+    assert publish.config_route(folder) == "new-name.example.com"
+
+
+def test_rename_keeps_md_site_404_mode(monkeypatch, tmp_path):
+    monkeypatch.setattr(publish, "publish_domain", lambda: None)
+    folder = tmp_path / "docs"
+    publish.scaffold(folder, mode="md")
+    publish.ensure_config(folder, "renamed")
+    assert _parsed(folder)["assets"]["not_found_handling"] == "404-page"
+
+
+def test_empty_domain_means_workers_dev(monkeypatch):
+    monkeypatch.setattr(publish.config, "get", lambda *a, **k: "")
+    assert publish.publish_domain() is None
+
+
+# --- deploy (subprocess stubbed) ---
+
+
+@pytest.fixture
+def site(monkeypatch, tmp_path):
+    """A plain folder with a page, wrangler stubbed to succeed; `.calls` records its commands."""
+    monkeypatch.setenv("KO_STATE_DIR", str(tmp_path / "state"))
+    (tmp_path / "state").mkdir()
+    monkeypatch.setattr(publish, "publish_domain", lambda: "example.com")
+    monkeypatch.setattr(publish, "_wrangler", lambda: ["wrangler"])
+    monkeypatch.setattr(publish, "cf_creds", lambda: ("tok", "acct"))
+    monkeypatch.setattr(publish, "worker_exists", lambda name: False)
+    folder = tmp_path / "mysite"
+    folder.mkdir()
+    (folder / "index.html").write_text("<h1>hi</h1>")
+    calls = []
+
+    def fake_run(cmd, **kw):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(publish.subprocess, "run", fake_run)
+    return type("Site", (), {"path": folder, "calls": calls})
+
+
+def test_deploy_unscaffolded_writes_ignore_config_and_registry(site):
+    url = publish.deploy(site.path)
+    assert url == "https://mysite.example.com"
+    assert site.calls == [["wrangler", "deploy"]]
+    ignore = (site.path / ".assetsignore").read_text().splitlines()
+    assert {".*", "!.well-known", "wrangler.jsonc"} <= set(ignore)
+    assert publish.registry()[str(site.path.resolve())]["name"] == "mysite"
+
+
+def test_deploy_refuses_secret_past_hand_written_ignore(site):
+    (site.path / ".env").write_text("X=1")
+    (site.path / ".assetsignore").write_text("node_modules\n")
+    with pytest.raises(publish.PublishError, match=r"\.env would be served"):
+        publish.deploy(site.path)
+    assert site.calls == []
+    assert (site.path / ".assetsignore").read_text() == "node_modules\n"  # not overwritten
+
+
+@pytest.mark.parametrize("line", [".*", ".env", "*", "/.env", ".env*"])
+def test_deploy_accepts_hand_written_ignore_that_covers_secret(site, line):
+    (site.path / ".env").write_text("X=1")
+    (site.path / ".assetsignore").write_text(f"{line}\n")
+    assert publish.deploy(site.path)
+    assert (site.path / ".assetsignore").read_text() == f"{line}\n"
+
+
+def test_guard_checks_nested_secrets_and_negation(site):
+    (site.path / "sub").mkdir()
+    (site.path / "sub" / ".dev.vars").write_text("X=1")
+    (site.path / ".assetsignore").write_text(".*\n!.dev.vars\n")
+    with pytest.raises(publish.PublishError, match="dev.vars"):
+        publish.deploy(site.path)
+
+
+def test_guard_looks_in_the_served_folder_of_a_worker(site):
+    (site.path / ".env").write_text("X=1")  # outside ./public: never uploaded
+    (site.path / "public").mkdir()
+    (site.path / "wrangler.jsonc").write_text(
+        '{"name": "w", "main": "src/index.ts", "assets": {"directory": "./public"}}'
+    )
+    publish.deploy(site.path)
+    assert (site.path / "public" / ".assetsignore").exists()
+    assert not (site.path / ".assetsignore").exists()
+
+
+def test_refused_takeover_changes_nothing(site, monkeypatch):
+    monkeypatch.setattr(publish, "worker_exists", lambda name: True)
+    (site.path / "wrangler.jsonc").write_text(
+        '{"name": "taken", "main": "src/index.ts", "assets": {"directory": "."}}'
+    )
+    before = (site.path / "wrangler.jsonc").read_text()
+    with pytest.raises(publish.PublishError, match="already a Worker") as e:
+        publish.deploy(site.path, pin="123456")
+    assert e.value.code == "usage"
+    assert (site.path / "wrangler.jsonc").read_text() == before
+    assert site.calls == []
+
+
+def test_force_takeover_drops_other_registry_rows(site, tmp_path):
+    other = tmp_path / "other"
+    publish._record(other, "mysite", "https://old")
+    publish.deploy(site.path, force=True)
+    assert [p.folder for p in publish.published()] == [str(site.path.resolve())]
+
+
+@pytest.mark.parametrize(
+    ("stderr", "token", "code", "hint"),
+    [
+        ("You are not authenticated. Please run `wrangler login`.", None, "auth", True),
+        ("Authentication error [code: 10000]", "tok", "auth", False),
+        ("Build failed: src/index.ts", None, "error", False),
+    ],
+)
+def test_auth_hint_only_when_creds_missing(site, monkeypatch, stderr, token, code, hint):
+    monkeypatch.setattr(publish, "cf_creds", lambda: (token, None))
+    monkeypatch.setattr(
+        publish.subprocess,
+        "run",
+        lambda cmd, **kw: subprocess.CompletedProcess(cmd, 1, "", stderr),
+    )
+    with pytest.raises(publish.PublishError) as e:
+        publish.deploy(site.path)
+    assert e.value.code == code
+    assert ("KO_CLOUDFLARE_API_TOKEN" in str(e.value)) is hint
+
+
+def test_missing_tools_are_clean_errors(monkeypatch, tmp_path):
+    monkeypatch.setattr(publish.shutil, "which", lambda name: None)
+    monkeypatch.setattr(publish, "_repo_wrangler", lambda: None)
+    monkeypatch.delenv("KO_WRANGLER", raising=False)
+    with pytest.raises(publish.PublishError, match="Node.js") as e:
+        publish._wrangler()
+    assert e.value.code == "config"
+    monkeypatch.setenv("KO_WRANGLER", "/nope/wrangler")
+    with pytest.raises(publish.PublishError, match="KO_WRANGLER"):
+        publish._wrangler()
+    (tmp_path / "package.json").write_text("{}")
+    with pytest.raises(publish.PublishError, match="npm"):
+        publish._npm_install(tmp_path)
+
+
+@pytest.mark.parametrize("outcome", [130, KeyboardInterrupt])
+def test_preview_ctrl_c_is_a_normal_stop(monkeypatch, tmp_path, outcome):
+    (tmp_path / "wrangler.jsonc").write_text('{"name": "x"}')
+    monkeypatch.setattr(publish, "_wrangler", lambda: ["wrangler"])
+
+    def fake_run(cmd, **kw):
+        if outcome is KeyboardInterrupt:
+            raise KeyboardInterrupt
+        return subprocess.CompletedProcess(cmd, outcome)
+
+    monkeypatch.setattr(publish.subprocess, "run", fake_run)
+    assert publish.preview(tmp_path) == 0
+
+
+# --- the commands ---
+
+
+@pytest.fixture
+def cli(monkeypatch, tmp_path):
+    monkeypatch.setenv("KO_STATE_DIR", str(tmp_path / "state"))
+    (tmp_path / "state").mkdir()
+    monkeypatch.setattr(publish, "publish_domain", lambda: None)
+    monkeypatch.chdir(tmp_path)
+    deleted = []
+    monkeypatch.setattr(publish, "cf_creds", lambda: ("tok", "acct"))
+    monkeypatch.setattr(
+        publish.httpx,
+        "delete",
+        lambda url, **kw: deleted.append(url) or _Resp(status_code=200),
+    )
+    return type("Cli", (), {"run": CliRunner().invoke, "deleted": deleted})
+
+
+@pytest.mark.parametrize("target", ["", "  ", "./foo", "../foo", "foo/bar", "..", ".", "~/foo"])
+def test_rm_path_looking_target_never_deletes(cli, target):
+    result = cli.run(app, ["publish", "rm", target, "--yes"])
+    assert result.exit_code == 2, result.output
+    assert cli.deleted == []
+
+
+def test_rm_existing_folder_without_config_is_an_error(cli, tmp_path):
+    (tmp_path / "foo").mkdir()
+    result = cli.run(app, ["publish", "rm", "./foo", "--yes"])
+    assert result.exit_code == 2
+    assert cli.deleted == []
+
+
+def test_rm_folder_uses_its_top_level_name_not_a_commented_one(cli, tmp_path):
+    _hand_edited(tmp_path)
+    result = cli.run(app, ["publish", "rm", "app", "--yes"])
+    assert result.exit_code == 0, result.output
+    assert [u.rsplit("/", 1)[-1] for u in cli.deleted] == ["real"]
+
+
+def test_rm_plain_worker_name(cli):
+    assert cli.run(app, ["publish", "rm", "foo", "--yes"]).exit_code == 0
+    assert cli.deleted[0].endswith("/workers/scripts/foo")
+
+
+def test_new_prints_paths_on_stdout_and_pin_on_stderr(cli, tmp_path):
+    result = cli.run(app, ["publish", "new", "gated", "--pin"])
+    assert result.exit_code == 0, result.output
+    pin = publish.config_pin(tmp_path / "gated")
+    assert f"PIN: {pin}" in result.stderr and pin not in result.stdout
+    assert all((tmp_path / line).exists() for line in result.stdout.splitlines())
+
+
+def test_new_md_with_pin_names_the_flag_that_was_passed(cli):
+    result = cli.run(app, ["publish", "new", "x", "--md", "--pin"])
+    assert result.exit_code == 2
+    assert "--pin implies --hono" in result.stderr
+
+
+def test_up_error_goes_through_die(cli, tmp_path):
+    result = cli.run(app, ["publish", "up", "missing-folder"])
+    assert result.exit_code == 2
+    assert "not a folder" in result.stderr
+
+
+def _worker_free_site(tmp_path, ignore: str):
+    (tmp_path / ".assetsignore").write_text(ignore)
+    return tmp_path
+
+
+@pytest.mark.parametrize("line", [".*/", ".env/", "src/*.env"])
+def test_refuse_leaks_uses_gitignore_rules(tmp_path, line):
+    """A directory-only line doesn't cover a file; `*` doesn't cross `/` (wrangler's matcher)."""
+    site = _worker_free_site(tmp_path, line + "\n")
+    (site / "src" / "sub").mkdir(parents=True)
+    (site / ("src/sub/.env" if line.startswith("src") else ".env")).write_text("SECRET=1")
+    with pytest.raises(publish.PublishError, match="would be served publicly"):
+        publish._refuse_leaks(site)
+
+
+@pytest.mark.parametrize("leak", [".git/config", ".npmrc", "secrets.env"])
+def test_refuse_leaks_covers_more_than_env(tmp_path, leak):
+    site = _worker_free_site(tmp_path, "CLAUDE.md\n")
+    (site / leak).parent.mkdir(exist_ok=True)
+    (site / leak).write_text("x")
+    with pytest.raises(publish.PublishError, match="would be served publicly"):
+        publish._refuse_leaks(site)
+
+
+def test_refuse_leaks_allows_the_default_list_and_templates(tmp_path):
+    site = _worker_free_site(tmp_path, publish._ASSETSIGNORE)
+    (site / ".well-known").mkdir()
+    (site / ".well-known" / "security.txt").write_text("x")
+    (site / ".well-known" / ".env").write_text("SECRET=1")
+    (site / ".env").write_text("SECRET=1")
+    publish._refuse_leaks(site)
+    (site / ".assetsignore").write_text("CLAUDE.md\n")
+    (site / ".env").unlink()
+    (site / ".well-known" / ".env").unlink()
+    (site / ".env.example").write_text("KEY=")
+    publish._refuse_leaks(site)
+
+
+@pytest.mark.parametrize("bad", ['{[]:1}', '{1:2}', '{"a":1} trailing'])
+def test_parse_jsonc_rejects_malformed(tmp_path, bad):
+    (tmp_path / publish.WRANGLER_CONFIG).write_text(bad)
+    with pytest.raises(publish.PublishError, match="can't parse"):
+        publish._read_config(tmp_path)
+
+
+def test_config_with_wrong_shapes_fails_clean(tmp_path):
+    (tmp_path / publish.WRANGLER_CONFIG).write_text('{"vars": "x", "assets": {"directory": 5}}')
+    assert publish.config_pin(tmp_path) is None
+    with pytest.raises(publish.PublishError, match="directory"):
+        publish._served_dir(tmp_path)

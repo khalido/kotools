@@ -48,6 +48,7 @@ List commands take `-n` or `--n` to bound output (default around 10); both spell
 - `ko x <name>` → `ko x list <name>`. Anything after `x` that isn't an x subcommand is a list name.
 - `ko tt` (alias `ko todo`) → `ko tt lists`; `ko tt <name>` → `ko tt items <name>`. Anything that isn't `lists`, `items`, `add`, `done` or `search` is a list name.
 - `ko <group> help` → `ko <group> --help`, at group level including nested groups (`ko help`, `ko exa help`, `ko gmail draft help`). After a leaf command `help` is an ordinary argument: `ko hn search help` searches for "help". `--help` works at every level.
+- `ko publish [dir]` → `ko publish up [dir]`. Anything after `publish` that isn't a publish subcommand is a folder or a flag for `up`.
 - `-h` is a synonym for `--help` everywhere.
 - `ko md-to-pdf` ≡ `ko pdf` (markdown in, PDF out; `ko doc` goes the other way).
 - `ko websearch` ≡ `ko exa search` and `ko webfetch` ≡ `ko fetch`: the `WebSearch`/`WebFetch` names you already know. Same flags, same output; the `exa` group still holds `get` and the search guide (`ko prompt exa`).
