@@ -98,14 +98,23 @@ def test_pages_needing_ocr_ignores_pages_that_merely_have_images(monkeypatch):
     """liteparse flags any page with a photo; ko OCRs only missing/garbled text layers."""
     from types import SimpleNamespace as NS
 
+    def page(n, chars=2000, full=False, garbled=False, images=False, vector=None, reasons=()):
+        return NS(page_number=n, text_length=chars, full_page_image=full, is_garbled=garbled,
+                  has_substantial_images=images, uncovered_vector_area=vector, reasons=list(reasons))
+
     stats = [
-        NS(page_number=1, reasons=["embedded-images", "sparse-text"], full_page_image=False),
-        NS(page_number=2, reasons=["scanned"], full_page_image=True),
-        NS(page_number=3, reasons=["garbled"], full_page_image=False),
-        NS(page_number=4, reasons=[], full_page_image=True),
+        page(1, reasons=["embedded-images"]),  # a photo, its text intact
+        page(2, chars=0, full=True, reasons=["scanned"]),
+        page(3, garbled=True),
+        page(4, full=True),
+        page(5, reasons=["vector-text"]),  # flagged, but ~2,000 good characters
+        page(6, chars=31, reasons=["sparse-text"]),  # a title page: short, nothing hidden
+        page(7, chars=127, images=True),  # a caption on a picture of text
+        page(8, chars=0, reasons=["no-text"]),  # outlines or blank: render it to find out
+        page(9, chars=40, vector=900.0),
     ]
     monkeypatch.setattr(doc, "LiteParse", lambda **k: NS(is_complex=lambda p: stats))
-    assert doc.pages_needing_ocr("x.pdf") == {2, 3, 4}
+    assert doc.pages_needing_ocr("x.pdf") == {2, 3, 4, 7, 8, 9}
 
 
 def test_docx_reads_in_order_with_merged_cells_once_and_a_provenance_line(tmp_path):

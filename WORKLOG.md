@@ -2,6 +2,25 @@
 
 Newest first. Big picture only — git commits have the detail; candidate ideas and decisions live in `docs/ideas.md`.
 
+## 2026-11-06 — `ko doc`: Vision by default on a Mac
+
+KO: stay on liteparse, default to free local OCR. Tested Vision, Indra, Surya 2 and Tesseract through liteparse's OCR API (one Sonnet run, 68 scanned pages from pk_legal plus 8 hard scans; only 6 of the 25 hand-checked quotes sit on pages that need OCR, so this is a small sample):
+
+| engine | quotes exact/near | Urdu | tables (recall) | para numbers of 123 | s/page | install |
+|---|---|---|---|---|---|---|
+| Vision | 24/24 | none | .95/.94 | 95 | 0.13 | none |
+| Indra | 23/24 | none | .98/.99 | 118 | 0.13 | 320 MB, 1.9 GB RSS |
+| Surya 2 (Metal, 13 pages only) | 22/22 | exact | .97/.98 | n/a | 44 | 3.9 GB, llama.cpp, Python <3.14 |
+| Tesseract | 23/24 | with Urdu data | .90/.01 | 93 | 0.8 | built in |
+
+- Vision and Tesseract return lines across both columns; Indra and Surya read one column, then the other. docling (`--deep`) stays the route for reading order and hard tables, at ~3 s a page plus torch.
+- **Pages to OCR:** `full_page_image`, `is_garbled`, or under 200 native characters with an image, outlines or no native text at all. Liteparse's bare reasons send too much: 23 `vector-text` pages with ~2,000 characters went to OCR (89 of 292 pk_legal pages selected, now 66). pk_legal's bare under-200 rule sends too much the other way: a born-digital title page became a paid call, or a missing-key failure off Mac (caught in review).
+- **Fallback off by default** (`[ocr] fallback`): a page a local engine leaves empty gets a note with the re-run command, so a bad scan never spends money unasked. Not on confidence: pk_legal measured 97% of 2,799 pages at 0.99+, and garbage at 0.957.
+- **Vision can lose lines with no error.** A helper dropped 4 of 40 lines on a clear page (the "COMPETITION COMMISSION OF PAKISTAN" heading), exit 0, on every run, while the same binary under a new name read all 40. Deleting `~/Library/Caches/<binary name>` cured it. 2 of about 10 binaries had it, both built under load ~19; a first run killed at 5 s and one left alone didn't reproduce it, and a synthetic page didn't show it, so ko can't self-check. pk_legal found no sign in 727 pages of stored text on its older cache. The helper now keeps one name, `ko-vision-ocr`, so rebuilds don't start a new cache; the catch is that a bad one lasts until deleted (`ko doctor` names the path).
+- **The warm-up never worked.** Its 1x1 PNG is below Vision's minimum, so it errored and ko ignored that: 12 s, then 12.7 s more on the first real page. `--warm` now reads drawn text: 26 s once after a build, first page 0.18 s. Images under 3 px return no text rather than failing the page (ocrmac issue #14 is the same trap).
+- Tried and left out: language correction off (one line in 192 on a table, didn't fix `20.04.202îÍš`); `ar-SA` for Urdu (~100 Arabic characters a page, but `439(4)(b)` became `43' &4"$(#b'`); Apple's Live Text (private API); `ocrmac` itself (same Vision call, less control).
+- Watch https://github.com/run-llama/liteparse/pull/521: native Vision in liteparse would replace the helper and its server.
+
 ## 2026-11-06 — `ko publish` fixes: PIN deep links, dotfiles, `rm`, library currency
 
 Issue #3 plus a Gemini review and a Sonnet research pass, each claim checked against `wrangler dev` (wrangler 4.152).

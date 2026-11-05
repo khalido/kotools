@@ -67,8 +67,8 @@ papers_app = typer.Typer(
 app.add_typer(papers_app, name="papers")
 
 _ENGINE_HELP = (
-    "OCR engine: a gateway vision model id (`llm` = the default, DeepSeek v4.1 Flash; paid) | "
-    "vision (Apple, free) | tesseract; else `\\[ocr] engine`"
+    "OCR engine: vision (Apple, free; macOS default) | tesseract | a gateway vision model id "
+    "(`llm` = DeepSeek v4.1 Flash; paid, default off macOS); else `\\[ocr] engine`"
 )
 ocr_app = typer.Typer(help="OCR server for liteparse (`ko doc` starts its own when none is up).", no_args_is_help=True)
 app.add_typer(ocr_app, name="ocr")

@@ -23,7 +23,7 @@ Run `ko doctor`. It reports, per tool, which keys and binaries it needs and whet
 
 ## What costs money
 
-Paid per call: `ko llm`, `ko sum`, `ko judge`, `ko ai`, `ko agent`, `ko brief`, `ko yt -s` (cached per video), `ko exa`, `ko x`. `ko doc` (and `ko fetch` of a PDF) pays only for pages with no text layer: a gateway model OCRs them at about $0.0006 a page, `-e vision` for free Apple OCR. Every LLM call prints its cost to stderr, e.g. `[deepseek/deepseek-v4.1-flash-1017 · 93→5 tok · <$0.0001]`. Everything else is free: arxiv, HN, HF, papers, fetch, pkg, tv, YouTube transcripts and the Google commands. A typo'd subcommand never falls through to an LLM.
+Paid per call: `ko llm`, `ko sum`, `ko judge`, `ko ai`, `ko agent`, `ko brief`, `ko yt -s` (cached per video), `ko exa`, `ko x`. `ko doc` (and `ko fetch` of a PDF) OCRs pages with no text layer for free with Apple Vision on macOS; off macOS, or with `-e llm`, a gateway model does it at about $0.0006 a page. Every LLM call prints its cost to stderr, e.g. `[deepseek/deepseek-v4.1-flash-1017 · 93→5 tok · <$0.0001]`. Everything else is free: arxiv, HN, HF, papers, fetch, pkg, tv, YouTube transcripts and the Google commands. A typo'd subcommand never falls through to an LLM.
 
 ## Diagnosing a failure
 

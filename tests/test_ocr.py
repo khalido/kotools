@@ -9,11 +9,17 @@ import pytest
 
 from ko import doc, ocr
 
-PNG = ocr._BLANK_PNG
+PNG = bytes.fromhex(  # 1x1 white PNG
+    "89504e470d0a1a0a0000000d4948445200000001000000010802000000907753de0000000c4944415408d763f8ffff3f0005fe02fe"
+    "a7356a810000000049454e44ae426082"
+)
 
 
 def test_engine_names_resolve(monkeypatch):
     monkeypatch.delenv("KO_OCR_ENGINE")
+    monkeypatch.setattr(ocr.sys, "platform", "darwin")
+    assert ocr.engine() == "vision"  # free on a Mac
+    monkeypatch.setattr(ocr.sys, "platform", "linux")
     assert ocr.engine() == ocr.DEFAULT_MODEL
     assert ocr.engine("llm") == ocr.DEFAULT_MODEL
     assert ocr.engine("vision") == "vision"
@@ -212,3 +218,67 @@ def test_an_image_is_ocrd_whole(tmp_path, monkeypatch):
     f.write_bytes(PNG)
     _fake_doc(monkeypatch, [""], need=set())  # an image has no text layer to ask about
     assert [p.text for p in doc.parse_pages(f, engine="llm").pages] == ["| page 1 |"]
+
+
+class _Parsed:
+    def __init__(self, texts):
+        from types import SimpleNamespace as NS
+
+        self.pages = [NS(page_num=i, page_label=None, text=t, markdown=t) for i, t in enumerate(texts, 1)]
+        self.total_pages = len(texts)
+
+
+def _fake_local_ocr(monkeypatch, native, ocred, blank=()):
+    """liteparse with a local engine: a text-layer read, then an OCR read of the pages asked for."""
+    from types import SimpleNamespace as NS
+
+    class FakeLP:
+        def __init__(self, ocr_enabled=False, **kw):
+            self.ocr = ocr_enabled
+
+        def parse(self, path):
+            return _Parsed(ocred if self.ocr else native)
+
+        def screenshot(self, path, page_numbers):
+            return [NS(page_num=n, image_bytes=str(n).encode(), is_solid_fill=n in blank) for n in page_numbers]
+
+    monkeypatch.setattr(doc, "LiteParse", FakeLP)
+    monkeypatch.setattr(doc, "pages_needing_ocr", lambda p: {1, 2, 3})
+    monkeypatch.setattr(ocr, "reader", lambda name: lambda img: [])
+    monkeypatch.setattr(ocr, "Model", FakeModel)
+
+
+def test_an_empty_read_is_noted_and_never_pays_by_default(tmp_path, monkeypatch, capsys):
+    f = tmp_path / "scan.pdf"
+    f.write_bytes(b"%PDF-")
+    _fake_local_ocr(monkeypatch, ["", "", ""], ["read", "", ""], blank={3})
+    monkeypatch.setattr(ocr, "Model", lambda name: pytest.fail("spent money unasked"))
+    d = doc.parse_pages(f, engine="vision")
+    assert [p.text for p in d.pages] == ["read", "", ""]
+    err = capsys.readouterr().err
+    assert "page(s) 2;" in err and "--engine llm --pages 2" in err  # page 3 is blank, not a miss
+
+
+def test_a_configured_fallback_rereads_only_the_empty_pages(tmp_path, monkeypatch, capsys):
+    f = tmp_path / "scan.pdf"
+    f.write_bytes(b"%PDF-")
+    _fake_local_ocr(monkeypatch, ["", "", ""], ["read", "", ""], blank={3})
+    monkeypatch.setenv("KO_OCR_FALLBACK", "llm")
+    d = doc.parse_pages(f, engine="vision")
+    assert [p.text for p in d.pages] == ["read", "| page 2 |", ""]
+    assert "sending them to" in capsys.readouterr().err
+
+
+def test_a_local_engine_is_no_fallback(monkeypatch):
+    monkeypatch.setenv("KO_OCR_FALLBACK", "vision")
+    with pytest.raises(ocr.config.ConfigError, match="must be a model"):
+        ocr.fallback()
+
+
+def test_blank_pages_need_no_key(tmp_path, monkeypatch):
+    f = tmp_path / "blank.pdf"
+    f.write_bytes(b"%PDF-")
+    _fake_doc(monkeypatch, [""], need={1})
+    monkeypatch.setattr(doc, "_page_images", lambda p, pages, password: {})
+    monkeypatch.setattr(ocr, "Model", lambda name: pytest.fail("built a model for a blank page"))
+    assert [p.text for p in doc.parse_pages(f, engine="llm").pages] == [""]

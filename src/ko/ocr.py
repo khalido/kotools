@@ -4,13 +4,16 @@ https://developers.llamaindex.ai/liteparse/guides/ocr/#custom-ocr-servers — mu
 (PNG/JPG) + `language`, reply `{"results": [{"text", "bbox": [x1, y1, x2, y2], "confidence"}]}`,
 pixels, origin top-left, reading order.
 
-Engines (`--engine`):
-- a vision model on the AI Gateway, default DeepSeek v4.1 Flash with thinking off: best on
+Engines (`--engine`), default `vision` on macOS, else the DeepSeek model:
+- `vision`: Apple Vision, free and on-device (~0.7 s a page). Reads scanned text well; returns
+  garbage on equations and no table structure. Through liteparse, whose layout keeps columns
+  apart (a direct read interleaves them, tested 2026-11-06).
+  Watch https://github.com/run-llama/liteparse/pull/521 (native `ocr_backend="macos-vision"`,
+  open as of 2026-11-06): once it ships, drop vision-ocr.swift and this engine's server.
+- a vision model on the AI Gateway, `llm` = DeepSeek v4.1 Flash with thinking off: best on
   tables and equations in the sfl-mes bake-off (20 hard book pages, 2026-11-04: $0.0010 and
   4.1 s a page; thinking on took 3.6 min and $0.06 on one page). One result per image, covering
   the whole image: a model gives no boxes.
-- `vision`: Apple Vision, free and on-device (~0.7 s a page). Reads scanned text well; returns
-  garbage on equations and no table structure.
 - `tesseract`: liteparse's built-in OCR, no server.
 
 `ko doc` sends a model the page images itself (`transcribe`) and uses the transcript as the
@@ -25,6 +28,7 @@ import email
 import hashlib
 import json
 import os
+import shutil
 import struct
 import subprocess
 import sys
@@ -43,6 +47,7 @@ DEFAULT_MODEL = "vercel:deepseek/deepseek-v4.1-flash-1017"
 # timeout, so a slow image fails here rather than being retried on top of a call still running.
 TIMEOUT_S = 50
 LOCAL = ("vision", "tesseract")
+VISION_BIN = "ko-vision-ocr"
 
 # Thinking off, via the gateway's own `reasoning` field: DeepSeek thinks by default (~4,000
 # reasoning tokens a page), and `providerOptions.deepseek.thinking` is ignored on this API (tested
@@ -63,14 +68,25 @@ Output only the Markdown."""
 
 
 def engine(name: str | None = None) -> str:
-    """The engine to use: `name`, else $KO_OCR_ENGINE / `[ocr] engine`, else the DeepSeek model.
-    `llm` means the default model; a bare gateway id (`google/gemini-3.8-flash`) gets `vercel:`."""
-    name = name or config.setting("KO_OCR_ENGINE", "ocr", "engine", DEFAULT_MODEL)
+    """The engine to use: `name`, else $KO_OCR_ENGINE / `[ocr] engine`, else Vision on macOS and
+    the DeepSeek model elsewhere. `llm` means that model; a bare gateway id
+    (`google/gemini-3.8-flash`) gets `vercel:`."""
+    default = "vision" if sys.platform == "darwin" else DEFAULT_MODEL
+    name = name or config.setting("KO_OCR_ENGINE", "ocr", "engine", default)
     if name in LOCAL:
         return name
     if name == "llm":
         return DEFAULT_MODEL
     return name if ":" in name else f"vercel:{name}"
+
+
+def fallback() -> str | None:
+    """The model that re-reads pages a local engine left empty: `[ocr] fallback` /
+    $KO_OCR_FALLBACK. Off by default, so a bad scan never spends money unasked."""
+    name = config.setting("KO_OCR_FALLBACK", "ocr", "fallback", "")
+    if name in LOCAL:
+        raise config.ConfigError(f"[ocr] fallback must be a model (`llm` or a gateway id), not {name}")
+    return engine(name) if name else None
 
 
 def workers(name: str) -> int:
@@ -83,30 +99,42 @@ def workers(name: str) -> int:
 
 @lru_cache
 def _vision_bin() -> Path:
-    """The Vision helper, compiled on first use into the cache (keyed on the source's hash)."""
+    """The Vision helper, compiled on first use into the cache (a folder per source hash).
+
+    One name across rebuilds, since macOS keeps a model cache per binary name in
+    ~/Library/Caches/<name>. That cache can go bad: a helper lost 4 of 40 lines on a clear page,
+    exit 0, every run, until the folder was deleted (2026-11-06, trigger unknown)."""
     from ko import dirs
 
     src = files("ko").joinpath("vision-ocr.swift").read_bytes()
-    out = dirs.cache_dir() / "bin" / f"vision-ocr-{hashlib.sha256(src).hexdigest()[:8]}"
-    if not out.exists():
-        if sys.platform != "darwin":
-            raise RuntimeError("--engine vision needs macOS (Apple Vision); use the default model or tesseract")
-        out.parent.mkdir(parents=True, exist_ok=True)
-        swift = out.with_suffix(".swift")
-        swift.write_bytes(src)
-        r = subprocess.run(["swiftc", "-O", str(swift), "-o", str(out)], check=False, capture_output=True, text=True)
-        if r.returncode:
-            raise RuntimeError(f"building the Vision helper failed (needs Xcode command line tools): {r.stderr[:300]}")
-        # macOS scans a new binary on its first launch; ten first launches at once hung past 60 s
-        # (2026-11-04). One launch here, before the pages arrive in parallel.
-        subprocess.run([str(out), "-"], check=False, input=_BLANK_PNG, capture_output=True, timeout=120)
-    return out
-
-
-_BLANK_PNG = bytes.fromhex(  # 1x1 white PNG
-    "89504e470d0a1a0a0000000d4948445200000001000000010802000000907753de0000000c4944415408d763f8ffff3f0005fe02fe"
-    "a7356a810000000049454e44ae426082"
-)
+    final = dirs.cache_dir() / "bin" / hashlib.sha256(src).hexdigest()[:8]
+    if (final / VISION_BIN).exists():
+        return final / VISION_BIN
+    if sys.platform != "darwin":
+        raise RuntimeError("--engine vision needs macOS (Apple Vision); use the default model or tesseract")
+    print("[ocr: building the Vision helper, once, ~30 s]", file=sys.stderr)
+    # Built and warmed in a folder of its own, renamed when ready: a run that's interrupted, or a
+    # second one at the same moment, never finds a half-built or unwarmed helper.
+    tmp = final.with_name(f"{final.name}.{os.getpid()}")
+    tmp.mkdir(parents=True, exist_ok=True)
+    swift = tmp / f"{VISION_BIN}.swift"
+    swift.write_bytes(src)
+    try:
+        r = subprocess.run(["swiftc", "-O", str(swift), "-o", str(tmp / VISION_BIN)], check=False, capture_output=True, text=True)
+    except FileNotFoundError:
+        raise RuntimeError("the Vision helper needs swiftc: xcode-select --install") from None
+    if r.returncode:
+        raise RuntimeError(f"building the Vision helper failed (needs Xcode command line tools): {r.stderr[:300]}")
+    # macOS loads the recognizer on a binary's first read (12-58 s). Once here, unhurried, before
+    # the pages arrive in parallel under their own timeout.
+    r = subprocess.run([str(tmp / VISION_BIN), "--warm"], check=False, capture_output=True, text=True, timeout=300)
+    if r.returncode:
+        raise RuntimeError(f"the Vision helper failed its first read: {r.stderr[:300]}")
+    try:
+        tmp.rename(final)
+    except OSError:  # another run got there first
+        shutil.rmtree(tmp, ignore_errors=True)
+    return final / VISION_BIN
 
 
 def _vision(img: bytes) -> list[dict]:
@@ -298,10 +326,11 @@ def server(name: str, port: int = DEFAULT_PORT, read=None, host: str = "127.0.0.
 
 
 @contextmanager
-def running(name: str):
+def running(name: str, fatal: bool = True):
     """(url, workers) for liteparse while the block runs; (None, None) for tesseract. Serves on
     a thread and stops it after, raising if any image still failed, since liteparse carries on
-    without it and doesn't say so. Its own server every time: only this one's failures are visible."""
+    without it and doesn't say so (`fatal=False`: the caller checks for empty pages instead).
+    Its own server every time: only this one's failures are visible."""
     if name == "tesseract":
         yield None, None
         return
@@ -312,5 +341,7 @@ def running(name: str):
     finally:
         srv.shutdown()
         srv.server_close()
-    if srv.failed:
+    if srv.failed and fatal:
         raise RuntimeError(f"OCR failed on {len(srv.failed)} image(s) after liteparse's retries; see the notes above")
+    if srv.failed:
+        print(f"[ocr: {len(srv.failed)} image(s) failed after liteparse's retries; pages left empty go to the fallback]", file=sys.stderr)

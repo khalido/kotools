@@ -1,7 +1,7 @@
 """local document → text via liteparse (and python-docx for .docx).
 
 PDFs with a text layer parse natively (Rust/PDFium, local, no models); pages without one go
-to OCR (`ocr.py`), by default a paid gateway model. .docx reads directly with
+to OCR (`ocr.py`): Apple Vision on macOS, else a paid gateway model. .docx reads directly with
 python-docx (`docx_markdown`): paragraphs and tables in document order, no LibreOffice.
 Other Office docs, and a .docx when page markers are wanted, convert to PDF first —
 liteparse shells out to LibreOffice / ImageMagick and errors helpfully if they're missing
@@ -25,11 +25,11 @@ from pathlib import Path
 
 from liteparse import LiteParse
 
-# liteparse's own `needs_ocr` also fires on "embedded-images" and "sparse-text" — i.e. any
-# page with a photo (126 of 132 magazine pages). Those pages already have their text; OCR
-# only adds words baked into images. These reasons mean the text layer is actually missing —
-# "vector-text" is text drawn as outlines, which reads as nothing without OCR.
-_NO_TEXT_LAYER = {"scanned", "no-text", "garbled", "vector-text"}
+# Under this much usable native text, a page may have lost its text to an image or outlines. Raw
+# numbers before liteparse's `reasons`: `needs_ocr` fires on any page with a photo (126 of 132
+# magazine pages), and "vector-text" fired on 23 pages of ~2,000 good characters (of 292 sampled,
+# 2026-11-06). A short page with nothing else on it (a title, a divider) is already read.
+_MIN_PAGE_TEXT = 200
 
 
 @contextmanager
@@ -46,10 +46,16 @@ def _quiet_stderr():
         os.close(saved)
 
 
+def _hides_text(s) -> bool:
+    """Could this short page hold text its layer doesn't? An image or outlines on it, or nothing
+    native at all (liteparse skips the outline walk then, so the area is None)."""
+    return bool(s.has_substantial_images or s.uncovered_vector_area or {"no-text", "vector-text"} & set(s.reasons))
+
+
 def pages_needing_ocr(path: str | Path) -> set[int]:
     """1-based page numbers whose text layer is missing or unusable (`is_complex` converts Office files first)."""
     stats = LiteParse(quiet=True, max_pages=_MAX_PAGES).is_complex(str(path))
-    return {s.page_number for s in stats if s.full_page_image or _NO_TEXT_LAYER & set(s.reasons)}
+    return {s.page_number for s in stats if s.full_page_image or s.is_garbled or (s.text_length < _MIN_PAGE_TEXT and _hides_text(s))}
 
 
 _MAX_PAGES = 100_000
@@ -86,11 +92,11 @@ def _lp(
 
 
 @contextmanager
-def _ocr_server(name: str):
+def _ocr_server(name: str, fatal: bool = True):
     """Vision/Tesseract go through liteparse (ocr.running), Tesseract's stray stderr muted."""
     from ko import ocr
 
-    with ocr.running(name) as server:
+    with ocr.running(name, fatal=fatal) as server:
         if name == "tesseract":
             with _quiet_stderr():
                 yield server
@@ -140,16 +146,38 @@ def parse_pages(
         return Doc(p, total or len(out), out, markdown)
     name = ocr_mod.engine(engine)
     if name in ocr_mod.LOCAL:
-        with _ocr_server(name) as server:
+        rescue = ocr_mod.fallback()
+        with _ocr_server(name, fatal=not rescue) as server:
             target = ",".join(map(str, sorted(need)))
             ocred = {pg.num: pg for pg in read(_lp(ocr=True, pages=target, password=password, markdown=markdown, server=server))}
-        return Doc(p, total or len(out), [ocred.get(pg.num, pg) for pg in out], markdown)
-    shots = LiteParse(password=password, quiet=True).screenshot(str(p), page_numbers=sorted(need))
-    text = ocr_mod.transcribe(name, {s.page_num: s.image_bytes for s in shots if not s.is_solid_fill})
-    if empty := sorted(pg.num for pg in out if pg.num in text and not text[pg.num] and pg.text.strip()):
-        print(f"[ocr: no transcript for page(s) {', '.join(map(str, empty))}; kept their text layer]", file=sys.stderr)
+        out = [ocred.get(pg.num, pg) for pg in out]
+        empty = sorted(pg.num for pg in out if pg.num in need and not pg.text.strip())
+        images = _page_images(p, empty, password)
+        if not images:
+            return Doc(p, total or len(out), out, markdown)
+        pages_csv = ",".join(map(str, sorted(images)))
+        if not rescue:
+            print(f"[ocr: {name} read nothing on page(s) {pages_csv}; try a model: ko doc {p} --engine llm --pages {pages_csv}]", file=sys.stderr)
+            return Doc(p, total or len(out), out, markdown)
+        print(f"[ocr: {name} read nothing on page(s) {pages_csv}; sending them to {rescue.removeprefix('vercel:')}]", file=sys.stderr)
+        name, need_images = rescue, images
+    else:
+        need_images = _page_images(p, sorted(need), password)
+    if not need_images:  # blank pages only: nothing to pay for, and no key needed
+        return Doc(p, total or len(out), out, markdown)
+    text = ocr_mod.transcribe(name, need_images)
+    if empty := sorted(n for n, t in text.items() if not t):
+        print(f"[ocr: no transcript for page(s) {', '.join(map(str, empty))}; kept what the page had]", file=sys.stderr)
     out = [Page(pg.num, pg.label, text[pg.num], md=True) if text.get(pg.num) else pg for pg in out]
     return Doc(p, total or len(out), out, markdown)
+
+
+def _page_images(path: Path, pages: list[int], password: str | None) -> dict[int, bytes]:
+    """Page number -> rendered image, blank pages left out."""
+    if not pages:
+        return {}
+    shots = LiteParse(password=password, quiet=True).screenshot(str(path), page_numbers=pages)
+    return {s.page_num: s.image_bytes for s in shots if not s.is_solid_fill}
 
 
 def _fence(text: str) -> str:
