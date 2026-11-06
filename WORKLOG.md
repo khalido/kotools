@@ -13,6 +13,7 @@ KO: stay on liteparse, default to free local OCR. Tested Vision, Indra, Surya 2 
 | Surya 2 (Metal, 13 pages only) | 22/22 | exact | .97/.98 | n/a | 44 | 3.9 GB, llama.cpp, Python <3.14 |
 | Tesseract | 23/24 | with Urdu data | .90/.01 | 93 | 0.8 | built in |
 
+- Indra's paragraph-number lead comes with worse words: pk_legal's in-order check on 10 scans, 57 pages, against Flash-Lite (a reference, not truth) found 123 replaced passages and 200 words lost for Indra, 52 and 92 for Vision ("waqf" became "was", "land" became "and"). This test's word-recall scoring wouldn't show that.
 - Vision and Tesseract return lines across both columns; Indra and Surya read one column, then the other. docling (`--deep`) stays the route for reading order and hard tables, at ~3 s a page plus torch.
 - **Pages to OCR:** `full_page_image`, `is_garbled`, or under 200 native characters with an image, outlines or no native text at all. Liteparse's bare reasons send too much: 23 `vector-text` pages with ~2,000 characters went to OCR (89 of 292 pk_legal pages selected, now 66). pk_legal's bare under-200 rule sends too much the other way: a born-digital title page became a paid call, or a missing-key failure off Mac (caught in review).
 - **Fallback off by default** (`[ocr] fallback`): a page a local engine leaves empty gets a note with the re-run command, so a bad scan never spends money unasked. Not on confidence: pk_legal measured 97% of 2,799 pages at 0.99+, and garbage at 0.957.
