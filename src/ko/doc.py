@@ -525,7 +525,7 @@ def parse(
     reader knows; SpendLimit only when there's no text at all."""
     if Path(path).suffix.lower() == ".docx" and pages is None:
         return docx_markdown(path)[1]
-    join = lambda d: "\n\n".join(pg.text for pg in d.pages)  # noqa: E731
+    join = lambda d: "\n\n".join(pg.text for pg in d.pages)
     try:
         return join(parse_pages(path, pages=pages, ocr=ocr, password=password))
     except SpendLimit as e:
