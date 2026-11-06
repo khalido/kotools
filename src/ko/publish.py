@@ -34,7 +34,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx2 as httpx
-from pathspec import GitIgnoreSpec
 
 from ko import config
 from ko.dirs import state_dir
@@ -830,35 +829,21 @@ def _assets_ignore(folder: Path) -> Path | None:
     return served / ".assetsignore" if served and served.is_dir() else None
 
 
-def _is_secret(rel: Path) -> bool:
-    """Should this never be public? Dotfiles and dot-folders (`.well-known` is meant to be
-    public), and `*.env`. `.env.example` is a template, and the ignore file names itself."""
-    if rel.name in (".env.example", ".assetsignore") or rel.parts[0] == ".well-known":
-        return False
-    return any(part.startswith(".") for part in rel.parts) or rel.name.endswith(".env")
-
-
-def _refuse_leaks(folder: Path) -> None:
-    """A hand-written .assetsignore is never changed, so refuse when it lets a secret through.
-    Matched the way wrangler matches: gitignore rules (its `ignore` package)."""
+def _write_ignore(folder: Path) -> None:
+    """Keep ko's never-publish list at the top of the served folder's .assetsignore, refreshed on
+    every run; the folder's own lines stay below it, and last match wins, so `!.env` publishes
+    it. Wrangler reads this file; it matches like .gitignore."""
     ignore = _assets_ignore(folder)
-    if ignore is None or not ignore.exists():
+    if ignore is None:
         return
     try:
-        spec = GitIgnoreSpec.from_lines(ignore.read_text().splitlines())
+        old = ignore.read_text() if ignore.exists() else ""
     except UnicodeDecodeError:
         raise PublishError(f"can't read {ignore}: not UTF-8", code="config") from None
-    leaks = []
-    for root, dirs, files in os.walk(ignore.parent):
-        at = Path(root).relative_to(ignore.parent)
-        dirs[:] = [d for d in dirs if not spec.match_file(f"{(at / d).as_posix()}/")]
-        leaks += [at / f for f in files if _is_secret(at / f) and not spec.match_file((at / f).as_posix())]
-    if leaks:
-        names = ", ".join(map(str, sorted(leaks)[:5])) + (" and more" if len(leaks) > 5 else "")
-        raise PublishError(
-            f"refusing to deploy: {names} would be served publicly. Add `.*` and `!.well-known` to {ignore}.",
-            code="config",
-        )
+    own = old.split(_IGNORE_END, 1)[-1].lstrip("\n")
+    new = _ASSETSIGNORE + own
+    if new != old:
+        ignore.write_text(new)
 
 
 # wrangler's own wording when it has no usable login (grepped from its dist, 4.152)
@@ -922,11 +907,9 @@ def deploy(
             code="usage",
         )
 
-    _refuse_leaks(folder)
     if pin is not None:
         set_pin(folder, pin)  # before wrangler, so the new PIN ships
-    if (ignore := _assets_ignore(folder)) and not ignore.exists():
-        ignore.write_text(_ASSETSIGNORE)
+    _write_ignore(folder)
     name = ensure_config(folder, name)
     write_llms_txt(folder)  # md sites: refresh the agent-facing index from the pages
     _npm_install(folder)  # worker sites (Hono) need deps bundled before deploy
@@ -971,6 +954,7 @@ def preview(folder: Path, port: int | None = None) -> int:
             f"{folder} has no {WRANGLER_CONFIG} — run `ko publish new {folder}` first?",
             code="usage",
         )
+    _write_ignore(folder)  # what you preview is what publishes
     _npm_install(folder)  # worker sites (Hono) need deps before wrangler can bundle
     cmd = [*_wrangler(), "dev"]
     if port:
@@ -1059,13 +1043,21 @@ _GITIGNORE = ".wrangler/\n"
 # static/md/bare serve `assets.directory: "."`, so without this wrangler would upload dotfiles
 # (.env, .git, the .wrangler preview dir), the config and CLAUDE.md, and serve them at the site
 # root. Same syntax as .gitignore. deploy() writes it into any served folder that has none.
-_ASSETSIGNORE = """\
+_IGNORE_END = "# --- end of ko's list ---\n"
+_ASSETSIGNORE = f"""\
+# ko publish never serves these: secrets, tooling, junk. Your own lines go below the list, and win:
+# `!.env` publishes .env.
 .*
 !.well-known
+*.env
+*.pem
+*.key
 CLAUDE.md
 wrangler.jsonc
 node_modules
-"""
+Thumbs.db
+desktop.ini
+{_IGNORE_END}"""
 
 # --- static template (HTML + Tailwind + Alpine) ---
 

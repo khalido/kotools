@@ -639,29 +639,21 @@ def test_deploy_unscaffolded_writes_ignore_config_and_registry(site):
     assert publish.registry()[str(site.path.resolve())]["name"] == "mysite"
 
 
-def test_deploy_refuses_secret_past_hand_written_ignore(site):
-    (site.path / ".env").write_text("X=1")
-    (site.path / ".assetsignore").write_text("node_modules\n")
-    with pytest.raises(publish.PublishError, match=r"\.env would be served"):
-        publish.deploy(site.path)
-    assert site.calls == []
-    assert (site.path / ".assetsignore").read_text() == "node_modules\n"  # not overwritten
+def test_deploy_keeps_own_lines_below_the_list_and_refreshes_it(site):
+    ignore = site.path / ".assetsignore"
+    ignore.write_text("notes/\n!.env\n")
+    publish.deploy(site.path)
+    text = ignore.read_text()
+    assert text.startswith(publish._ASSETSIGNORE) and text.endswith("notes/\n!.env\n")
+    publish.deploy(site.path)
+    assert ignore.read_text() == text  # a second run adds nothing
 
 
-@pytest.mark.parametrize("line", [".*", ".env", "*", "/.env", ".env*"])
-def test_deploy_accepts_hand_written_ignore_that_covers_secret(site, line):
-    (site.path / ".env").write_text("X=1")
-    (site.path / ".assetsignore").write_text(f"{line}\n")
-    assert publish.deploy(site.path)
-    assert (site.path / ".assetsignore").read_text() == f"{line}\n"
-
-
-def test_guard_checks_nested_secrets_and_negation(site):
-    (site.path / "sub").mkdir()
-    (site.path / "sub" / ".dev.vars").write_text("X=1")
-    (site.path / ".assetsignore").write_text(".*\n!.dev.vars\n")
-    with pytest.raises(publish.PublishError, match="dev.vars"):
-        publish.deploy(site.path)
+def test_deploy_replaces_an_older_list(site):
+    ignore = site.path / ".assetsignore"
+    ignore.write_text(f"# an older list\n.git\n{publish._IGNORE_END}mine.txt\n")
+    publish.deploy(site.path)
+    assert ignore.read_text() == f"{publish._ASSETSIGNORE}mine.txt\n"
 
 
 def test_guard_looks_in_the_served_folder_of_a_worker(site):
@@ -808,44 +800,6 @@ def test_up_error_goes_through_die(cli, tmp_path):
     result = cli.run(app, ["publish", "up", "missing-folder"])
     assert result.exit_code == 2
     assert "not a folder" in result.stderr
-
-
-def _worker_free_site(tmp_path, ignore: str):
-    (tmp_path / ".assetsignore").write_text(ignore)
-    return tmp_path
-
-
-@pytest.mark.parametrize("line", [".*/", ".env/", "src/*.env"])
-def test_refuse_leaks_uses_gitignore_rules(tmp_path, line):
-    """A directory-only line doesn't cover a file; `*` doesn't cross `/` (wrangler's matcher)."""
-    site = _worker_free_site(tmp_path, line + "\n")
-    (site / "src" / "sub").mkdir(parents=True)
-    (site / ("src/sub/.env" if line.startswith("src") else ".env")).write_text("SECRET=1")
-    with pytest.raises(publish.PublishError, match="would be served publicly"):
-        publish._refuse_leaks(site)
-
-
-@pytest.mark.parametrize("leak", [".git/config", ".npmrc", "secrets.env"])
-def test_refuse_leaks_covers_more_than_env(tmp_path, leak):
-    site = _worker_free_site(tmp_path, "CLAUDE.md\n")
-    (site / leak).parent.mkdir(exist_ok=True)
-    (site / leak).write_text("x")
-    with pytest.raises(publish.PublishError, match="would be served publicly"):
-        publish._refuse_leaks(site)
-
-
-def test_refuse_leaks_allows_the_default_list_and_templates(tmp_path):
-    site = _worker_free_site(tmp_path, publish._ASSETSIGNORE)
-    (site / ".well-known").mkdir()
-    (site / ".well-known" / "security.txt").write_text("x")
-    (site / ".well-known" / ".env").write_text("SECRET=1")
-    (site / ".env").write_text("SECRET=1")
-    publish._refuse_leaks(site)
-    (site / ".assetsignore").write_text("CLAUDE.md\n")
-    (site / ".env").unlink()
-    (site / ".well-known" / ".env").unlink()
-    (site / ".env.example").write_text("KEY=")
-    publish._refuse_leaks(site)
 
 
 @pytest.mark.parametrize("bad", ['{[]:1}', '{1:2}', '{"a":1} trailing'])
