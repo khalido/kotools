@@ -520,7 +520,16 @@ def parse(
     password: str | None = None,
 ) -> str:
     """Plain text of the whole document, pages joined as liteparse joins them (no markers) —
-    for `fetch` and `llm -f`, which want one body. A .docx reads directly (no LibreOffice)."""
+    for `fetch` and `llm -f`, which want one body. A .docx reads directly (no LibreOffice).
+    Over the spend limits, the text layers with a first line saying what wasn't read, so the
+    reader knows; SpendLimit only when there's no text at all."""
     if Path(path).suffix.lower() == ".docx" and pages is None:
         return docx_markdown(path)[1]
-    return "\n\n".join(pg.text for pg in parse_pages(path, pages=pages, ocr=ocr, password=password).pages)
+    join = lambda d: "\n\n".join(pg.text for pg in d.pages)  # noqa: E731
+    try:
+        return join(parse_pages(path, pages=pages, ocr=ocr, password=password))
+    except SpendLimit as e:
+        text = join(parse_pages(path, pages=pages, ocr=False, password=password))
+        if not text.strip():
+            raise
+        return f"[ko: text layers only, scanned pages not read. {e}]\n\n{text}"

@@ -339,3 +339,20 @@ def test_the_agent_tool_reports_the_stop(monkeypatch):
     monkeypatch.setattr(fetch, "fetch", stop)
     out = _toolsets.fetch_url("https://x.example/p.pdf")
     assert out.startswith("Not read: 60 pages") and "KO's OK" in out and "KO_OCR" not in out
+
+
+def test_parse_keeps_the_text_layers_over_the_limit_and_says_so(tmp_path, monkeypatch):
+    f = tmp_path / "mixed.pdf"
+    f.write_bytes(b"%PDF-")
+    _fake_doc(monkeypatch, ["page one"] * 60, need=set(range(1, 52)))
+    monkeypatch.setattr(ocr, "Model", lambda name: pytest.fail("spent money unasked"))
+    monkeypatch.setenv("KO_OCR_ENGINE", "llm")
+    text = doc.parse(f)
+    assert text.startswith("[ko: text layers only") and "51 pages need OCR" in text and "page one" in text
+
+
+def test_parse_of_a_pure_scan_over_the_limit_still_fails(tmp_path, monkeypatch):
+    f = _scan(tmp_path, monkeypatch, 51)
+    monkeypatch.setenv("KO_OCR_ENGINE", "llm")
+    with pytest.raises(doc.SpendLimit):
+        doc.parse(f)
