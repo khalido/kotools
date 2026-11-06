@@ -14,6 +14,7 @@ from __future__ import annotations
 from pydantic_ai.toolsets import FunctionToolset
 
 from ko import arxiv as arxiv_mod
+from ko import doc as doc_mod
 from ko import exa as exa_mod
 from ko import fetch as fetch_mod
 from ko import hf as hf_mod
@@ -111,8 +112,16 @@ def exa_get(urls: list[str]) -> dict[str, str]:
 
 @web.tool_plain
 def fetch_url(url: str) -> str:
-    """Fetch any URL as clean markdown (articles, PDFs, arxiv, Wayback fallback). Read a page found via search."""
-    return _try("fetch_url", lambda: fetch_mod.fetch(url, save=False).text)
+    """Fetch any URL as clean markdown (articles, PDFs, arxiv, Wayback fallback). Read a page found via search.
+    A big scan isn't read: over the OCR spend limit, the result says what it would cost, for you to report."""
+
+    def read() -> str:
+        try:
+            return fetch_mod.fetch(url, save=False).text
+        except doc_mod.SpendLimit as e:
+            return f"Not read: {e.facts} That spend needs KO's OK; say so in your answer."
+
+    return _try("fetch_url", read)
 
 
 # --- papers ---

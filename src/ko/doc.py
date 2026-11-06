@@ -1,7 +1,7 @@
 """local document → text via liteparse (and python-docx for .docx).
 
 PDFs with a text layer parse natively (Rust/PDFium, local, no models); pages without one go
-to OCR (`ocr.py`): Apple Vision on macOS, else a paid gateway model. .docx reads directly with
+to OCR (`ocr.py`), by default a paid gateway model, with a spend stop. .docx reads directly with
 python-docx (`docx_markdown`): paragraphs and tables in document order, no LibreOffice.
 Other Office docs, and a .docx when page markers are wanted, convert to PDF first —
 liteparse shells out to LibreOffice / ImageMagick and errors helpfully if they're missing
@@ -44,6 +44,41 @@ def _quiet_stderr():
     finally:
         os.dup2(saved, 2)
         os.close(saved)
+
+
+class SpendLimit(ValueError):
+    """A model would read more pages, or spend more, than the limits allow without asking. `facts`
+    says what it would cost; str() adds a remedy that works from any command, so `ko doc` can
+    offer its own flags instead (a saved or temp path, or a dropped `-p`, would mislead)."""
+
+    def __init__(self, facts: str):
+        self.facts = facts
+        super().__init__(
+            f"{facts} To spend it, raise KO_OCR_MAX_PAGES and KO_OCR_MAX_USD for this command; "
+            "KO_OCR_ENGINE=vision reads it for free on a Mac."
+        )
+
+
+_MAX_OCR_PAGES = 50
+_MAX_OCR_USD = 0.25
+
+
+def _stop_if_costly(name: str, pages: int) -> None:
+    """Stop before a big OCR job: `[ocr] max_pages` / `max_usd` (or KO_OCR_MAX_PAGES / KO_OCR_MAX_USD)."""
+    from ko import config, ocr
+
+    try:
+        max_pages = int(config.setting("KO_OCR_MAX_PAGES", "ocr", "max_pages", _MAX_OCR_PAGES))
+        max_usd = float(config.setting("KO_OCR_MAX_USD", "ocr", "max_usd", _MAX_OCR_USD))
+    except ValueError as e:
+        raise config.ConfigError(f"[ocr] max_pages / max_usd must be numbers: {e}") from None
+    cost = ocr.spend_estimate(name, pages)
+    model = name.removeprefix("vercel:")
+    if pages > max_pages or (cost and cost[1] > max_usd):
+        about = f"about ${cost[0]:.2f}–{cost[1]:.2f}" if cost else "at an unknown price"
+        raise SpendLimit(f"{pages} pages need OCR, {about} on {model}.")
+    if cost is None:
+        print(f"[ocr: no listed price for {model}; only the page limit applies]", file=sys.stderr)
 
 
 def _hides_text(s) -> bool:
@@ -92,11 +127,11 @@ def _lp(
 
 
 @contextmanager
-def _ocr_server(name: str, fatal: bool = True):
+def _ocr_server(name: str):
     """Vision/Tesseract go through liteparse (ocr.running), Tesseract's stray stderr muted."""
     from ko import ocr
 
-    with ocr.running(name, fatal=fatal) as server:
+    with ocr.running(name) as server:
         if name == "tesseract":
             with _quiet_stderr():
                 yield server
@@ -116,11 +151,13 @@ def parse_pages(
     password: str | None = None,
     markdown: bool = False,
     engine: str | None = None,
+    confirm_spend: bool = False,
 ) -> Doc:
     """Each page's text (or markdown: tables as pipe tables), in order — so a claim can cite
     its page. `ocr`: None (default) = OCR only the pages that lack a text layer (an image:
     all of it); True = OCR every page; False = never. `engine`: see `ocr.engine` — a model
-    transcribes the page images and its transcript replaces the page's text."""
+    transcribes the page images and its transcript replaces the page's text, unless the job is
+    over the spend limits and `confirm_spend` isn't set (raises SpendLimit before any call)."""
     from ko import ocr as ocr_mod
 
     p = Path(path)
@@ -146,28 +183,23 @@ def parse_pages(
         return Doc(p, total or len(out), out, markdown)
     name = ocr_mod.engine(engine)
     if name in ocr_mod.LOCAL:
-        rescue = ocr_mod.fallback()
-        with _ocr_server(name, fatal=not rescue) as server:
+        with _ocr_server(name) as server:
             target = ",".join(map(str, sorted(need)))
             ocred = {pg.num: pg for pg in read(_lp(ocr=True, pages=target, password=password, markdown=markdown, server=server))}
         out = [ocred.get(pg.num, pg) for pg in out]
         empty = sorted(pg.num for pg in out if pg.num in need and not pg.text.strip())
-        images = _page_images(p, empty, password)
-        if not images:
-            return Doc(p, total or len(out), out, markdown)
-        pages_csv = ",".join(map(str, sorted(images)))
-        if not rescue:
-            print(f"[ocr: {name} read nothing on page(s) {pages_csv}; try a model: ko doc {p} --engine llm --pages {pages_csv}]", file=sys.stderr)
-            return Doc(p, total or len(out), out, markdown)
-        print(f"[ocr: {name} read nothing on page(s) {pages_csv}; sending them to {rescue.removeprefix('vercel:')}]", file=sys.stderr)
-        name, need_images = rescue, images
-    else:
-        need_images = _page_images(p, sorted(need), password)
-    if not need_images:  # blank pages only: nothing to pay for, and no key needed
+        if missed := sorted(_page_images(p, empty, password)):
+            csv = ",".join(map(str, missed))
+            print(f"[ocr: {name} read nothing on page(s) {csv}; try a model: ko doc {p} --engine llm --pages {csv}]", file=sys.stderr)
         return Doc(p, total or len(out), out, markdown)
-    text = ocr_mod.transcribe(name, need_images)
-    if empty := sorted(n for n, t in text.items() if not t):
-        print(f"[ocr: no transcript for page(s) {', '.join(map(str, empty))}; kept what the page had]", file=sys.stderr)
+    if not confirm_spend:
+        _stop_if_costly(name, len(need))
+    images = _page_images(p, sorted(need), password)
+    if not images:  # blank pages only: nothing to pay for, and no key needed
+        return Doc(p, total or len(out), out, markdown)
+    text = ocr_mod.transcribe(name, images)
+    if blank := sorted(n for n, t in text.items() if not t):
+        print(f"[ocr: no transcript for page(s) {', '.join(map(str, blank))}; kept what the page had]", file=sys.stderr)
     out = [Page(pg.num, pg.label, text[pg.num], md=True) if text.get(pg.num) else pg for pg in out]
     return Doc(p, total or len(out), out, markdown)
 

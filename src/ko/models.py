@@ -48,7 +48,7 @@ MODELS = {
     for m in [
         ModelSpec(
             "deepseek/deepseek-v4.1-flash-1017",
-            "basic default (ko llm, ko ai), $0.15/$0.60 (Together 2x). Together 0.9 s, Parasail 1.2 s, maker 2.2 s. "
+            "basic default (ko llm, ko ai), $0.30/$1.20 (2026-11-06). Together 0.9 s, Parasail 1.2 s, maker 2.2 s. "
             "Dated id: plain v4.1-flash serves the September checkpoint",
             hosts=("togetherai", "parasail", "deepseek"),
         ),

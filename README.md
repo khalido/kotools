@@ -20,7 +20,7 @@ Full docs: **[kotools.khalido.dev](https://kotools.khalido.dev/)**.
 | `ko exa` | semantic web search + URL → markdown ([Exa](https://exa.ai)); alias `ko websearch` | posts and lab pages a keyword search misses |
 | `ko fetch` | URL → markdown, routed by host (arxiv, YouTube, PDF, Reddit, Wikipedia); archive.today for paywalls, Wayback for dead links | `ko <url>`: read a page or PDF as text |
 | `ko sum` | fetch + summarize in one step (Gemini Flash-Lite); takes URLs, files or stdin | `ko sum <url>`, `ko hn item 123 \| ko sum` |
-| `ko doc` | PDF / Office / image → text, page-marked for citing; pages with no text layer are OCR'd (Apple Vision on macOS, free; DeepSeek on the gateway elsewhere or with `-e llm`, ~$0.0006/page); `--deep` for multi-column layouts | `ko report.pdf` |
+| `ko doc` | PDF / Office / image → text, page-marked for citing; pages with no text layer are OCR'd (DeepSeek on the gateway, ~$0.001 a page; stops and asks over 50 pages or $0.25; `-e vision` for free Apple OCR); `--deep` for multi-column layouts | `ko report.pdf` |
 | `ko ocr serve` | liteparse's OCR server API on 127.0.0.1:8828, for any project running liteparse | `lit parse scan.pdf --ocr-server-url http://127.0.0.1:8828/ocr` |
 | `ko yt` | YouTube transcript (free, cached); `-s` has Gemini 3.8 Flash watch the video and write up every point (~10–15c, cached; prompt: `ko prompt yt-condense`); `info` and `channel` for metadata | what a 40-minute talk actually says, captions or not |
 | `ko tv` | movie/TV rating + where to stream ([TMDB](https://developer.themoviedb.org), AU) | worth watching, and where |
@@ -92,7 +92,7 @@ Keys come from environment variables or a `[keys]` table in `~/.config/ko/config
 
 | Env var | Used by | Paid? | Notes |
 |---|---|---|---|
-| `VERCEL_AI_GATEWAY_API_KEY` | `ko llm`, `ko ai`, agents, `ko sum`, `ko brief`, `ko yt -s`, `ko doc` OCR off macOS or with `-e llm` | 💰 | [Vercel AI Gateway](https://vercel.com/docs/ai-gateway): one prepaid pool, any model (`vercel ai-gateway api-keys create`). Tiers by price: basic = deepseek-v4.1-flash (`ko llm`, `ko ai`, `ko brief`), medium = gpt-6.1-terra, smart = kimi-k3.1-pro (research). Tested models and their host order live in `src/ko/models.py`. Override a tier in `[llm]`, or `-m` per run. |
+| `VERCEL_AI_GATEWAY_API_KEY` | `ko llm`, `ko ai`, agents, `ko sum`, `ko brief`, `ko yt -s`, `ko doc` OCR | 💰 | [Vercel AI Gateway](https://vercel.com/docs/ai-gateway): one prepaid pool, any model (`vercel ai-gateway api-keys create`). Tiers by price: basic = deepseek-v4.1-flash (`ko llm`, `ko ai`, `ko brief`), medium = gpt-6.1-terra, smart = kimi-k3.1-pro (research). Tested models and their host order live in `src/ko/models.py`. Override a tier in `[llm]`, or `-m` per run. |
 | `EXA_API_KEY` | `ko exa`, agents | 💰 | $7 per 1k searches (contents for 10 results included); contents alone $1 per 1k pages. [exa.ai](https://exa.ai) |
 | `X_BEARER_TOKEN` | `ko x` | 💰 | X API v2 bearer token. Pay-per-use: prepaid credits, ~$0.005 per post read. [developer.x.com](https://developer.x.com) |
 | `OPENROUTER_API_KEY` | `ko judge` (Jev) | 💰 | Jev's endpoint is only on OpenRouter. |
@@ -104,7 +104,7 @@ Keys come from environment variables or a `[keys]` table in `~/.config/ko/config
 | `S2_API_KEY` | `ko papers` (optional) | free | [Semantic Scholar](https://www.semanticscholar.org/product/api): adds `tldr` and `similar`. |
 | `REDDIT_CLIENT_ID` + `REDDIT_CLIENT_SECRET` | `ko fetch` Reddit (planned) | free (100 req/min) | Script app **"kotools"** at [developers.reddit.com/apps](https://developers.reddit.com/apps), app-only read token. Not Devvit: Devvit tokens only work inside Reddit's platform. |
 | — (Google OAuth) | `ko gsheets`, `gdocs`, `drive`, `cal`, `gmail` | free | Browser consent once per account; token cached locally. See below. |
-| — | `ko arxiv`, `ko hn`, `ko hf`, `ko papers`, `ko doc` (text layer, or Apple Vision on macOS), `ko pkg`, `ko yt` transcripts | free | No auth. |
+| — | `ko arxiv`, `ko hn`, `ko hf`, `ko papers`, `ko doc` (text layer, or `-e vision`), `ko pkg`, `ko yt` transcripts | free | No auth. |
 
 ## Where ko keeps things
 

@@ -67,8 +67,8 @@ papers_app = typer.Typer(
 app.add_typer(papers_app, name="papers")
 
 _ENGINE_HELP = (
-    "OCR engine: vision (Apple, free; macOS default) | tesseract | a gateway vision model id "
-    "(`llm` = DeepSeek v4.1 Flash; paid, default off macOS); else `\\[ocr] engine`"
+    "OCR engine: a gateway vision model id (`llm` = the default, DeepSeek v4.1 Flash; paid) | "
+    "vision (Apple, free) | tesseract; else `\\[ocr] engine`"
 )
 ocr_app = typer.Typer(help="OCR server for liteparse (`ko doc` starts its own when none is up).", no_args_is_help=True)
 app.add_typer(ocr_app, name="ocr")
@@ -518,6 +518,8 @@ def papers_get(
         for url in w.full_text_urls:
             try:
                 r = fetch_mod.fetch(url, save=out is None)
+            except doc_mod.SpendLimit as e:
+                _die(str(e), code="usage")
             except Exception:  # noqa: S112 — dead/blocked → try the next candidate
                 continue
             note = f"oa copy: {url}" + (f"; {r.note}" if r.note else "")
@@ -716,6 +718,7 @@ def doc(
     ),
     describe: bool = typer.Option(False, "--describe", help="with --deep: a Gemini description under each figure (paid)"),
     engine: str = typer.Option(None, "--engine", "-e", help=_ENGINE_HELP),
+    yes: bool = typer.Option(False, "--yes", "-y", help="OCR past the spend stop (`\\[ocr] max_pages`, `max_usd`)"),
 ) -> None:
     """Document → text via liteparse, each page under a `<!-- page N -->` line so claims can cite
     it. A .docx reads directly as markdown (no pages); `--pages`/`--json` lay it out via
@@ -746,7 +749,10 @@ def doc(
         _write_doc(f"{head}\n\n{body}", out)
         return
     try:
-        parsed = doc_mod.parse_pages(file, pages=pages, ocr=ocr, markdown=md, engine=engine)
+        parsed = doc_mod.parse_pages(file, pages=pages, ocr=ocr, markdown=md, engine=engine, confirm_spend=yes)
+    except doc_mod.SpendLimit as e:
+        fix = "--yes spends it, -e vision reads it for free on a Mac, --no-ocr keeps text layers only."
+        _die(f"{file.name}: {e.facts} {fix}", as_json=as_json, code="usage")
     except Exception as e:
         _die(str(e), as_json=as_json)
     if as_json:
@@ -778,7 +784,8 @@ def ocr_serve(
     except OSError as e:
         _die(f"port {port}: {e.strerror}", code="usage")
     typer.echo(f"--ocr-server-url http://127.0.0.1:{port}/ocr --num-workers {ocr.workers(name)}")
-    typer.echo(f"[ocr: {name.removeprefix('vercel:')} on 127.0.0.1:{port}; Ctrl-C stops]", err=True)
+    paid = "" if name in ocr.LOCAL else ", paid per image with no limit"
+    typer.echo(f"[ocr: {name.removeprefix('vercel:')} on 127.0.0.1:{port}{paid}; Ctrl-C stops]", err=True)
     import signal
 
     def _stop(*_):

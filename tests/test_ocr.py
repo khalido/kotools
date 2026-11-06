@@ -17,9 +17,6 @@ PNG = bytes.fromhex(  # 1x1 white PNG
 
 def test_engine_names_resolve(monkeypatch):
     monkeypatch.delenv("KO_OCR_ENGINE")
-    monkeypatch.setattr(ocr.sys, "platform", "darwin")
-    assert ocr.engine() == "vision"  # free on a Mac
-    monkeypatch.setattr(ocr.sys, "platform", "linux")
     assert ocr.engine() == ocr.DEFAULT_MODEL
     assert ocr.engine("llm") == ocr.DEFAULT_MODEL
     assert ocr.engine("vision") == "vision"
@@ -248,7 +245,7 @@ def _fake_local_ocr(monkeypatch, native, ocred, blank=()):
     monkeypatch.setattr(ocr, "Model", FakeModel)
 
 
-def test_an_empty_read_is_noted_and_never_pays_by_default(tmp_path, monkeypatch, capsys):
+def test_an_empty_read_is_noted_and_never_pays(tmp_path, monkeypatch, capsys):
     f = tmp_path / "scan.pdf"
     f.write_bytes(b"%PDF-")
     _fake_local_ocr(monkeypatch, ["", "", ""], ["read", "", ""], blank={3})
@@ -259,22 +256,6 @@ def test_an_empty_read_is_noted_and_never_pays_by_default(tmp_path, monkeypatch,
     assert "page(s) 2;" in err and "--engine llm --pages 2" in err  # page 3 is blank, not a miss
 
 
-def test_a_configured_fallback_rereads_only_the_empty_pages(tmp_path, monkeypatch, capsys):
-    f = tmp_path / "scan.pdf"
-    f.write_bytes(b"%PDF-")
-    _fake_local_ocr(monkeypatch, ["", "", ""], ["read", "", ""], blank={3})
-    monkeypatch.setenv("KO_OCR_FALLBACK", "llm")
-    d = doc.parse_pages(f, engine="vision")
-    assert [p.text for p in d.pages] == ["read", "| page 2 |", ""]
-    assert "sending them to" in capsys.readouterr().err
-
-
-def test_a_local_engine_is_no_fallback(monkeypatch):
-    monkeypatch.setenv("KO_OCR_FALLBACK", "vision")
-    with pytest.raises(ocr.config.ConfigError, match="must be a model"):
-        ocr.fallback()
-
-
 def test_blank_pages_need_no_key(tmp_path, monkeypatch):
     f = tmp_path / "blank.pdf"
     f.write_bytes(b"%PDF-")
@@ -282,3 +263,79 @@ def test_blank_pages_need_no_key(tmp_path, monkeypatch):
     monkeypatch.setattr(doc, "_page_images", lambda p, pages, password: {})
     monkeypatch.setattr(ocr, "Model", lambda name: pytest.fail("built a model for a blank page"))
     assert [p.text for p in doc.parse_pages(f, engine="llm").pages] == [""]
+
+
+def _scan(tmp_path, monkeypatch, pages: int, price=(0.3e-6, 1.2e-6)):
+    from ko import models
+
+    f = tmp_path / "book.pdf"
+    f.write_bytes(b"%PDF-")
+    _fake_doc(monkeypatch, [""] * pages, need=set(range(1, pages + 1)))
+    monkeypatch.setattr(models, "gateway_price", lambda name: price)
+    return f
+
+
+def test_a_big_scan_stops_before_any_call_naming_the_cost(tmp_path, monkeypatch):
+    f = _scan(tmp_path, monkeypatch, 51)
+    monkeypatch.setattr(ocr, "Model", lambda name: pytest.fail("spent money unasked"))
+    with pytest.raises(doc.SpendLimit, match=r"51 pages need OCR, about \$0\.04–0\.16 on deepseek.*KO_OCR_MAX_PAGES.*KO_OCR_ENGINE=vision"):
+        doc.parse_pages(f, engine="llm")
+
+
+def test_confirming_spends_and_a_small_job_never_asks(tmp_path, monkeypatch):
+    assert len(doc.parse_pages(_scan(tmp_path, monkeypatch, 51), engine="llm", confirm_spend=True).pages) == 51
+    assert len(doc.parse_pages(_scan(tmp_path, monkeypatch, 50), engine="llm").pages) == 50
+
+
+def test_a_dear_model_stops_on_cost_under_the_page_limit(tmp_path, monkeypatch):
+    f = _scan(tmp_path, monkeypatch, 40, price=(5e-6, 25e-6))
+    with pytest.raises(doc.SpendLimit, match="40 pages"):
+        doc.parse_pages(f, engine="llm")
+
+
+def test_limits_come_from_config(tmp_path, monkeypatch):
+    f = _scan(tmp_path, monkeypatch, 60)
+    monkeypatch.setenv("KO_OCR_MAX_PAGES", "100")
+    assert len(doc.parse_pages(f, engine="llm").pages) == 60
+    monkeypatch.setenv("KO_OCR_MAX_PAGES", "5")
+    with pytest.raises(doc.SpendLimit):
+        doc.parse_pages(f, engine="llm")
+
+
+def test_ko_doc_stop_exits_2_and_offers_its_own_flags(tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+
+    from ko.cli import app
+
+    f = _scan(tmp_path, monkeypatch, 51)
+    r = CliRunner().invoke(app, ["doc", str(f), "-e", "llm"])
+    assert r.exit_code == 2
+    assert "--yes" in r.output and "KO_OCR_MAX_PAGES" not in r.output and "51 pages" in r.output
+
+
+def test_a_doi_whose_paper_is_over_the_limit_says_so(monkeypatch):
+    """Not the publisher's landing page passed off as the paper."""
+    from ko import fetch, papers
+
+    def too_big(url, save=True):
+        if "oa.example" in url:
+            raise doc.SpendLimit("60 pages need OCR.")
+        pytest.fail("fell through to the landing page")
+
+    monkeypatch.setattr(papers, "oa_url", lambda doi: "https://oa.example/p.pdf")
+    real = fetch.fetch
+    monkeypatch.setattr(fetch, "fetch", lambda url, save=True, **k: too_big(url, save) if "oa.example" in url else real(url, save=save, **k))
+    with pytest.raises(doc.SpendLimit):
+        real("https://doi.org/10.1000/xyz", save=False)
+
+
+def test_the_agent_tool_reports_the_stop(monkeypatch):
+    from ko import fetch
+    from ko.agents import _toolsets
+
+    def stop(url, save=True):
+        raise doc.SpendLimit("60 pages need OCR, about $0.05–0.17 on deepseek.")
+
+    monkeypatch.setattr(fetch, "fetch", stop)
+    out = _toolsets.fetch_url("https://x.example/p.pdf")
+    assert out.startswith("Not read: 60 pages") and "KO's OK" in out and "KO_OCR" not in out

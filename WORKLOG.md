@@ -2,9 +2,11 @@
 
 Newest first. Big picture only — git commits have the detail; candidate ideas and decisions live in `docs/ideas.md`.
 
-## 2026-11-06 — `ko doc`: Vision by default on a Mac
+## 2026-11-06 — `ko doc`: liteparse + DeepSeek, with a spend stop
 
-KO: stay on liteparse, default to free local OCR. Tested Vision, Indra, Surya 2 and Tesseract through liteparse's OCR API (one Sonnet run, 68 scanned pages from pk_legal plus 8 hard scans; only 6 of the 25 hand-checked quotes sit on pages that need OCR, so this is a small sample):
+**KO's call: fast and sensible beats free.** Most use is a few documents, so a cheap model reads the pages with no text layer, and a big job stops first with the cost (over 50 OCR pages or $0.25: exit 2, `--yes` to spend it; `[ocr] max_pages`, `max_usd`). DeepSeek v4.1 Flash over Flash-Lite 3.5: on the same pages $0.0042 vs $0.0070 (5 prose pages), $0.0027 vs $0.0063 (dense table), $0.0016 vs $0.0032 (equations), a bit faster, and both read the heading and date Vision lost or misread. Gemini's suggested fallback code named liteparse methods that don't exist; its pattern is what `transcribe` already does. `-e vision` stays as the free, on-device option. An interim design defaulted to Vision on a Mac with an opt-in fallback; dropped before merging. The catalog now lists DeepSeek at $0.30/$1.20 (it was $0.15/$0.60).
+
+The engine test behind that. Vision, Indra, Surya 2 and Tesseract through liteparse's OCR API (one Sonnet run, 68 scanned pages from pk_legal plus 8 hard scans; only 6 of the 25 hand-checked quotes sit on pages that need OCR, so this is a small sample):
 
 | engine | quotes exact/near | Urdu | tables (recall) | para numbers of 123 | s/page | install |
 |---|---|---|---|---|---|---|
@@ -16,7 +18,7 @@ KO: stay on liteparse, default to free local OCR. Tested Vision, Indra, Surya 2 
 - Indra's paragraph-number lead comes with worse words: pk_legal's in-order check on 10 scans, 57 pages, against Flash-Lite (a reference, not truth) found 123 replaced passages and 200 words lost for Indra, 52 and 92 for Vision ("waqf" became "was", "land" became "and"). This test's word-recall scoring wouldn't show that.
 - Vision and Tesseract return lines across both columns; Indra and Surya read one column, then the other. docling (`--deep`) stays the route for reading order and hard tables, at ~3 s a page plus torch.
 - **Pages to OCR:** `full_page_image`, `is_garbled`, or under 200 native characters with an image, outlines or no native text at all. Liteparse's bare reasons send too much: 23 `vector-text` pages with ~2,000 characters went to OCR (89 of 292 pk_legal pages selected, now 66). pk_legal's bare under-200 rule sends too much the other way: a born-digital title page became a paid call, or a missing-key failure off Mac (caught in review).
-- **Fallback off by default** (`[ocr] fallback`): a page a local engine leaves empty gets a note with the re-run command, so a bad scan never spends money unasked. Not on confidence: pk_legal measured 97% of 2,799 pages at 0.99+, and garbage at 0.957.
+- A page a local engine leaves empty gets a note with the re-run command. Confidence is no signal: pk_legal measured 97% of 2,799 pages at 0.99+, and garbage at 0.957.
 - **Vision can lose lines with no error.** A helper dropped 4 of 40 lines on a clear page (the "COMPETITION COMMISSION OF PAKISTAN" heading), exit 0, on every run, while the same binary under a new name read all 40. Deleting `~/Library/Caches/<binary name>` cured it. 2 of about 10 binaries had it, both built under load ~19; a first run killed at 5 s and one left alone didn't reproduce it, and a synthetic page didn't show it, so ko can't self-check. pk_legal found no sign in 727 pages of stored text on its older cache. The helper now keeps one name, `ko-vision-ocr`, so rebuilds don't start a new cache; the catch is that a bad one lasts until deleted (`ko doctor` names the path).
 - **The warm-up never worked.** Its 1x1 PNG is below Vision's minimum, so it errored and ko ignored that: 12 s, then 12.7 s more on the first real page. `--warm` now reads drawn text: 26 s once after a build, first page 0.18 s. Images under 3 px return no text rather than failing the page (ocrmac issue #14 is the same trap).
 - Tried and left out: language correction off (one line in 192 on a table, didn't fix `20.04.202îÍš`); `ar-SA` for Urdu (~100 Arabic characters a page, but `439(4)(b)` became `43' &4"$(#b'`); Apple's Live Text (private API); `ocrmac` itself (same Vision call, less control).

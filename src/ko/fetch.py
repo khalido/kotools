@@ -525,6 +525,8 @@ def _fetch(
                 r = fetch(oa, save=save)
                 r.note = f"doi:{doi} → {oa}" + (f"; {r.note}" if r.note else "")
                 return r
+            except doc_mod.SpendLimit:
+                raise  # the paper is there; a publisher's landing page isn't the answer
             except Exception:
                 pass  # OA copy bot-blocked or dead → fall through to the landing page
 

@@ -168,14 +168,14 @@ def doctor(
         (
             "doc",
             "PDF/Office/image → text; OCR for pages with no text layer",
-            "LibreOffice for Office files (not .docx)",
+            "LibreOffice for Office files (not .docx); OCR: the gateway key, or -e vision/tesseract",
             ("✓ found", "green") if soffice else ("– optional", "yellow"),
         ),
         (
             "ocr",
-            "Vision OCR for `ko doc` on macOS",
+            "free OCR with `ko doc -e vision` (macOS)",
             "swiftc (xcode-select --install); losing lines? rm -r ~/Library/Caches/ko-vision-ocr",
-            ("✓ found", "green") if shutil.which("swiftc") else ("– off macOS: gateway key or -e tesseract", "yellow"),
+            ("✓ found", "green") if shutil.which("swiftc") else ("– optional", "yellow"),
         ),
         (
             "pdf",
@@ -304,7 +304,6 @@ def doctor(
         ),
         ("sum model", _llm.sum_model(), config.setting_source("KO_SUM_MODEL", "llm", "sum")),
         ("ocr engine", _ocr_engine(), config.setting_source("KO_OCR_ENGINE", "ocr", "engine")),
-        ("ocr fallback", config.setting("KO_OCR_FALLBACK", "ocr", "fallback", "off"), config.setting_source("KO_OCR_FALLBACK", "ocr", "fallback")),
         ("cal timezone", gcal.tz_name(), "config" if config.get("cal", "timezone") else "default"),
         ("x handle", _default_handle(), config.setting_source("KO_X_HANDLE", "x", "handle")),
         ("google account", active_account(), config.setting_source("KO_GOOGLE_ACCOUNT", "google", "account")),

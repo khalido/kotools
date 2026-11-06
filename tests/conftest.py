@@ -92,7 +92,6 @@ def _clean_gateway_models():
 
 @pytest.fixture(autouse=True)
 def _free_ocr(monkeypatch):
-    """`ko doc`'s OCR can be a paid gateway model; a test that reaches OCR uses liteparse's local
-    Tesseract, with no fallback, unless it picks otherwise."""
+    """`ko doc`'s default OCR engine is a paid gateway model; a test that reaches OCR uses
+    liteparse's local Tesseract unless it picks an engine itself."""
     monkeypatch.setenv("KO_OCR_ENGINE", "tesseract")
-    monkeypatch.setenv("KO_OCR_FALLBACK", "")

@@ -4,16 +4,16 @@ https://developers.llamaindex.ai/liteparse/guides/ocr/#custom-ocr-servers — mu
 (PNG/JPG) + `language`, reply `{"results": [{"text", "bbox": [x1, y1, x2, y2], "confidence"}]}`,
 pixels, origin top-left, reading order.
 
-Engines (`--engine`), default `vision` on macOS, else the DeepSeek model:
-- `vision`: Apple Vision, free and on-device (~0.7 s a page). Reads scanned text well; returns
-  garbage on equations and no table structure. Through liteparse, whose layout keeps columns
-  apart (a direct read interleaves them, tested 2026-11-06).
-  Watch https://github.com/run-llama/liteparse/pull/521 (native `ocr_backend="macos-vision"`,
-  open as of 2026-11-06): once it ships, drop vision-ocr.swift and this engine's server.
+Engines (`--engine`), default the DeepSeek model:
 - a vision model on the AI Gateway, `llm` = DeepSeek v4.1 Flash with thinking off: best on
   tables and equations in the sfl-mes bake-off (20 hard book pages, 2026-11-04: $0.0010 and
   4.1 s a page; thinking on took 3.6 min and $0.06 on one page). One result per image, covering
   the whole image: a model gives no boxes.
+- `vision`: Apple Vision, free and on-device (~0.15 s a page). Reads scanned text well; returns
+  garbage on equations and no table structure. Through liteparse, whose layout keeps columns
+  side by side (a direct read interleaves them, tested 2026-11-06).
+  Watch https://github.com/run-llama/liteparse/pull/521 (native `ocr_backend="macos-vision"`,
+  open as of 2026-11-06): once it ships, drop vision-ocr.swift and this engine's server.
 - `tesseract`: liteparse's built-in OCR, no server.
 
 `ko doc` sends a model the page images itself (`transcribe`) and uses the transcript as the
@@ -68,11 +68,9 @@ Output only the Markdown."""
 
 
 def engine(name: str | None = None) -> str:
-    """The engine to use: `name`, else $KO_OCR_ENGINE / `[ocr] engine`, else Vision on macOS and
-    the DeepSeek model elsewhere. `llm` means that model; a bare gateway id
-    (`google/gemini-3.8-flash`) gets `vercel:`."""
-    default = "vision" if sys.platform == "darwin" else DEFAULT_MODEL
-    name = name or config.setting("KO_OCR_ENGINE", "ocr", "engine", default)
+    """The engine to use: `name`, else $KO_OCR_ENGINE / `[ocr] engine`, else the DeepSeek model.
+    `llm` means that model; a bare gateway id (`google/gemini-3.8-flash`) gets `vercel:`."""
+    name = name or config.setting("KO_OCR_ENGINE", "ocr", "engine", DEFAULT_MODEL)
     if name in LOCAL:
         return name
     if name == "llm":
@@ -80,13 +78,15 @@ def engine(name: str | None = None) -> str:
     return name if ":" in name else f"vercel:{name}"
 
 
-def fallback() -> str | None:
-    """The model that re-reads pages a local engine left empty: `[ocr] fallback` /
-    $KO_OCR_FALLBACK. Off by default, so a bad scan never spends money unasked."""
-    name = config.setting("KO_OCR_FALLBACK", "ocr", "fallback", "")
-    if name in LOCAL:
-        raise config.ConfigError(f"[ocr] fallback must be a model (`llm` or a gateway id), not {name}")
-    return engine(name) if name else None
+def spend_estimate(name: str, pages: int) -> tuple[float, float] | None:
+    """(low, high) USD for a model to read `pages` pages; None when its price isn't known. Tokens
+    a page, measured 2026-11-06: ~1,200 in; ~400 out on prose, ~2,300 on a dense table."""
+    from ko import models
+
+    price = models.gateway_price(name.removeprefix("vercel:"))
+    if not price:
+        return None
+    return tuple(pages * (1200 * price[0] + out * price[1]) for out in (400, 2300))
 
 
 def workers(name: str) -> int:
@@ -326,11 +326,10 @@ def server(name: str, port: int = DEFAULT_PORT, read=None, host: str = "127.0.0.
 
 
 @contextmanager
-def running(name: str, fatal: bool = True):
+def running(name: str):
     """(url, workers) for liteparse while the block runs; (None, None) for tesseract. Serves on
     a thread and stops it after, raising if any image still failed, since liteparse carries on
-    without it and doesn't say so (`fatal=False`: the caller checks for empty pages instead).
-    Its own server every time: only this one's failures are visible."""
+    without it and doesn't say so. Its own server every time: only this one's failures are visible."""
     if name == "tesseract":
         yield None, None
         return
@@ -341,7 +340,5 @@ def running(name: str, fatal: bool = True):
     finally:
         srv.shutdown()
         srv.server_close()
-    if srv.failed and fatal:
-        raise RuntimeError(f"OCR failed on {len(srv.failed)} image(s) after liteparse's retries; see the notes above")
     if srv.failed:
-        print(f"[ocr: {len(srv.failed)} image(s) failed after liteparse's retries; pages left empty go to the fallback]", file=sys.stderr)
+        raise RuntimeError(f"OCR failed on {len(srv.failed)} image(s) after liteparse's retries; see the notes above")
