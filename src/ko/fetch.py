@@ -40,11 +40,13 @@ from __future__ import annotations
 
 import fcntl
 import hashlib
+import ipaddress
 import json
 import os
 import queue
 import re
 import shutil
+import socket
 import subprocess
 import tempfile
 import threading
@@ -398,7 +400,7 @@ def _rescuers(url: str, date: str | None, dead: bool) -> list[tuple[str, object]
     exa = [("exa", lambda: _exa(url))] if os.environ.get("EXA_API_KEY") else []
     if dead:
         return [wayback, *exa]
-    browser = [("browser", lambda: _browser(url))] if shutil.which("agent-browser") else []
+    browser = [("browser", lambda: _browser(url))] if shutil.which("agent-browser") and not _public_only else []
     return [*browser, *exa, ("archive.today", lambda: _archive_is(url)), wayback]
 
 
@@ -448,6 +450,48 @@ def _cache_path(url: str, archive: bool, archive_is: bool, date: str | None) -> 
     return cache_dir() / "fetch" / f"{key}.json"
 
 
+class NotPublic(RuntimeError):
+    """A connection to a local or private address, under `public_only`. Not an `httpx` error
+    and not an `OSError`, so no rung mistakes it for a dead link and tries an archive."""
+
+
+# `is_global` passes these, which reach a private address through IPv6.
+_TUNNELS = [ipaddress.ip_network(n) for n in ("::/96", "64:ff9b::/96", "2002::/16", "fec0::/10")]
+_public_only = False
+
+
+def _is_public(address: str) -> bool:
+    ip = ipaddress.ip_address(address)
+    ip = getattr(ip, "ipv4_mapped", None) or ip
+    return ip.is_global and not ip.is_multicast and not any(ip in net for net in _TUNNELS)
+
+
+def public_only() -> None:
+    """From here on, this process connects only to public addresses, for a URL someone else chose
+    (a model, a web page). Checked in `getaddrinfo`, so it covers every `httpx` hop and mirror, and
+    a name that changes its answer, since the answer checked is the one connected to.
+
+    Subprocesses are outside it. The browser rung is off here because Chrome would open anything;
+    `arxiv2md` and `yt-dlp` only ever get their own hosts. The cache is not read either: an entry
+    may be from a run without this check. Nor is a PDF saved: its name comes from the URL, and
+    would replace a file of that name in ~/Downloads."""
+    global _public_only
+    if _public_only:
+        return
+    _public_only = True
+    real = socket.getaddrinfo
+
+    def checked(host, *args, **kwargs):
+        answers = real(host, *args, **kwargs)
+        if host is not None:
+            for answer in answers:
+                if not _is_public(answer[4][0]):
+                    raise NotPublic(f"{host} is a local or private address ({answer[4][0]})")
+        return answers
+
+    socket.getaddrinfo = checked
+
+
 def fetch(
     url: str,
     archive: bool = False,
@@ -460,7 +504,7 @@ def fetch(
     younger than `[fetch] cache_hours` (default 1). See module docstring."""
     path = _cache_path(url, archive, archive_is, date)
     ttl = float(config.get("fetch", "cache_hours", 1)) * 3600
-    if not fresh:
+    if not fresh and not _public_only:
         try:
             age = time.time() - path.stat().st_mtime
             if age < ttl:
@@ -470,7 +514,7 @@ def fetch(
                 return hit
         except (OSError, ValueError, TypeError):
             pass  # no entry, or an unreadable one: fetch fresh and overwrite it
-    result = _fetch(url, archive=archive, archive_is=archive_is, date=date, save=save)
+    result = _fetch(url, archive=archive, archive_is=archive_is, date=date, save=save and not _public_only)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(asdict(result)))
     return result

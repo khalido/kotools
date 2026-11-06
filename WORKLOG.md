@@ -2,6 +2,10 @@
 
 Newest first. Big picture only — git commits have the detail; candidate ideas and decisions live in `docs/ideas.md`.
 
+## 2026-11-06 — `ko fetch --public-only`
+
+jaldi hands `ko fetch` URLs a model or a web page chose, and `ko` followed redirects anywhere: a public page could redirect into localhost or the LAN. The check sits in `socket.getaddrinfo`, not in a redirect loop, so one guard covers every `httpx` hop and mirror, and a name that changes its answer, since the answer checked is the one connected to. Refused: `postman-echo.com/redirect-to?url=http://127.0.0.1:9/` and `127.0.0.1.nip.io`, live. Same output on a blog, Wikipedia, arXiv, YouTube and a PDF. Subprocesses are outside it: the browser rung is off under the flag, and `arxiv2md` and `yt-dlp` only get their own hosts. `NotPublic` is deliberately not an `OSError` or `httpx` error, so the rescue ladder does not treat a refusal as a dead link. `arxiv.org/abs` took 103 to 135 s here with or without the flag, longer than jaldi's 60 s limit.
+
 ## 2026-11-06 — `ko doc`: liteparse + DeepSeek, with a spend stop
 
 **KO's call: fast and sensible beats free.** Most use is a few documents, so a cheap model reads the pages with no text layer, and a big job stops first with the cost (over 50 OCR pages or $0.25: exit 2, `--yes` to spend it; `[ocr] max_pages`, `max_usd`). DeepSeek v4.1 Flash over Flash-Lite 3.5: on the same pages $0.0042 vs $0.0070 (5 prose pages), $0.0027 vs $0.0063 (dense table), $0.0016 vs $0.0032 (equations), a bit faster, and both read the heading and date Vision lost or misread. Gemini's suggested fallback code named liteparse methods that don't exist; its pattern is what `transcribe` already does. `ko fetch`, `ko llm -f` and agents get the text layers with a first line naming what wasn't read, since a partial answer with a note beats none (a pure scan still fails). `-e vision` stays as the free, on-device option. An interim design defaulted to Vision on a Mac with an opt-in fallback; dropped before merging. The catalog now lists DeepSeek at $0.30/$1.20 (it was $0.15/$0.60).

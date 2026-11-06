@@ -14,6 +14,9 @@ Cut a release with the repo's `/release` skill.
 ## [Unreleased]
 
 ### Added
+- `ko fetch --public-only`, for a URL you didn't choose (a model, a web page): refuses local and
+  private addresses on every redirect, including a name that resolves to one, and skips the browser
+  fallback and the cache, and saves no PDF.
 - `ko drive ls|pull|push` — mirror a Drive folder into a local dir and push edits back in place
   (same file id, sharing kept). A `.ko-drive.json` manifest makes both-sides-changed a refused
   conflict rather than a silent clobber; nothing is ever deleted on either side.

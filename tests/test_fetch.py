@@ -1,6 +1,7 @@
 """Offline tests for ko.fetch — routing logic + extraction, no network."""
 
 import json
+import socket
 
 import httpx2 as httpx
 import pytest
@@ -453,3 +454,83 @@ def test_fetch_json_is_an_array_even_when_every_url_fails(monkeypatch):
     r = runner.invoke(app, ["fetch", "https://a.example", "--json"])
     assert r.exit_code == 1
     assert json.loads(r.stdout) == [{"url": "https://a.example", "error": "dead"}]
+
+
+@pytest.fixture
+def guarded(monkeypatch):
+    """`public_only()` with the patch it makes undone after the test, and DNS under the test's control."""
+    answers = {}
+
+    def lookup(host, *args, **kwargs):
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (answers.get(host, host), 80))]
+
+    monkeypatch.setattr(socket, "getaddrinfo", lookup)
+    monkeypatch.setattr(fetch, "_public_only", False)
+    fetch.public_only()
+    yield answers
+    # monkeypatch restores getaddrinfo and the flag, in that order, on teardown
+
+
+@pytest.mark.parametrize(
+    "address",
+    ["127.0.0.1", "10.1.2.3", "192.168.1.1", "169.254.169.254", "100.100.1.1", "0.0.0.0", "224.0.0.1", "198.18.0.1",
+     "::1", "::7f00:1", "fe80::1", "fc00::1", "fec0::1", "::ffff:127.0.0.1", "64:ff9b::7f00:1", "2002:7f00:1::"],
+)
+def test_public_only_refuses_a_private_address(address):
+    assert not fetch._is_public(address)
+
+
+@pytest.mark.parametrize("address", ["93.184.216.34", "8.8.8.8", "2606:4700:4700::1111"])
+def test_public_only_allows_a_public_address(address):
+    assert fetch._is_public(address)
+
+
+def test_public_only_checks_what_a_name_resolves_to(guarded):
+    guarded["rebound.example"] = "127.0.0.1"
+    with pytest.raises(fetch.NotPublic, match="rebound.example"):
+        socket.getaddrinfo("rebound.example", 80)
+    guarded["fine.example"] = "93.184.216.34"
+    assert socket.getaddrinfo("fine.example", 80)
+
+
+def test_public_only_refusal_stops_the_rescue_ladder(guarded, monkeypatch, tmp_path):
+    """A redirect to localhost is not a dead link: no archive or browser rung runs after it."""
+    monkeypatch.setattr(fetch, "cache_dir", lambda: tmp_path)
+
+    def get(url, **kw):
+        socket.getaddrinfo("127.0.0.1", 80)
+        raise AssertionError("unreachable")
+
+    monkeypatch.setattr(fetch.httpx, "get", get)
+    monkeypatch.setattr(fetch, "_rescue", lambda *a, **k: pytest.fail("rescued a refused address"))
+    with pytest.raises(fetch.NotPublic):
+        fetch.fetch("https://a.example/post")
+
+
+def test_public_only_has_no_browser_rung(guarded, monkeypatch):
+    monkeypatch.setattr(fetch.shutil, "which", lambda name: "/bin/agent-browser")
+    names = [name for name, _ in fetch._rescuers("https://a.example/", None, dead=False)]
+    assert "browser" not in names
+
+
+def test_public_only_does_not_read_the_cache(guarded, monkeypatch, tmp_path):
+    monkeypatch.setattr(fetch, "cache_dir", lambda: tmp_path)
+    url = "https://a.example/page"
+    path = fetch._cache_path(url, False, False, None)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"text": "from an unchecked run", "source": "live", "note": ""}))
+    monkeypatch.setattr(fetch, "_fetch", lambda *a, **k: fetch.Fetched(text="fresh", source="live"))
+    assert fetch.fetch(url).text == "fresh"
+
+
+def test_public_only_saves_no_pdf(guarded, monkeypatch, tmp_path):
+    monkeypatch.setattr(fetch, "cache_dir", lambda: tmp_path)
+    seen = {}
+
+    def fake(url, **kw):
+        seen.update(kw)
+        return fetch.Fetched(text="x", source="pdf")
+
+    monkeypatch.setattr(fetch, "_fetch", fake)
+    fetch.fetch("https://a.example/report.pdf", save=True)
+    assert seen["save"] is False

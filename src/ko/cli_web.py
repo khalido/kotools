@@ -1054,12 +1054,20 @@ def fetch_cmd(
         False, "--json", help="array of {url, source, tokens, note, text} — or {url, error} per failed URL"
     ),
     fresh: bool = typer.Option(False, "--fresh", help="skip the local cache (default: reuse a fetch < 1 h old)"),
+    public_only: bool = typer.Option(
+        False,
+        "--public-only",
+        help="for a URL you didn't choose: refuse local and private addresses on every redirect, "
+        "skip the browser fallback and the cache, save no PDF",
+    ),
 ) -> None:
     """URL → clean markdown, routed by host (arxiv, YouTube, PDF, reddit, wikipedia), with
     archive.today for paywalls and Wayback for dead links. Takes several URLs.
     Shortcut: `ko <url>`. Alias: `ko webfetch`."""
     # Sequential fetch, mirroring `ko exa get`: per-URL failures go to stderr and are skipped;
     # exit 0 if any URL succeeded, 1 if all failed.
+    if public_only:
+        fetch_mod.public_only()
     docs: list[tuple[str, fetch_mod.Fetched]] = []
     rows: list[dict] = []  # --json: one per URL, failures included, in the order asked
     for u in urls:
