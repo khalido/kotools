@@ -102,6 +102,17 @@ def test_info_uses_registry_latest_floor_lock_and_notes(fake_web, tmp_path, monk
     assert p.recent == [("1.10.0", _days_ago(20)[:10]), ("1.9.0", _days_ago(40)[:10])]
 
 
+def test_a_repo_unknown_to_deps_dev_is_not_a_failed_lookup(monkeypatch):
+    class Missing:
+        status_code = 404
+
+        def json(self):
+            raise ValueError("deps.dev's 404 body is plain text")
+
+    monkeypatch.setattr(pkg, "_get", lambda url, **kw: Missing())
+    assert pkg._project("https://github.com/meta/pyrefly") == {}
+
+
 def test_systems_for():
     assert pkg.systems_for("npm:react") == [("npm", "react")]
     assert pkg.systems_for("@sveltejs/kit") == [("npm", "@sveltejs/kit")]

@@ -173,6 +173,12 @@ def _version(system: str, name: str, v: str) -> dict:
     return {} if r.status_code == 404 else r.raise_for_status().json()
 
 
+def _project(repo: str) -> dict:
+    """deps.dev's stars and issues for a repo; it doesn't know every repo a package names."""
+    r = _get(f"{DEPS}/projects/{quote(repo.removeprefix('https://'), safe='')}")
+    return {} if r.status_code == 404 else r.raise_for_status().json()
+
+
 def _advisories(keys: list[dict]) -> list[Advisory]:
     def one(k):
         a = _get(f"{DEPS}/advisories/{k['id']}").raise_for_status().json()
@@ -291,11 +297,7 @@ def _one(system: str, name: str, pkg: dict, *, notes: bool) -> PkgInfo:
         old = pool.submit(_version, system, name, locked) if locked and locked != latest else None
         detail = cur.result()
         repo = _repo(detail.get("links", []), detail.get("relatedProjects", []))
-        proj = (
-            pool.submit(lambda: _get(f"{DEPS}/projects/{quote(repo.removeprefix('https://'), safe='')}").json())
-            if repo
-            else None
-        )
+        proj = pool.submit(_project, repo) if repo else None
         pushed = pool.submit(_github, repo) if repo else None
         rel = pool.submit(_release_notes, repo, name, latest) if repo and notes else None
         adv = pool.submit(_advisories, detail.get("advisoryKeys", []))
