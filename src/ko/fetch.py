@@ -57,6 +57,7 @@ from urllib.parse import unquote
 
 import httpx2 as httpx
 import trafilatura
+from lxml.etree import SubElement
 
 from . import arxiv as arxiv_mod
 from . import config
@@ -265,9 +266,29 @@ def _pdf_name(url: str) -> str:
     return stem if stem.lower().endswith(".pdf") else f"{stem}.pdf"
 
 
+def _code_text(pre) -> str:
+    """A `<pre>`'s code with its line breaks, which some highlighters leave to `<br>` or CSS."""
+    for br in pre.iter("br"):
+        br.tail = "\n" + (br.tail or "")
+    text = pre.text_content()
+    if "\n" not in text.strip():
+        line = ' or '.join(f'contains(concat(" ", @class, " "), " {c} ")' for c in ("line", "ec-line"))
+        text = "\n".join(el.text_content() for el in pre.xpath(f".//*[{line}]")) or text
+    return re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", text)  # lxml refuses these
+
+
 def _extract(html: str, url: str) -> str | None:
+    """Markdown from a page. Code blocks are rebuilt as a bare `<pre><code>` first: trafilatura
+    drops many highlighters' markup as link clutter or boilerplate, so docs lose their commands."""
+    tree = trafilatura.load_html(html)
+    if tree is None:
+        return None
+    for pre in list(tree.iter("pre")):
+        text = _code_text(pre)
+        pre.clear(keep_tail=True)
+        SubElement(pre, "code").text = text
     return trafilatura.extract(
-        html, url=url, output_format="markdown", include_links=True, include_tables=True
+        tree, url=url, output_format="markdown", include_links=True, include_tables=True
     )
 
 

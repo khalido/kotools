@@ -236,6 +236,45 @@ def test_fetch_cache_reuses_then_fresh_refetches(monkeypatch):
     assert len(calls) == 2
 
 
+_PROSE = "<p>" + "A long enough paragraph that trafilatura treats it as real content. " * 6 + "</p>"
+
+
+def _page(block: str) -> str:
+    return f"<html><body><article><h1>Guide</h1>{_PROSE}{block}{_PROSE}</article></body></html>"
+
+
+@pytest.mark.parametrize(
+    "block",
+    [
+        pytest.param(  # mkdocs-material: an anchor on every line
+            '<div class="highlight"><pre><span></span><code>'
+            '<a id="l1" name="l1" href="#l1"></a>uv build\n<a id="l2" name="l2" href="#l2"></a>uv publish\n'
+            "</code></pre></div>",
+            id="line-anchors",
+        ),
+        pytest.param("<pre><code>uv build<br>uv publish</code></pre>", id="br-lines"),
+        pytest.param(
+            '<pre><code><div class="ec-line"><span>uv build</span></div>'
+            '<div class="ec-line"><span>uv publish</span></div></code></pre>',
+            id="line-elements",
+        ),
+    ],
+)
+def test_extract_keeps_code_blocks_and_their_lines(block):
+    text = fetch._extract(_page(block), "https://example.com/docs")
+    assert "```" in text
+    assert "uv build\nuv publish" in text
+
+
+def test_extract_survives_a_control_character_in_code():
+    text = fetch._extract(_page("<pre><code>before\x0cafter\nnext</code></pre>"), "https://example.com/docs")
+    assert "beforeafter" in text
+
+
+def test_extract_on_empty_html_is_none():
+    assert fetch._extract("", "https://example.com/docs") is None
+
+
 def test_extract_html_to_markdown():
     html = """<html><head><title>T</title></head><body>
     <nav>menu junk</nav>
