@@ -1051,7 +1051,8 @@ def fetch_cmd(
         None, "--out", "-o", help="write to this path; prints to stdout if omitted"
     ),
     as_json: bool = typer.Option(
-        False, "--json", help="array of {url, source, tokens, note, text} — or {url, error} per failed URL"
+        False, "--json", help="array of {url, title, source, tokens, note, text}, or {url, error, code} per failed URL: "
+        "blocked, not_found, network, not_public, timeout or error"
     ),
     fresh: bool = typer.Option(False, "--fresh", help="skip the local cache (default: reuse a fetch < 1 h old)"),
     public_only: bool = typer.Option(
@@ -1060,32 +1061,48 @@ def fetch_cmd(
         help="for a URL you didn't choose: refuse local and private addresses on every redirect, "
         "skip the browser fallback and the cache, save no PDF",
     ),
+    live_only: bool = typer.Option(
+        False,
+        "--live-only",
+        help="for a link shared privately: if its site fails, stop; never send the URL to Exa, "
+        "archives, a browser or a mirror, nor a scanned PDF's pages to OCR; ignores the cache",
+    ),
+    timeout: float = typer.Option(
+        None, "--timeout", min=0.1, help="seconds allowed per URL, fallbacks included (code `timeout`)"
+    ),
 ) -> None:
     """URL → clean markdown, routed by host (arxiv, YouTube, PDF, reddit, wikipedia), with
     archive.today for paywalls and Wayback for dead links. Takes several URLs.
     Shortcut: `ko <url>`. Alias: `ko webfetch`."""
     # Sequential fetch, mirroring `ko exa get`: per-URL failures go to stderr and are skipped;
     # exit 0 if any URL succeeded, 1 if all failed.
+    if live_only and (archive or archive_is):
+        _die("--live-only keeps the URL off the archives; drop one of them", as_json=as_json, code="usage")
     if public_only:
         fetch_mod.public_only()
+    if live_only:
+        fetch_mod.live_only()
+    kwargs = {"archive": archive, "archive_is": archive_is, "date": date, "save": not no_save, "fresh": fresh}
     docs: list[tuple[str, fetch_mod.Fetched]] = []
     rows: list[dict] = []  # --json: one per URL, failures included, in the order asked
     for u in urls:
         try:
-            r = fetch_mod.fetch(
-                u, archive=archive, archive_is=archive_is, date=date, save=not no_save, fresh=fresh
-            )
+            r = fetch_mod.fetch_within(timeout, u, **kwargs) if timeout else fetch_mod.fetch(u, **kwargs)
         except Exception as e:
             typer.echo(f"[failed: {u} — {e}]", err=True)
-            rows.append({"url": u, "error": str(e)})
+            rows.append({"url": u, "error": str(e), "code": getattr(e, "code", "error")})
             continue
         docs.append((u, r))
-        rows.append({"url": u, "source": r.source, "tokens": _tokens(r), "note": r.note, "text": r.text})
+        rows.append({"url": u, "title": r.title, "source": r.source, "tokens": _tokens(r), "note": r.note, "text": r.text})
         typer.echo(_fetch_banner(r), err=True)  # one token banner per document
     if not docs:  # nothing succeeded → runtime error
         if as_json:  # same array shape as a partial run, so a caller parses one thing
             typer.echo(json.dumps(rows))
-        _die(f"no content returned for any of the {len(urls)} URL(s)", as_json=as_json)
+        _die(
+            f"no content returned for any of the {len(urls)} URL(s)",
+            as_json=as_json,
+            code=rows[0]["code"] if len(urls) == 1 else "error",
+        )
     if as_json:
         typer.echo(json.dumps(rows))
         return

@@ -54,6 +54,7 @@ import tempfile
 import threading
 import time
 from dataclasses import asdict, dataclass
+from html import unescape
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -228,6 +229,31 @@ class Fetched:
     text: str
     source: str  # "live" | "browser" | "exa" | "archive.is" | "wayback" | "pdf" | "arxiv" | …
     note: str = ""  # human context for stderr: saved path, wayback timestamp
+    title: str = ""
+
+
+class FetchError(RuntimeError):
+    """A URL that gave no text, and a `code` a caller can branch on without reading the message."""
+
+    def __init__(self, message: str, code: str = "error"):
+        super().__init__(message)
+        self.code = code
+
+
+def _html_title(html: str) -> str:
+    head = re.split(r"</head>", html[:200_000], maxsplit=1, flags=re.IGNORECASE)[0]  # not an <svg>'s
+    m = re.search(r"<title\b[^>]*>(.*?)</title>", head, re.IGNORECASE | re.DOTALL)
+    return " ".join(unescape(m[1]).split()) if m else ""
+
+
+def _text_title(text: str) -> str:
+    """A title from the text itself: YAML frontmatter's, else the first heading."""
+    if (front := re.match(r"---\n(.*?)\n---", text, re.DOTALL)) and (
+        m := re.search(r"^title:\s*[\"']?(.+?)[\"']?\s*$", front[1], re.MULTILINE)
+    ):
+        return m[1]
+    m = re.search(r"^#{1,2}\s+(.+)$", text[:5000], re.MULTILINE)
+    return re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", m[1]).strip() if m else ""
 
 
 def _arxiv_id(url: str) -> str | None:
@@ -311,7 +337,8 @@ def _markdown_url(html: str, page: httpx.URL) -> str | None:
 
 def _markdown_version(resp: httpx.Response, extracted: str | None) -> Fetched | None:
     """The page's own markdown, if it has one. A guessed URL can answer 200 with the site's HTML
-    shell or a "Page Not Found", so it must be markdown, and not far shorter than the page."""
+    shell or a "Page Not Found", so it must be markdown, and at least half the extracted page's
+    length: real versions measured 0.67x to 2.65x on 13 docs sites (2026-11-07)."""
     url = _markdown_url(resp.text, resp.url)
     if not url:
         return None
@@ -322,7 +349,7 @@ def _markdown_version(resp: httpx.Response, extracted: str | None) -> Fetched | 
             timeout=10,
             follow_redirects=True,
         )
-    except httpx.HTTPError:
+    except (httpx.HTTPError, NotPublic):  # a hostile link costs the page's markdown, not the page
         return None
     text = md.text.strip()
     kind = md.headers.get("content-type", "").lower()
@@ -330,11 +357,13 @@ def _markdown_version(resp: httpx.Response, extracted: str | None) -> Fetched | 
         md.status_code != 200
         or not kind.startswith(("text/markdown", "text/x-markdown", "text/plain"))
         or text[:15].lower().startswith(("<!doctype", "<html"))
-        or len(text) < max(_MARKDOWN_MIN_CHARS, len(extracted or "") // 4)
+        or len(text) < max(_MARKDOWN_MIN_CHARS, len(extracted or "") // 2)
         or re.search(r"^#\s.*\b(not found|404)\b", text[:200], re.IGNORECASE | re.MULTILINE)
     ):
         return None
-    return Fetched(text=text, source="live", note=f"the page's markdown version: {url}")
+    return Fetched(
+        text=text, source="live", note=f"the page's markdown version: {url}", title=_html_title(resp.text)
+    )
 
 
 def _wayback(url: str, date: str | None = None) -> Fetched:
@@ -393,16 +422,24 @@ def _archive_is(url: str) -> Fetched:
     )
 
 
+def _pdf_text(path: str | Path, url: str) -> str:
+    """The PDF's text. Under `live_only` no page image goes to an OCR model, so a scan has none."""
+    text = doc_mod.parse(path, ocr=False if _live_only else None)
+    if _live_only and not text.strip():
+        raise FetchError(f"{url}: a scanned PDF, and --live-only keeps it off the OCR model", "blocked")
+    return text
+
+
 def _pdf(content: bytes, url: str, save: bool) -> Fetched:
     if save:
         DOWNLOADS.mkdir(parents=True, exist_ok=True)
         path = DOWNLOADS / _pdf_name(url)
         path.write_bytes(content)
-        return Fetched(text=doc_mod.parse(path), source="pdf", note=f"saved {path}")
+        return Fetched(text=_pdf_text(path, url), source="pdf", note=f"saved {path}")
     with tempfile.NamedTemporaryFile(suffix=".pdf") as tmp:
         tmp.write(content)
         tmp.flush()
-        return Fetched(text=doc_mod.parse(tmp.name), source="pdf")
+        return Fetched(text=_pdf_text(tmp.name, url), source="pdf")
 
 
 # --- rescuers: what runs when the free, deterministic live fetch didn't get the page ---
@@ -463,6 +500,8 @@ def _rescuers(url: str, date: str | None, dead: bool) -> list[tuple[str, object]
     """(name, fn) in order of preference. A dead page's truth is its archive; a walled page's
     is the live page, so a real browser comes first there."""
     wayback = ("wayback", lambda: _wayback(url, date))
+    if _live_only:
+        return []
     exa = [("exa", lambda: _exa(url))] if os.environ.get("EXA_API_KEY") else []
     if dead:
         return [wayback, *exa]
@@ -470,7 +509,7 @@ def _rescuers(url: str, date: str | None, dead: bool) -> list[tuple[str, object]
     return [*browser, *exa, ("archive.today", lambda: _archive_is(url)), wayback]
 
 
-def _rescue(url: str, date: str | None, *, dead: bool, why: str) -> Fetched:
+def _rescue(url: str, date: str | None, *, dead: bool, why: str, code: str = "blocked") -> Fetched:
     """Run every rescuer at once; return the most-preferred success as soon as everything
     preferred over it has failed, or the best by the deadline. Daemon threads: a hung rescuer
     is abandoned, never waited on at exit."""
@@ -508,7 +547,7 @@ def _rescue(url: str, date: str | None, *, dead: bool, why: str) -> Fetched:
     tried = "; ".join(
         f"{name}: {done.get(name, 'timed out')}" for name, _ in rungs
     )
-    raise RuntimeError(f"{url}: {why}, and no fallback got it ({tried})")
+    raise FetchError(f"{url}: {why}, and no fallback got it ({tried})" if rungs else f"{url}: {why}", code)
 
 
 def _cache_path(url: str, archive: bool, archive_is: bool, date: str | None) -> Path:
@@ -516,14 +555,18 @@ def _cache_path(url: str, archive: bool, archive_is: bool, date: str | None) -> 
     return cache_dir() / "fetch" / f"{key}.json"
 
 
-class NotPublic(RuntimeError):
+class NotPublic(FetchError):
     """A connection to a local or private address, under `public_only`. Not an `httpx` error
     and not an `OSError`, so no rung mistakes it for a dead link and tries an archive."""
+
+    def __init__(self, message: str):
+        super().__init__(message, "not_public")
 
 
 # `is_global` passes these, which reach a private address through IPv6.
 _TUNNELS = [ipaddress.ip_network(n) for n in ("::/96", "64:ff9b::/96", "2002::/16", "fec0::/10")]
 _public_only = False
+_live_only = False
 
 
 def _is_public(address: str) -> bool:
@@ -558,6 +601,35 @@ def public_only() -> None:
     socket.getaddrinfo = checked
 
 
+def live_only() -> None:
+    """From here on, a URL goes only to its own site: no browser, Exa, archive, reddit mirror or
+    OpenAlex lookup, and no PDF page to an OCR model. For a link someone shared privately, which
+    those services would keep. The cache isn't read: an entry may have come from an archive."""
+    global _live_only
+    _live_only = True
+
+
+def fetch_within(seconds: float, url: str, **kwargs) -> Fetched:
+    """`fetch` with a limit on the whole URL, rescue included. Daemon thread, like the rescuers: on
+    a timeout it is abandoned, never waited on at exit."""
+    results: queue.Queue = queue.Queue()
+
+    def run():
+        try:
+            results.put(fetch(url, **kwargs))
+        except Exception as e:
+            results.put(e)
+
+    threading.Thread(target=run, daemon=True).start()
+    try:
+        result = results.get(timeout=seconds)
+    except queue.Empty:
+        raise FetchError(f"{url}: no result within {seconds:g} s", "timeout") from None
+    if isinstance(result, Exception):
+        raise result
+    return result
+
+
 def fetch(
     url: str,
     archive: bool = False,
@@ -570,7 +642,7 @@ def fetch(
     younger than `[fetch] cache_hours` (default 1). See module docstring."""
     path = _cache_path(url, archive, archive_is, date)
     ttl = float(config.get("fetch", "cache_hours", 1)) * 3600
-    if not fresh and not _public_only:
+    if not fresh and not _public_only and not _live_only:  # an entry may be from an archive
         try:
             age = time.time() - path.stat().st_mtime
             if age < ttl:
@@ -581,6 +653,7 @@ def fetch(
         except (OSError, ValueError, TypeError):
             pass  # no entry, or an unreadable one: fetch fresh and overwrite it
     result = _fetch(url, archive=archive, archive_is=archive_is, date=date, save=save and not _public_only)
+    result.title = result.title or _text_title(result.text)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(asdict(result)))
     return result
@@ -621,7 +694,7 @@ def _fetch(
         return _archive_is(url)
     if archive:
         return _wayback(url, date)
-    if doi_m := _DOI_RE.search(url):
+    if not _live_only and (doi_m := _DOI_RE.search(url)):
         # try the OA copy (OpenAlex = Unpaywall's data) before the publisher's landing page
         doi = doi_m.group(1)
         from . import papers as papers_mod
@@ -640,7 +713,7 @@ def _fetch(
             except Exception:
                 pass  # OA copy bot-blocked or dead → fall through to the landing page
 
-    if mirrors := _reddit_mirrors(url):
+    if not _live_only and (mirrors := _reddit_mirrors(url)):
         # Why mirrors (field-verified 2026-08-31, don't re-test): direct fetch → blocked,
         # .json on www/api.reddit → 403 block page with AND without the BROWSER bundle +
         # a spoofed Chrome UA (this wall is endpoint/IP-shaped, not header-shaped),
@@ -712,7 +785,8 @@ def _fetch(
         status = e.response.status_code if isinstance(e, httpx.HTTPStatusError) else None
         dead = status is None or status in _GONE_STATUS
         why = f"HTTP {status}" if status else f"unreachable ({type(e).__name__})"
-        return _rescue(url, date, dead=dead, why=why)
+        code = "network" if status is None else "not_found" if dead else "blocked"
+        return _rescue(url, date, dead=dead, why=why, code=code)
 
     content_type = resp.headers.get("content-type", "")
     if "text/markdown" in content_type:
@@ -722,7 +796,7 @@ def _fetch(
         # would send a perfectly good page down the paywall path.
         tokens = resp.headers.get("x-markdown-tokens")
         note = f"text/markdown ({tokens} tokens)" if tokens else "text/markdown"
-        return Fetched(text=resp.text, source="live", note=note)
+        return Fetched(text=resp.text, source="live", note=note, title=_html_title(resp.text))
     if "application/pdf" in content_type or httpx.URL(url).path.lower().endswith(
         ".pdf"
     ):
@@ -735,4 +809,4 @@ def _fetch(
         return _rescue(url, date, dead=False, why="the live page had no extractable content")
     if _walled(text):  # 200 with a captcha (Bloomberg: "let us know you're not a robot")
         return _rescue(url, date, dead=False, why="the live page is a bot check")
-    return Fetched(text=text, source="live")
+    return Fetched(text=text, source="live", title=_html_title(resp.text))

@@ -13,6 +13,7 @@ Run `ko doctor`. It reports, per tool, which keys and binaries it needs and whet
 - **`--json` for structure.** Most read commands take it. The shape is a JSON array of objects unless the command's `--help` says otherwise. Exceptions: `ko tv --json` is `{top, matches}`, `ko hn item --json` is `{story, comments}`, `ko papers get --json` and `ko hf info --json` are single objects, and `ko gsheets get --json` is a 2D array.
   - Under `--json`, **errors are a JSON object on stderr**: `{"error": "...", "code": "..."}`, plus `"fix": "<command>"` when one command resolves it (e.g. `ko google auth sfl`). `code` is a coarse label (`auth`, `network`, `usage`, `not_found`, `error`). In text mode the fix reads "— run `<command>`".
   - Under `--json`, **empty results are `[]` on stdout** (plus a note on stderr), so a downstream `jq` never chokes.
+  - `ko fetch --json` keeps one row per URL. A failed row has `code`: `blocked`, `not_found`, `network`, `not_public`, `timeout` or `error`. Use `--live-only` for a privately shared link, and `--timeout` to cap a URL.
 - **A command that writes a file prints only that file's path to stdout**, so it composes: `ko gmail draft new … -a "$(ko pdf status.md)"`. Notes about the render go to stderr.
 
 ## Exit codes

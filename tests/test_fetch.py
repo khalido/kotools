@@ -327,6 +327,7 @@ def test_fetch_guesses_page_dot_md(monkeypatch):
         pytest.param((200, "text/html", _MD), id="html-type"),
         pytest.param((200, "text/plain", "<!DOCTYPE html><html>" + "x" * 900), id="html-shell"),
         pytest.param((200, "text/markdown", "# Page Not Found\n\n" + "Sorry. " * 20), id="soft-404"),
+        pytest.param((200, "text/plain", "A summary, not the page. " * 5), id="too-short"),
     ],
 )
 def test_fetch_ignores_a_bad_markdown_answer(monkeypatch, reply):
@@ -353,6 +354,132 @@ def test_fetch_follows_a_named_source_on_another_host_but_not_another_scheme(mon
     asked = _site(monkeypatch, {_DOC: (200, "text/html", head.format("file:///etc/passwd") + body)})
     assert "A long enough paragraph" in fetch.fetch(_DOC, fresh=True).text
     assert asked == [_DOC]
+
+
+def _fetch_json(args: list[str]) -> tuple[int, list[dict]]:
+    r = runner.invoke(app, ["fetch", "--json", "--fresh", *args])
+    return r.exit_code, json.loads(r.stdout.splitlines()[0])
+
+
+@pytest.mark.parametrize(
+    "status, code", [(404, "not_found"), (410, "not_found"), (403, "blocked"), (503, "blocked")]
+)
+def test_failed_fetch_names_why_and_live_only_asks_nobody_else(monkeypatch, status, code):
+    monkeypatch.setattr(fetch, "_live_only", False)
+    asked = _site(monkeypatch, {_DOC: (status, "text/html", "<html>no</html>")})
+    exit_code, rows = _fetch_json(["--live-only", _DOC])
+    assert exit_code == 1
+    assert rows[0]["code"] == code
+    assert asked == [_DOC]  # no Exa, archive or browser: the URL stayed with its own site
+    assert "no fallback" not in rows[0]["error"]
+
+
+def test_unreachable_is_a_network_code(monkeypatch):
+    monkeypatch.setattr(fetch, "_live_only", False)
+
+    def down(url, **kw):
+        raise httpx.ConnectError("no route")
+
+    monkeypatch.setattr(fetch.httpx, "get", down)
+    _, rows = _fetch_json(["--live-only", _DOC])
+    assert rows[0]["code"] == "network"
+
+
+def test_live_only_skips_reddit_mirrors(monkeypatch):
+    monkeypatch.setattr(fetch, "_live_only", False)
+    url = "https://www.reddit.com/r/python/comments/abc123/x/"
+    asked = _site(monkeypatch, {url: (403, "text/html", "<html>no</html>")})
+    _, rows = _fetch_json(["--live-only", url])
+    assert asked == [url] and rows[0]["code"] == "blocked"
+
+
+def test_live_only_refuses_the_archives():
+    r = runner.invoke(app, ["fetch", "--live-only", "--archive", _DOC])
+    assert r.exit_code == 2
+
+
+def test_fetch_json_has_the_page_title(monkeypatch):
+    html = _page("").replace("<html>", "<html><head><title>The &amp; Guide\n | Site</title></head>")
+    _site(monkeypatch, {_DOC: (200, "text/html", html)})
+    _, rows = _fetch_json([_DOC])
+    assert rows[0]["title"] == "The & Guide | Site"
+
+
+@pytest.mark.parametrize(
+    "text, title",
+    [
+        ('---\ndescription: x\ntitle: "From YAML"\n---\n# Heading', "From YAML"),
+        ("intro\n\n## [Linked](https://x.dev#a) heading\n", "Linked heading"),
+        ("no heading here", ""),
+    ],
+)
+def test_text_title(text, title):
+    assert fetch._text_title(text) == title
+
+
+def test_timeout_is_its_own_code_and_covers_the_whole_url(monkeypatch):
+    import threading
+
+    release = threading.Event()
+    monkeypatch.setattr(fetch, "fetch", lambda url, **kw: release.wait(5))
+    with pytest.raises(fetch.FetchError) as e:
+        fetch.fetch_within(0.05, _DOC)
+    release.set()
+    assert e.value.code == "timeout"
+
+
+def test_fetch_within_returns_the_result_and_raises_the_failure(monkeypatch):
+    ok = fetch.Fetched(text="hi", source="live")
+    monkeypatch.setattr(fetch, "fetch", lambda url, **kw: ok)
+    assert fetch.fetch_within(5, _DOC) is ok
+
+    def fail(url, **kw):
+        raise fetch.FetchError("gone", "not_found")
+
+    monkeypatch.setattr(fetch, "fetch", fail)
+    with pytest.raises(fetch.FetchError):
+        fetch.fetch_within(5, _DOC)
+
+
+def test_live_only_does_not_serve_a_cached_archive_copy(monkeypatch):
+    monkeypatch.setattr(fetch, "_live_only", False)
+    copy = fetch.Fetched(text="from an archive", source="wayback")
+    monkeypatch.setattr(fetch, "_fetch", lambda *a, **k: copy)
+    assert fetch.fetch(_DOC).source == "wayback"
+    monkeypatch.setattr(fetch, "_live_only", True)
+    live = fetch.Fetched(text="from the site", source="live")
+    monkeypatch.setattr(fetch, "_fetch", lambda *a, **k: live)
+    assert fetch.fetch(_DOC).source == "live"
+
+
+def test_live_only_keeps_a_scan_off_the_ocr_model(monkeypatch, tmp_path):
+    asked = []
+    monkeypatch.setattr(fetch.doc_mod, "parse", lambda path, ocr=None: asked.append(ocr) or "")
+    monkeypatch.setattr(fetch, "_live_only", True)
+    with pytest.raises(fetch.FetchError) as e:
+        fetch._pdf(b"%PDF", "https://x.dev/scan.pdf", save=False)
+    assert asked == [False] and e.value.code == "blocked"
+
+
+def test_a_private_markdown_link_costs_the_link_not_the_page(monkeypatch):
+    head = '<html><head><link rel="alternate" type="text/markdown" href="http://127.0.0.1/x.md"></head>'
+    page = httpx.Response(
+        200, html=head + _page("").removeprefix("<html>"), request=httpx.Request("GET", _DOC)
+    )
+
+    def get(url, **kw):
+        if url == _DOC:
+            return page
+        raise fetch.NotPublic("127.0.0.1 is a local or private address")
+
+    monkeypatch.setattr(fetch.httpx, "get", get)
+    assert "A long enough paragraph" in fetch.fetch(_DOC, fresh=True).text
+
+
+def test_titles_ignore_an_svg_title_and_a_later_frontmatter_block():
+    assert fetch._html_title("<head><title>Real</title></head><svg><title>Icon</title></svg>") == "Real"
+    assert fetch._html_title("<head></head><svg><title>Icon</title></svg>") == ""
+    assert fetch._text_title("---\nfoo: 1\n---\nx\n---\ntitle: Z\n---") == ""
 
 
 def test_extract_html_to_markdown():
@@ -529,8 +656,8 @@ def test_cli_fetch_json_keeps_order_and_reports_failures(monkeypatch):
     r = CliRunner().invoke(app, ["fetch", "https://a.com", "https://bad.com", "--json"])
     assert r.exit_code == 0, r.output
     rows = json.loads(r.stdout)
-    assert rows[0] == {"url": "https://a.com", "source": "live", "tokens": 10, "note": "", "text": "x" * 40}
-    assert rows[1] == {"url": "https://bad.com", "error": "unreachable"}
+    assert rows[0] == {"url": "https://a.com", "title": "", "source": "live", "tokens": 10, "note": "", "text": "x" * 40}
+    assert rows[1] == {"url": "https://bad.com", "error": "unreachable", "code": "error"}
 
 
 _THREAD = (
@@ -557,7 +684,7 @@ def test_bot_wall_is_not_a_live_page(monkeypatch):
     )
     seen = {}
 
-    def fake_rescue(url, date, *, dead, why):
+    def fake_rescue(url, date, *, dead, why, code="blocked"):
         seen.update(dead=dead, why=why)
         return fetch.Fetched(text="the article", source="browser")
 
@@ -574,7 +701,7 @@ def test_fetch_json_is_an_array_even_when_every_url_fails(monkeypatch):
     monkeypatch.setattr(fetch, "fetch", boom)
     r = runner.invoke(app, ["fetch", "https://a.example", "--json"])
     assert r.exit_code == 1
-    assert json.loads(r.stdout) == [{"url": "https://a.example", "error": "dead"}]
+    assert json.loads(r.stdout) == [{"url": "https://a.example", "error": "dead", "code": "error"}]
 
 
 @pytest.fixture
