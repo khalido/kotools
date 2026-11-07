@@ -90,12 +90,17 @@ uv tool install --editable /path/to/kotools   # or: uvx --from /path/to/kotools 
 
 Keys come from environment variables or a `[keys]` table in `~/.config/ko/config.toml`; env wins. `ko doctor` shows where each key resolved from. Most of ko needs no key.
 
+Model calls use two providers, because pydantic-ai can't reach decision models on the Vercel AI Gateway yet:
+
+- **Vercel AI Gateway** runs everything except Jev. With only this key, `ko decide` needs a chat model: `ko decide "<question>" -m vercel:<id>`.
+- **OpenRouter** runs Jev for `ko decide`. With only this key, set the `[llm]` tiers to `openrouter:<id>` for `ko llm` and `ko ai`. `ko doc` OCR and `ko yt -s` still default to the gateway.
+
 | Env var | Used by | Paid? | Notes |
 |---|---|---|---|
 | `VERCEL_AI_GATEWAY_API_KEY` | `ko llm`, `ko ai`, agents, `ko sum`, `ko brief`, `ko yt -s`, `ko doc` OCR | 💰 | [Vercel AI Gateway](https://vercel.com/docs/ai-gateway): one prepaid pool, any model (`vercel ai-gateway api-keys create`). Tiers by price: basic = deepseek-v4.1-flash (`ko llm`, `ko ai`, `ko brief`), medium = gpt-6.1-terra, smart = kimi-k3.1-pro (research). Tested models and their host order live in `src/ko/models.py`. Override a tier in `[llm]`, or `-m` per run. |
 | `EXA_API_KEY` | `ko exa`, agents | 💰 | $7 per 1k searches (contents for 10 results included); contents alone $1 per 1k pages. [exa.ai](https://exa.ai) |
 | `X_BEARER_TOKEN` | `ko x` | 💰 | X API v2 bearer token. Pay-per-use: prepaid credits, ~$0.005 per post read. [developer.x.com](https://developer.x.com) |
-| `OPENROUTER_API_KEY` | `ko decide` (Jev) | 💰 | Jev's endpoint is only on OpenRouter. |
+| `OPENROUTER_API_KEY` | `ko decide` (Jev) | 💰 | [OpenRouter](https://openrouter.ai/keys). `TYPESAFE_API_KEY` goes direct to TypeSafe instead. |
 | `GEMINI_API_KEY` | `ko doc --deep --describe`, `-m google:…` | 💰 | Direct Gemini on a paid project, so Google doesn't train on what's sent. |
 | `GEMINI_FREE_API_KEY` | `ko yt -s` (optional) | free | A key from an AI Studio project without billing. When set, `-s` tries Google's free tier first and falls back to the gateway on 503/429. Free-tier content may be used by Google, so ko sends it public video only. Never name it `GEMINI_API_KEY`: Google's SDK reads that automatically. |
 | `GOOGLE_CLOUD_API_KEY` | `ko yt info`, `ko yt channel` | free | One Cloud API key for public Google data (YouTube Data API). |

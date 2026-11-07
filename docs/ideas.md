@@ -108,6 +108,19 @@ The sweep that filled refs/CLAUDE.md (19 missing + 2 stub entries) doubled as an
 - [ ] **`ko scholar`** — **OpenAlex REST** (250M works, free, no key) for breadth + **semanticscholar** PyPI for TLDRs/citation graph. Partially covered by `ko hf` for AI papers; still the pick for citation graphs / non-AI fields.
 - [ ] Later: `ko clip`, `ko note`, `ko standup`, `ko schema`, `ko embed`.
 
+## More use of Jev (KO, 2026-11-07, not built)
+
+- **`ko decide` per row.** `ko hn top --json | ko decide "worth reading?" --each`. Keep the flag explicit rather than detecting a JSON array: a question can be about the whole blob, and rows cost N calls and change the output's shape. A piped array without the flag can note on stderr that it was judged whole.
+- **`ko brief` email triage.** P(needs action) per email, sorted in code. KO is thinking about it.
+- **"Has KO decided this?"** Over WORKLOG, CLAUDE.md files, dotfiles and ops. More an agent search than a decision model: find the passages, then maybe one decision over them. Later.
+- **`ko ai` tier per step** (`SelectModel`). Left out for now to keep things simple.
+
+Route: `ko` reaches Jev through pydantic-ai's `TypeSafeModel`, on OpenRouter or `TYPESAFE_API_KEY`. The AI Gateway has it (`typesafe-ai/jev-1.14.0`, $0.042 per 1M input) only at `/v3/ai/decision-model`, which only the AI SDK speaks; `vercel:` answers "a decision model, not a language model" and there is no `/v1/systemone` (tried 2026-11-07). Switch when pydantic-ai can reach it. Watch [#8552](https://github.com/pydantic/pydantic-ai/issues/8552), the OpenRouter equivalent.
+
+Re-check at each pydantic-ai upgrade: `ko llm -m vercel:typesafe-ai/jev-1.14.0 "hi"` (a 400 today), and whether pydantic-ai's decision docs list the gateway. If it works, `ko decide` moves to the gateway and one key runs everything.
+
+One provider isn't automatic yet (tried 2026-11-07, each key alone in an empty config). Gateway only: `ko llm` runs, `ko decide` stops and asks for OpenRouter, `ko decide -m vercel:<id>` runs on a chat model. OpenRouter only: `ko decide` runs, `ko llm` stops and asks for the gateway, and `ko llm` and `ko ai` run once `[llm] basic` is `openrouter:<id>`. Possible fix: when only OpenRouter is set, default the tiers to it, and when only the gateway is set, send `ko decide` to a chat model with a note that the probabilities aren't Jev's.
+
 ## Agent steering (KO, 2026-11-07, not built)
 
 Beyond the wrap-up warning near the request limit: a steering message after N tool calls ("you've made 15 calls: answer now or say what's missing"), or when an agent repeats itself. Use pydantic-ai's own `ctx.enqueue` in a capability, which works on any model. The harness has `SystemReminders` and `DetectLoops` for this; both are 0.x, and the harness is only a dev dependency today. Not provider-native steering ([pydantic-ai #8163](https://github.com/pydantic/pydantic-ai/issues/8163), OpenAI Responses WebSocket only).

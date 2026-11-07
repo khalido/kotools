@@ -13,28 +13,59 @@ Cut a release with the repo's `/release` skill.
 
 ## [Unreleased]
 
+## [2026.11.7] - 2026-11-07
+
+Model calls move to the Vercel AI Gateway, `ko doc` OCRs scans with a spend stop, and YouTube, Drive, PDF, decision model and package lookups arrive. The PyPI release 2026.7.27 crashed on startup; this one fixes it.
+
 ### Added
-- `ko fetch --public-only`, for a URL you didn't choose (a model, a web page): refuses local and
-  private addresses on every redirect, including a name that resolves to one, and skips the browser
-  fallback and the cache, and saves no PDF.
-- `ko drive ls|pull|push` — mirror a Drive folder into a local dir and push edits back in place
-  (same file id, sharing kept). A `.ko-drive.json` manifest makes both-sides-changed a refused
-  conflict rather than a silent clobber; nothing is ever deleted on either side.
-
-- `ko <google group> accounts` and `ko doctor` now show each account's signed-in address and
-  what its grant can do (read-only vs read+write per API, stale grants), `gh auth status` style.
-
-- A command that finds no usable Google token (read-only grant on a write, stale or missing
-  token) fails in one line naming the fix when there is no terminal, instead of hanging on a
-  browser consent nobody can click. With a terminal it says why before opening the browser.
-
-- `gdocs push`: a missing file or empty Markdown is a usage error (exit 2) instead of a traceback
-  or a silently created blank Doc; a Sheet/Slides id as TARGET says "isn't a Google Doc".
+- `ko doc` reads scanned pages: pages that look image-based go to DeepSeek v4.1 Flash on the gateway. A job over 50 OCR pages or an estimated $0.25 at the high end stops with its cost (exit 2); `--yes` spends it (`[ocr] max_pages`, `max_usd`). `-e vision` (Apple, free) and `-e tesseract` are local, with no stop.
+- `ko doc` also gains `<!-- page N -->` markers, `--md`, `--json`, `--deep` (docling for multi-column layouts and figures, `--describe` for Gemini captions), and reads `.docx` directly, no LibreOffice.
+- `ko ocr serve`: liteparse's OCR server on 127.0.0.1:8828 for other projects (`--ocr-server-url`).
+- `ko fetch` uses a page's own markdown version when it has one: the `<link rel="alternate" type="text/markdown">` it names, else `<page>.md`. Each answer is checked, and a bad one falls back to extraction. One extra request per page; the `<page>.md` guess is skipped for site roots, URLs with a query and file paths.
+- `ko fetch --public-only`, for a URL you didn't choose: refuses local and private addresses on every redirect, skips the browser fallback and the cache, saves no PDF.
+- `ko fetch --live-only`, for a link shared privately: if its site fails, the URL goes nowhere else, and a scanned PDF's pages aren't sent for OCR. `--timeout <s>` caps a URL, fallbacks included. `--json` rows gain `title`, and a failed row gains `code` (`blocked`, `not_found`, `network`, `not_public`, `timeout`, `error`).
+- `ko fetch` takes several URLs, has `--json` and a 1-hour cache (`--fresh` skips it), and tries the browser, Exa and the archives in parallel when a page is walled. Wikipedia pages use the plain-text extract (about 4x fewer tokens).
+- `ko sum <url|file>...` fetches and summarizes in one move, and reads stdin. `ko llm` gains `-f` (files, images, audio, video, URLs), `-x` (first code block) and `--schema <file.json>`.
+- `ko decide "<question>"`: a decision model (Jev) gives a typed answer with probabilities: yes/no, `--choice`, `--score`, `--tags`; `-m` compares any `ko llm` model. Wording guide: `ko prompt decide`. `ko judge` is an alias.
+- `ko models info <name>...` shows the newest matching gateway model: price, each host's speed, top HN threads. `ko pkg info <name>...` shows npm/PyPI latest and date (and what the 3-day floor picks), your locked version, advisories, stars, last push, release notes. Neither needs a key.
+- `ko yt` is now a group; `ko yt <url>` is still the transcript. `info <url>...` gives metadata plus a transcript excerpt (`--full`), `channel` lists new uploads (`--since`, Shorts left out unless `--shorts`). `info` and `channel` need `GOOGLE_CLOUD_API_KEY`.
+- `ko drive ls|pull|push`: mirror a Drive folder locally and push edits back in place (same file id, sharing kept). A `.ko-drive.json` manifest refuses both-sides-changed; nothing is deleted on either side.
+- `ko google auth|use|accounts|rename|logout`: one sign-in for every Google command, with short account tags and `-a <tag>` on each. `accounts` and `ko doctor` show each account's address and what its grant can do; a command with no usable token fails in one line when there is no terminal. `auth --service-account key.json` signs in a service account.
+- `ko cal` merges every signed-in account; `ko cal use` sets where `ko cal add` lands. `ko gmail` lists threads, and `draft reply` answers the latest message (`--msg` picks another).
+- `ko gmail draft new|reply --attach`, `--md` tables, `--json` fields `labels` and `list_unsubscribe`; `draft send` refuses a body that says "attached" with no attachment (`--yes` overrides). `ko gdocs replace --all-tabs`.
+- `ko pdf <file.md>` (alias `md-to-pdf`): markdown to a print-ready PDF with `--style note|report|bare`, `--letterhead`, `--brand`; prints only the path it wrote.
+- `ko tt add|done|search` (alias `ko todo`): create and complete TickTick tasks; bare `ko tt` lists your lists.
+- `ko exa search` gains `--type`, `--category`, `--max-age-hours`, `--highlights`. `ko prompt` gains `ko-cli`, `code-review` and `decide`, and resolves short names.
+- `ko doctor` prints the versions it runs (ko, Python, pydantic-ai, mcp and the MCP spec) and checks pango for `ko pdf`; `ko billing` shows the key's own spend cap. Every command logs one wide event (`ko logs`).
+- `ko publish` keeps a never-publish list at the top of the served folder's `.assetsignore` (dotfiles, `*.env`, keys, tooling, junk), refreshed on every deploy and preview. Your own lines below it win, so `!.env` publishes it.
 
 ### Changed
-- **Breaking:** the Drive OAuth scope widened from per-file `drive.file` to `drive.readonly` (read
-  token) / `drive` (write token). Existing tokens re-consent once (`ko gsheets auth`); `gdocs
-  get`/`comments` now work on docs ko didn't create.
+- **Breaking:** `ko` requires Python 3.15.
+- **Breaking:** every LLM call goes through the Vercel AI Gateway (`VERCEL_AI_GATEWAY_API_KEY`). Tiers are re-cut by price: basic `deepseek-v4.1-flash`, medium `gpt-6.1-terra`, smart `kimi-k3.1-pro`; the `ultra` tier is gone. `ko ai` runs on basic (`-m` for hard questions). `ko decide` keeps `OPENROUTER_API_KEY`; `ko llm -m jev` points to `ko decide`.
+- **Breaking:** `ko doc` no longer OCRs every page with Tesseract. It OCRs only pages that look image-based, through the paid DeepSeek default above; `--no-ocr` still skips OCR and the new `--ocr` forces every page. Over the spend stop, `ko fetch` and `ko llm -f` keep the text layers and note what wasn't read.
+- **Breaking:** the Drive OAuth scope widens from `drive.file` to `drive.readonly` (read token) / `drive` (write token). Existing tokens re-consent once; `ko gdocs get` and `comments` now work on docs ko didn't create. Sign-in also requests `youtube.readonly`; old tokens keep working.
+- **Breaking:** `ko hn search --since <months>` is now `-y/--years` (default 1, `-y 0` = all time). Search ranks title matches with 20+ points by points.
+- **Breaking:** `ko gdocs replace` and `append` on a multi-tab doc refuse without `--tab` (or `--all-tabs` on replace). `ko cal --json` times are in the configured timezone with an offset.
+- **Breaking:** `ko yt -s` now has Gemini watch the video (3.8 Flash on the gateway, about $0.09 to $0.15 each; cached, `--refresh`) instead of summarising the transcript, free tier first when `GEMINI_FREE_API_KEY` is set.
+- `ko mcp` runs on pydantic-ai's MCP client and probes the 2026-07-28 spec (`server/discover`, then `initialize`).
+- `ko publish` sites use Tailwind 4 and current CDN versions; `--pin` and `--name` edit `wrangler.jsonc` in place, keeping bindings and comments.
+
+### Fixed
+- The PyPI release 2026.7.27 crashed on startup: `uv tool install` ignores the lock and picked up `mcp` 2.x, which removed an import. `ko mcp` no longer imports it; CI now installs the built wheel before publishing and reinstalls from PyPI weekly.
+- `ko x search|list|user` failed before sending a request once `xdk` renamed `tweet_fields` to `post_fields`.
+- `ko ai` and `ko agent` are told to wrap up three requests before their request limit and answer from what they found; before, hitting the limit failed the run with nothing to show.
+- `ko fetch` keeps code blocks on docs pages (uv, Python and Svelte docs lost theirs). Extraction still loses code inside tab widgets on a site with no markdown version.
+- `ko publish`: Chart.js scripts now run in the `--md` shell, and `ko publish rm` validates names instead of deleting on an empty or path-like one.
+- `ko hn`: `-c` was ignored under the date window; comments follow HN's ranking, not oldest-first; `top --now` uses HN's real front-page order; `item` takes a pasted URL.
+- `ko cal` agenda starts at the start of today, shows 7 day headers for 7 days, and reads a one-day all-day event as one day.
+- Smaller fixes: `ko fetch` treats a bot-check page as a wall, rejects a reddit thread from the wrong subreddit and takes arXiv authors from the API; `ko doc` no longer stops silently at 1,000 pages and keeps `.docx` list numbers and field text; `ko llm` raises on cut-off output; `ko gdocs push` rejects a missing file or empty Markdown (exit 2); `ko pkg info` survives a repo deps.dev doesn't know; `--help` shows `[bracketed]` text.
+
+### Removed
+- **Breaking:** `ko gsheets|gdocs|cal|gmail auth` and `accounts`; use `ko google`.
+
+### Security
+- `ko publish` PIN gate: a correct PIN redirected to the path alone, dropping the query string, and a path of `//evil.com` made it an open redirect. It now sends a `303` to the full same-site URL (GitHub issue #3).
+- `ko publish` md and static sites could serve `.env` and `.git/config`; the never-publish list above keeps them out.
 
 ## [2026.7.27] - 2026-07-27
 
@@ -188,7 +219,8 @@ things, `--json` where structure matters.
 - **Agent contract** (AGENTS.md): stdout=data / stderr=notes, exit 0/1/2,
   `--json` errors as `{error, code}`, bare-arg shortcuts.
 
-[Unreleased]: https://github.com/khalido/kotools/compare/v2026.7.27...HEAD
+[Unreleased]: https://github.com/khalido/kotools/compare/v2026.11.7...HEAD
+[2026.11.7]: https://github.com/khalido/kotools/compare/v2026.7.27...v2026.11.7
 [2026.7.27]: https://github.com/khalido/kotools/compare/v2026.7.14...v2026.7.27
 [2026.7.14]: https://github.com/khalido/kotools/compare/v2026.7.9...v2026.7.14
 [2026.7.9]: https://github.com/khalido/kotools/releases/tag/v2026.7.9
