@@ -16,6 +16,8 @@ Deterministic routing, no LLM:
   away, unrouted (`_extract(httpx.get(url).text, url)`), just not the wiki default
 - PDF (by extension or content-type) → download to ~/Downloads (where I'd look
   for it), parse via liteparse; `save=False` parses from temp and discards
+- a page with a markdown version (its `<link rel="alternate">`, else `<page>.md`, the llms.txt
+  convention) → that, as the site wrote it; no standard exists, so every answer is checked
 - everything else → trafilatura extraction (best-in-benchmark boilerplate removal)
 - when the free live fetch fails, the rescuers run IN PARALLEL and the most-preferred
   one that succeeds wins (`_rescue`):
@@ -66,6 +68,7 @@ from . import yt as yt_mod
 from .dirs import cache_dir
 
 DOWNLOADS = Path.home() / "Downloads"
+_MARKDOWN_MIN_CHARS = 100
 UA = {"User-Agent": "kotools/0.1 (+https://github.com/khalido/kotools)"}
 # Bot walls (Cloudflare and friends) don't ask "are you Chrome" — they ask whether the
 # request carries the header bundle a click-initiated top-level GET sends, chiefly the
@@ -290,6 +293,48 @@ def _extract(html: str, url: str) -> str | None:
     return trafilatura.extract(
         tree, url=url, output_format="markdown", include_links=True, include_tables=True
     )
+
+
+def _markdown_url(html: str, page: httpx.URL) -> str | None:
+    """Where this page's markdown version should be: what the page says, else `<page>.md`."""
+    for tag in re.findall(r"<link\b[^>]*>", html, re.IGNORECASE):
+        low = tag.lower()
+        href = re.search(r"""href=["']([^"']+)""", tag, re.IGNORECASE)
+        if "text/markdown" in low and "alternate" in low and href:
+            url = page.join(href[1])  # may be another host: Hono names its GitHub source
+            return str(url) if url.scheme in ("http", "https") else None
+    path = page.path.rstrip("/")
+    if not path or page.query or "." in path.rsplit("/", 1)[-1]:
+        return None  # a site root, a search or a file: nothing to guess from
+    return str(page.copy_with(path=f"{path}.md", fragment=None))
+
+
+def _markdown_version(resp: httpx.Response, extracted: str | None) -> Fetched | None:
+    """The page's own markdown, if it has one. A guessed URL can answer 200 with the site's HTML
+    shell or a "Page Not Found", so it must be markdown, and not far shorter than the page."""
+    url = _markdown_url(resp.text, resp.url)
+    if not url:
+        return None
+    try:
+        md = httpx.get(
+            url,
+            headers={**BROWSER, "Accept": "text/markdown, text/plain;q=0.9"},
+            timeout=10,
+            follow_redirects=True,
+        )
+    except httpx.HTTPError:
+        return None
+    text = md.text.strip()
+    kind = md.headers.get("content-type", "").lower()
+    if (
+        md.status_code != 200
+        or not kind.startswith(("text/markdown", "text/x-markdown", "text/plain"))
+        or text[:15].lower().startswith(("<!doctype", "<html"))
+        or len(text) < max(_MARKDOWN_MIN_CHARS, len(extracted or "") // 4)
+        or re.search(r"^#\s.*\b(not found|404)\b", text[:200], re.IGNORECASE | re.MULTILINE)
+    ):
+        return None
+    return Fetched(text=text, source="live", note=f"the page's markdown version: {url}")
 
 
 def _wayback(url: str, date: str | None = None) -> Fetched:
@@ -646,8 +691,8 @@ def _fetch(
         # No `Accept: text/markdown` — we asked servers to content-negotiate markdown and
         # measured the result (2026-08-19): only 2 of 6 sites answer, and when they do it's
         # a whole-DOM dump, not an extraction (drive.com.au: 31k tokens of nav and icons vs
-        # trafilatura's 4.7k of just the review). Worth re-testing as the practice matures —
-        # more sites will serve genuinely useful markdown — but today trafilatura wins.
+        # trafilatura's 4.7k of just the review). Asking for it blind still risks that; a
+        # page that names its markdown version, or has `<page>.md`, is `_markdown_version`.
         resp = httpx.get(
             url,
             headers=BROWSER,
@@ -684,6 +729,8 @@ def _fetch(
         return _pdf(resp.content, url, save)
 
     text = _extract(resp.text, url)
+    if md := _markdown_version(resp, text):
+        return md
     if not text:  # 200 but empty → a paywall, or a page that renders client-side
         return _rescue(url, date, dead=False, why="the live page had no extractable content")
     if _walled(text):  # 200 with a captcha (Bloomberg: "let us know you're not a robot")

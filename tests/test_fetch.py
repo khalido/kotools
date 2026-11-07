@@ -160,6 +160,8 @@ def test_wikipedia_missing_extract_falls_through_to_generic(monkeypatch):
     calls = []
 
     def fake_get(url, **kw):
+        if url.endswith(".md"):
+            return httpx.Response(404, request=httpx.Request("GET", url))
         calls.append(url)
         if "api.php" in url:
             body = {"query": {"pages": {"-1": {"missing": True}}}}
@@ -224,6 +226,8 @@ def test_fetch_cache_reuses_then_fresh_refetches(monkeypatch):
     calls = []
 
     def fake_get(url, **kw):
+        if url.endswith(".md"):
+            return httpx.Response(404, request=httpx.Request("GET", url))
         calls.append(url)
         html = "<html><body><article><p>a page body long enough to extract.</p></article></body></html>"
         return httpx.Response(200, html=html, request=httpx.Request("GET", url))
@@ -273,6 +277,82 @@ def test_extract_survives_a_control_character_in_code():
 
 def test_extract_on_empty_html_is_none():
     assert fetch._extract("", "https://example.com/docs") is None
+
+
+def _site(monkeypatch, pages: dict[str, tuple[int, str, str]]) -> list[str]:
+    """A fake site: URL → (status, content type, body), with every request recorded."""
+    asked: list[str] = []
+
+    def get(url, **kw):
+        asked.append(str(url))
+        status, kind, body = pages.get(str(url), (404, "text/html", "<html>missing</html>"))
+        return httpx.Response(
+            status, headers={"content-type": kind}, text=body, request=httpx.Request("GET", str(url))
+        )
+
+    monkeypatch.setattr(fetch.httpx, "get", get)
+    return asked
+
+
+_DOC = "https://docs.example.com/guide"
+_MD = "---\ntitle: Guide\n---\n# Guide\n\n" + "Real documentation written as markdown. " * 20
+
+
+def test_fetch_prefers_the_markdown_version_a_page_names(monkeypatch):
+    link = '<html><head><link rel="alternate" type="text/markdown" href="/raw/guide.md"></head>'
+    asked = _site(
+        monkeypatch,
+        {
+            _DOC: (200, "text/html", link + _page("").removeprefix("<html>")),
+            "https://docs.example.com/raw/guide.md": (200, "text/markdown", _MD),
+        },
+    )
+    result = fetch.fetch(_DOC, fresh=True)
+    assert result.text == _MD.strip() and "markdown version" in result.note
+    assert f"{_DOC}.md" not in asked
+
+
+def test_fetch_guesses_page_dot_md(monkeypatch):
+    _site(
+        monkeypatch,
+        {_DOC: (200, "text/html", _page("")), f"{_DOC}.md": (200, "text/plain; charset=utf-8", _MD)},
+    )
+    assert fetch.fetch(_DOC, fresh=True).text == _MD.strip()
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        pytest.param((404, "text/markdown", _MD), id="error-status"),
+        pytest.param((200, "text/html", _MD), id="html-type"),
+        pytest.param((200, "text/plain", "<!DOCTYPE html><html>" + "x" * 900), id="html-shell"),
+        pytest.param((200, "text/markdown", "# Page Not Found\n\n" + "Sorry. " * 20), id="soft-404"),
+    ],
+)
+def test_fetch_ignores_a_bad_markdown_answer(monkeypatch, reply):
+    _site(monkeypatch, {_DOC: (200, "text/html", _page("")), f"{_DOC}.md": reply})
+    assert "A long enough paragraph" in fetch.fetch(_DOC, fresh=True).text
+
+
+@pytest.mark.parametrize(
+    "url",
+    ["https://example.com/", "https://example.com/search?q=x", "https://example.com/report.html"],
+)
+def test_fetch_does_not_guess_markdown_for_a_root_a_query_or_a_file(monkeypatch, url):
+    asked = _site(monkeypatch, {url: (200, "text/html", _page(""))})
+    fetch.fetch(url, fresh=True)
+    assert asked == [url]
+
+
+def test_fetch_follows_a_named_source_on_another_host_but_not_another_scheme(monkeypatch):
+    head = '<html><head><link rel="alternate" type="text/markdown" href="{}"></head>'
+    body = _page("").removeprefix("<html>")
+    raw = "https://raw.example.org/guide.md"
+    _site(monkeypatch, {_DOC: (200, "text/html", head.format(raw) + body), raw: (200, "text/plain", _MD)})
+    assert fetch.fetch(_DOC, fresh=True).text == _MD.strip()
+    asked = _site(monkeypatch, {_DOC: (200, "text/html", head.format("file:///etc/passwd") + body)})
+    assert "A long enough paragraph" in fetch.fetch(_DOC, fresh=True).text
+    assert asked == [_DOC]
 
 
 def test_extract_html_to_markdown():
@@ -372,6 +452,8 @@ def test_live_fetch_sends_the_navigation_header_bundle(monkeypatch):
     seen = {}
 
     def fake_get(url, **kw):
+        if url.endswith(".md"):
+            return httpx.Response(404, request=httpx.Request("GET", url))
         seen.update(kw.get("headers") or {})
         html = "<html><body><article><p>a page body long enough to extract.</p></article></body></html>"
         return httpx.Response(200, html=html, request=httpx.Request("GET", url))
