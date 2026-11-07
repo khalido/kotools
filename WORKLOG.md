@@ -8,6 +8,10 @@ Newest first. Big picture only — git commits have the detail; candidate ideas 
 
 **`ko fetch` uses a page's own markdown version.** No standard exists: llms.txt is a proposal, the rest are conventions. Of 13 docs pages on 2026-11-07, 5 name it with `<link rel="alternate" type="text/markdown">` (AI SDK, Hono, Cloudflare, Vercel, Anthropic) and 7 answer `<page>.md`. Order: the page's link, then the guess, then extraction. Still no blind `Accept: text/markdown`: August's test found whole-page dumps (31k tokens against 4.7k), and a link or `.md` file is the publisher's own text. A guessed URL can answer 200 with HTML or a "Page Not Found", so the type, the body, a "not found" heading and the length against the extracted page are all checked. Hono's link is to raw GitHub, so another host is allowed.
 
+**`ko fetch` for callers that aren't me** (Chota asked). `code` on a failed row, `title`, `--timeout`, and `--live-only`: `--public-only` only blocks private addresses, so a family chat's link would still reach Exa and archive.today when its site failed. Exit codes stay 0/1/2 per AGENTS.md; the JSON `code` is what to branch on. No `truncated`: ko doesn't cut text.
+
+**Agents wrap up before their request limit** (KO's push; same idea as Chota's `agent/loop.ts`). `UsageLimitExceeded` threw away the whole run. This is pydantic-ai's documented recipe (docs: "Wrapping up before the request limit"): a request-scoped warning from 3 requests out, which doesn't bust the prompt cache, and no tools on the last request. All four agents use it.
+
 **`ko judge` is now `ko decide`** (KO): it asks a decision model, and "judge" didn't say what it does. `judge` stays as a hidden alias because other projects mention it.
 
 **The published 2026.7.27 crashes on install.** It imported `streamablehttp_client` from `mcp`, which `mcp` 2.x removed, and `uv tool install` ignores the lock, so it picked up 2.x. A check at release time would not have caught this, so `install-check.yml` reinstalls from PyPI weekly and `publish.yml` installs the wheel before publishing, as the uv guide suggests.

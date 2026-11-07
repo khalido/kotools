@@ -23,6 +23,7 @@ _MODEL = config.setting("KO_AGENT_MODEL", "agents", "model", models.model_for("s
 agent = Agent(
     _MODEL,
     defer_model_check=True,  # the model (and its key) is resolved per run by _shared
+    capabilities=[_shared.wrap_up_near_limit],
     instructions=(
         "You are a research assistant. For a literature/state-of-the-art question, work like a "
         "researcher: start broad (papers_search across publishers, hf_search for ML), find 1-2 "

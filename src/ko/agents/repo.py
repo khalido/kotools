@@ -25,6 +25,7 @@ _MODEL = config.setting("KO_AGENT_MODEL", "agents", "model", models.model_for("b
 agent = Agent(
     _MODEL,
     defer_model_check=True,  # the model (and its key) is resolved per run by _shared
+    capabilities=[_shared.wrap_up_near_limit],
     instructions=(
         "You explore Ko's code folder to answer questions about how things are done. "
         "Layout: the root holds Ko's OWN and work repos (kotools, everx, thinker, ...); "

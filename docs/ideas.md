@@ -108,6 +108,10 @@ The sweep that filled refs/CLAUDE.md (19 missing + 2 stub entries) doubled as an
 - [ ] **`ko scholar`** — **OpenAlex REST** (250M works, free, no key) for breadth + **semanticscholar** PyPI for TLDRs/citation graph. Partially covered by `ko hf` for AI papers; still the pick for citation graphs / non-AI fields.
 - [ ] Later: `ko clip`, `ko note`, `ko standup`, `ko schema`, `ko embed`.
 
+## Agent steering (KO, 2026-11-07, not built)
+
+Beyond the wrap-up warning near the request limit: a steering message after N tool calls ("you've made 15 calls: answer now or say what's missing"), or when an agent repeats itself. Use pydantic-ai's own `ctx.enqueue` in a capability, which works on any model. The harness has `SystemReminders` and `DetectLoops` for this; both are 0.x, and the harness is only a dev dependency today. Not provider-native steering ([pydantic-ai #8163](https://github.com/pydantic/pydantic-ai/issues/8163), OpenAI Responses WebSocket only).
+
 ## Stubs (2026-10-14, researched, not built)
 
 - [ ] **`ko weather [place] [--days N] [--json]`** — one command, three backends, as KO's home repo does (`~/code/home/src/connectors/weather/`, `docs/weather-probe.md`). Open-Meteo (free, keyless, free geocoding, model data) for anywhere; BOM anonymous FTP via stdlib `ftplib` (`IDN10064.xml` Sydney forecast, `IDN60920.xml` NSW observations — the only *observed* source) for Sydney; Google Weather (`weather.googleapis.com/v1`, on `GOOGLE_CLOUD_API_KEY`, 10k free/month then billed — set a daily quota cap) only on `--source google`. Default place from `[weather]` in config, never IP-guessed. Every answer names its source and whether it's observed or modelled. Lessons to copy from home: flag odd units, never convert; don't pass Open-Meteo `models=bom_access_global` (all nulls).

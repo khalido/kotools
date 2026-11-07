@@ -12,10 +12,13 @@ takes effect — the Agent reads its default model at import, before the CLI run
 from __future__ import annotations
 
 import readline  # noqa: F401 — enables up-arrow history + line editing in repl
+from dataclasses import dataclass
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, SystemPromptPart
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.usage import UsageLimits
 from rich.console import Console
 from rich.live import Live
 from rich.markdown import Markdown
@@ -56,6 +59,38 @@ def _cost_note(messages: list, prior: int = 0) -> None:
     )
 
 
+def _requests_left(ctx) -> int | None:
+    limit = ctx.usage_limits.request_limit if ctx.usage_limits else None
+    return None if limit is None else limit - ctx.usage.requests
+
+
+@dataclass
+class _WrapUpNearLimit(AbstractCapability):
+    """pydantic-ai's "wrapping up before the request limit" recipe. A run that reaches its limit
+    raises, losing every tool call already paid for, so the model is told to finish in time, and its
+    tools go away on the last request. Request-scoped, so the warning doesn't bust the prompt cache."""
+
+    warn_at: int = 3
+
+    async def before_model_request(self, ctx, request_context):
+        left = _requests_left(ctx)
+        if left is not None and left <= self.warn_at:
+            ctx.enqueue(
+                SystemPromptPart(
+                    f"{left} model request(s) left in this run: give your final answer now from "
+                    "what you have found, and say plainly what you could not finish.",
+                    scope="request",
+                )
+            )
+        return request_context
+
+    async def prepare_tools(self, ctx, tool_defs):
+        return [] if _requests_left(ctx) == 1 else tool_defs
+
+
+wrap_up_near_limit = _WrapUpNearLimit()
+
+
 def _stream(
     agent: Agent, prompt: str, history: list, model: str | None = None, limits=None
 ) -> tuple[str, list]:
@@ -87,6 +122,7 @@ def run(
     `resume` continues a saved session (the prompt becomes its next turn) instead of
     starting fresh — so `ko a research "follow-up" -r <id>` works as a one-shot continuation.
     """
+    limits = limits or UsageLimits()  # the default's limit, but visible to wrap_up_near_limit
     session_id = resume or sessions.new_id()
     history = sessions.load(resume) if resume else []
     logs.add(agent=name, session=session_id, resumed=bool(resume))
@@ -116,6 +152,7 @@ def repl(
 
     `resume` = a session id to continue an earlier conversation.
     """
+    limits = limits or UsageLimits()
     name = name or banner
     if resume:
         session_id = resume

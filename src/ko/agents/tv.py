@@ -27,6 +27,7 @@ _taste_line = f"Ko's taste: {_TASTES}. " if _TASTES else ""
 agent = Agent(
     _MODEL,
     defer_model_check=True,  # the model (and its key) is resolved per run by _shared
+    capabilities=[_shared.wrap_up_near_limit],
     instructions=(
         "You help Ko pick something to watch tonight in Australia. "
         "Use tv_lookup for rating, overview, and AU streaming availability; use "
