@@ -14,4 +14,6 @@ jobs:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.3.0
       - run: uv build --no-sources
+      # Installs the wheel the way a user would, away from the project and its lock.
+      - run: uv run --isolated --no-project --with dist/*.whl ko --version
       - run: uv publish

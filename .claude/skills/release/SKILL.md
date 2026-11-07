@@ -124,15 +124,11 @@ NOTES
 **gh account**: `khalido` must be the active gh account (`gh auth status`; `gh auth
 switch -u khalido` if not) — a wrong account fails with a misleading "workflow scope
 may be required" error.
-**PyPI**: not wired yet. When the trusted-publisher GitHub Action lands (WORKLOG Open:
-tag-push OIDC, no long-lived tokens), the `--follow-tags` push above becomes the
-publish trigger and this skill needs no changes. Until then, publishing is manual and
-optional: `uv publish` (needs a token) — skip unless asked.
+**PyPI**: the `--follow-tags` push above is the publish trigger: `.github/workflows/publish.yml` builds, installs the wheel away from the project, then publishes by trusted publishing. Watch that run; if it fails, nothing reached PyPI. `install-check.yml` reinstalls from PyPI weekly, because `uv tool install` ignores the lock and a release can break later.
 
 ### 8. Confirm
 ```bash
 gh release view v2026.7.9 --json url,tagName -q '.url'
 uvx --from . ko --version   # the built package installs and reports the new version
 ```
-Report the release URL at wrap-up. (Once PyPI publishing exists, add:
-`uvx kotools@latest ko --version` after the index updates.)
+Report the release URL at wrap-up. Once the publish run finishes, check PyPI: `uvx --refresh-package kotools kotools --version`.

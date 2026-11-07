@@ -2,6 +2,16 @@
 
 Newest first. Big picture only — git commits have the detail; candidate ideas and decisions live in `docs/ideas.md`.
 
+## 2026-11-07 — MCP probe for the stateless spec, and PyPI install checks
+
+**`ko fetch` kept losing code blocks on docs pages.** trafilatura drops many highlighters' markup as link clutter or boilerplate, and `favor_recall` and `include_formatting` don't help. `_extract` now rebuilds each `<pre>` as a bare `<pre><code>` first, keeping line breaks. Fenced blocks on 14 real pages: uv docs 0 → 12, Python docs 14 → 83, Svelte 0 → 24, React 6 → 9, the rest unchanged. Still 0 on Cloudflare docs and AI SDK docs: their code sits in tab widgets. Clearing the wrappers' attributes fixed AI SDK but not Cloudflare, so it isn't in.
+
+**The published 2026.7.27 crashes on install.** It imported `streamablehttp_client` from `mcp`, which `mcp` 2.x removed, and `uv tool install` ignores the lock, so it picked up 2.x. A check at release time would not have caught this, so `install-check.yml` reinstalls from PyPI weekly and `publish.yml` installs the wheel before publishing, as the uv guide suggests.
+
+**MCP spec 2026-07-28 removes `initialize`.** The raw diagnostic POST now tries `server/discover`, then `initialize`, as the spec's compatibility section says. Tried on 2026-11-07: DeepWiki and Cloudflare docs answer on the new spec, Exa on 2025-11-25, GitHub and Linear with 401. Both modern servers still accept `initialize`, so this is ahead of need; I found no modern-only server to test against. The two versions are hard-coded so `ko` needn't import the SDK, and a test fails when they go stale. `ko doctor` now prints the versions it is running.
+
+**Library scan (HN, `ko pkg`): nothing to adopt.** `ty` 0.0.99 gives 129 diagnostics on `src`, mostly from untyped calls; try it again at 1.0. `prek`: we have no pre-commit config. LiteLLM's two PyPI compromises don't touch us, but `uv tool install` skips our 3-day floor.
+
 ## 2026-11-06 — `ko fetch --public-only`
 
 jaldi hands `ko fetch` URLs a model or a web page chose, and `ko` followed redirects anywhere: a public page could redirect into localhost or the LAN. The check sits in `socket.getaddrinfo`, not in a redirect loop, so one guard covers every `httpx` hop and mirror, and a name that changes its answer, since the answer checked is the one connected to. Refused: `postman-echo.com/redirect-to?url=http://127.0.0.1:9/` and `127.0.0.1.nip.io`, live. Same output on a blog, Wikipedia, arXiv, YouTube and a PDF. Subprocesses are outside it: the browser rung is off under the flag, and `arxiv2md` and `yt-dlp` only get their own hosts. `NotPublic` is deliberately not an `OSError` or `httpx` error, so the rescue ladder does not treat a refusal as a dead link. `arxiv.org/abs` took 103 to 135 s here with or without the flag, longer than jaldi's 60 s limit.
