@@ -112,6 +112,60 @@ def test_probe_keeps_json_error_snippet(monkeypatch):
     assert "503" in result
 
 
+class _Reply:
+    def __init__(self, status: int, text: str):
+        self.status_code, self.text, self.headers = status, text, {"content-type": "application/json"}
+
+
+def _serve(monkeypatch, replies: dict[str, _Reply]) -> list[dict]:
+    """httpx.post answering by JSON-RPC method; returns the list of calls it saw."""
+    import httpx2 as httpx
+
+    seen: list[dict] = []
+
+    def post(url, json, headers, timeout):
+        seen.append({"method": json["method"], "headers": headers})
+        return replies[json["method"]]
+
+    monkeypatch.setattr(httpx, "post", post)
+    return seen
+
+
+def test_probe_stops_at_a_modern_server(monkeypatch):
+    found = '{"result": {"supportedVersions": ["2026-07-28"]}}'
+    seen = _serve(monkeypatch, {"server/discover": _Reply(200, found)})
+    assert "supportedVersions" in mcp_client._probe("http://x/mcp", {})
+    assert [c["method"] for c in seen] == ["server/discover"]
+    assert seen[0]["headers"]["Mcp-Method"] == "server/discover"
+    assert seen[0]["headers"]["MCP-Protocol-Version"] == mcp_client._MODERN
+
+
+def test_probe_falls_back_to_initialize_on_an_older_server(monkeypatch):
+    seen = _serve(
+        monkeypatch,
+        {
+            "server/discover": _Reply(200, '{"error": {"code": -32601, "message": "not found"}}'),
+            "initialize": _Reply(200, '{"result": {"protocolVersion": "2025-11-25"}}'),
+        },
+    )
+    assert "2025-11-25" in mcp_client._probe("http://x/mcp", {})
+    assert [c["method"] for c in seen] == ["server/discover", "initialize"]
+    assert "Mcp-Method" not in seen[1]["headers"]
+
+
+def test_probe_reports_a_refusal_without_retrying(monkeypatch):
+    seen = _serve(monkeypatch, {"server/discover": _Reply(401, '{"error": "login first"}')})
+    assert "HTTP 401" in mcp_client._probe("http://x/mcp", {})
+    assert len(seen) == 1
+
+
+def test_probe_versions_match_the_installed_sdk():
+    """The probe hard-codes these so ko needn't import the SDK; this says when they go stale."""
+    version = pytest.importorskip("mcp_types.version")
+    assert mcp_client._MODERN == version.LATEST_MODERN_VERSION
+    assert mcp_client._HANDSHAKE == version.LATEST_HANDSHAKE_VERSION
+
+
 def test_load_and_resolve_by_name_with_header_override(monkeypatch, tmp_path):
     monkeypatch.setenv("KO_CONFIG_DIR", str(tmp_path))
     (tmp_path / "mcp.json").write_text(

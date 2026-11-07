@@ -31,7 +31,10 @@ if TYPE_CHECKING:
 
 _TIMEOUT = 30.0  # seconds, per request
 _INIT_TIMEOUT = 120.0  # pydantic-ai's default is 5s; a first `uvx`/`npx -y` run downloads first
-_PROTOCOL = "2025-06-18"  # only for the raw diagnostic probe
+# Only for the raw diagnostic POST; real connections negotiate inside pydantic-ai's client.
+_MODERN = "2026-07-28"  # stateless: no handshake, every request carries its version
+_HANDSHAKE = "2025-11-25"  # the newest version that still has `initialize`
+_CLIENT = {"name": "ko", "version": "0"}
 
 
 class MCPTestError(RuntimeError):
@@ -97,19 +100,32 @@ def decode_jwt_claims(token: str) -> dict | None:
         return None
 
 
+def _first_contact(url: str, headers: dict[str, str]) -> httpx.Response:
+    """Raw POST the way the spec's backward compatibility section says: `server/discover`, then
+    `initialize` unless the server has already answered as a modern one or refused us outright."""
+    h = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream", **headers}
+    prefix = "io.modelcontextprotocol"
+    meta = {f"{prefix}/protocolVersion": _MODERN, f"{prefix}/clientInfo": _CLIENT, f"{prefix}/clientCapabilities": {}}
+    r = httpx.post(
+        url,
+        json={"jsonrpc": "2.0", "id": 1, "method": "server/discover", "params": {"_meta": meta}},
+        headers={**h, "MCP-Protocol-Version": _MODERN, "Mcp-Method": "server/discover"},
+        timeout=8.0,
+    )
+    if r.status_code in (401, 403) or '"supportedVersions"' in r.text or "-32022" in r.text:
+        return r
+    params = {"protocolVersion": _HANDSHAKE, "capabilities": {}, "clientInfo": _CLIENT}
+    return httpx.post(
+        url, json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": params}, headers=h, timeout=8.0
+    )
+
+
 def _probe(url: str, headers: dict[str, str]) -> str:
-    """Raw initialize POST → a human diagnostic line. On failure surfaces the WWW-Authenticate header
+    """Raw first contact → a human diagnostic line. On failure surfaces the WWW-Authenticate header
     (the server saying *why*) and decodes a passed Bearer token's claims (aud/iss/scope/exp — a wrong
     audience is otherwise invisible)."""
-    body = {
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "initialize",
-        "params": {"protocolVersion": _PROTOCOL, "capabilities": {}, "clientInfo": {"name": "ko", "version": "0"}},
-    }
-    h = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream", **headers}
     try:
-        r = httpx.post(url, json=body, headers=h, timeout=8.0)
+        r = _first_contact(url, headers)
     except httpx.HTTPError as e:
         return f"could not reach {url}: {e}"
     ct = r.headers.get("content-type", "")
@@ -166,14 +182,8 @@ def auth_info(url: str, headers: dict | None = None) -> dict:
     public part is well-formed. Spec-aware: RFC 9728 (protected-resource) + RFC 8414 (auth-server)."""
     headers = headers or {}
     out: dict = {"url": url, "problems": [], "auth_servers": []}
-    init = {
-        "jsonrpc": "2.0", "id": 1, "method": "initialize",
-        "params": {"protocolVersion": _PROTOCOL, "capabilities": {}, "clientInfo": {"name": "ko", "version": "0"}},
-    }
     try:
-        r = httpx.post(url, json=init, headers={
-            "Content-Type": "application/json", "Accept": "application/json, text/event-stream", **headers,
-        }, timeout=8.0)
+        r = _first_contact(url, headers)
     except httpx.HTTPError as e:
         out["problems"].append(f"could not reach {url}: {e}")
         return out

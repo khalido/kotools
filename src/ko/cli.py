@@ -79,6 +79,25 @@ def _ocr_engine() -> str:
     return ocr.engine().removeprefix("vercel:")
 
 
+def _versions_line() -> str:
+    """What this install actually runs: a uv tool env can drift from the lock and the last tag."""
+    import platform
+    from importlib.metadata import PackageNotFoundError, version
+
+    from .mcp_client import _MODERN
+
+    def installed(dist: str) -> str:
+        try:
+            return version(dist)
+        except PackageNotFoundError:
+            return "not installed"
+
+    return (
+        f"ko {installed('kotools')} · Python {platform.python_version()} · "
+        f"pydantic-ai {installed('pydantic-ai-slim')} · mcp {installed('mcp')} (MCP spec {_MODERN})"
+    )
+
+
 @app.command("doctor")
 def doctor(
     as_json: bool = typer.Option(
@@ -322,6 +341,7 @@ def doctor(
     console.print(
         f"[dim]dirs: config={dirs.config_dir()} · state={dirs.state_dir()} · cache={dirs.cache_dir()}[/dim]"
     )
+    console.print(f"[dim]versions: {_versions_line()}[/dim]", highlight=False)
     if err := config.config_error():
         console.print(f"[red]⚠ config.toml is malformed — keys/settings above are IGNORED: {err}[/red]")
     elif not (dirs.config_dir() / "config.toml").exists():
