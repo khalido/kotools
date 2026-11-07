@@ -1,10 +1,10 @@
 ---
-name: judge
-description: How to word a `ko judge` question so Jev answers what you meant
+name: decide
+description: How to word a `ko decide` question so Jev answers what you meant
 ---
-# Typed decisions with `ko judge`
+# Typed decisions with `ko decide`
 
-`ko judge` asks one question about some text and returns a typed answer with probabilities — not prose. The default model is **Jev** (TypeSafe's decision model, through OpenRouter on your existing key): about 100 ms and well under a cent a call. The question is the argument; the text being judged comes from stdin or `-f` (a file, URL or YouTube link, read like `ko llm -f`).
+`ko decide` asks one question about some text and returns a typed answer with probabilities — not prose. The default model is **Jev** (TypeSafe's decision model, through OpenRouter on your existing key): about 100 ms and well under a cent a call. The question is the argument; the text being judged comes from stdin or `-f` (a file, URL or YouTube link, read like `ko llm -f`).
 
 Docs: https://docs.typesafe.ai (start with *How to build with TypeSafe*), and Jev's known weak spots: https://docs.typesafe.ai/model-jaggedness/jev-1.13
 

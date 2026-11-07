@@ -175,7 +175,7 @@ def llm_cmd(
     `--schema extract.json` returns structured JSON instead of prose: the file is a JSON
     Schema for the response (`{"type": "object", ...}`), printed compact to stdout."""
     if llm_mod.is_decision_model(model) and schema is None:
-        _die(f"{model} answers typed questions, not prose: use `ko judge` (or give it a --schema)", code="usage")
+        _die(f"{model} answers typed questions, not prose: use `ko decide` (or give it a --schema)", code="usage")
     schema_obj = None
     if schema is not None:
         try:  # bad JSON / not an object schema is a usage error, before we spend a call
@@ -230,11 +230,12 @@ def _inputs(files: list[str] | None) -> tuple[str | None, list]:
     return "\n\n".join(p for p in parts if p.strip()) or None, attachments
 
 
-@app.command("judge")
-def judge_cmd(
-    question: str = typer.Argument(..., help="the question; piped stdin or -f is what gets judged"),
+@app.command("judge", hidden=True)  # the name it shipped to my other projects under
+@app.command("decide")
+def decide_cmd(
+    question: str = typer.Argument(..., help="the question; piped stdin or -f is what it's about"),
     files: list[str] = typer.Option(
-        None, "--file", "-f", help="judge a file or URL, read like `ko llm -f` (repeatable)"
+        None, "--file", "-f", help="a file or URL to decide on, read like `ko llm -f` (repeatable)"
     ),
     choice: str = typer.Option(None, "--choice", help="pick one: `a,b,c`, or `a=what a means,b` (no commas inside a meaning)"),
     score: str = typer.Option(None, "--score", help="ordered levels, lowest first: `skip,skim,read=read it properly`"),
@@ -248,8 +249,8 @@ def judge_cmd(
     ),
     as_json: bool = typer.Option(False, "--json", help="emit the full answer: probabilities, confidence, model"),
 ) -> None:
-    """Typed answer to one question, with probabilities: `ko judge "is this a paywall page?" -f page.md`.
-    How to word questions: `ko prompt judge`."""
+    """A decision model's typed answer, with probabilities: `ko decide "is this a paywall page?" -f page.md`.
+    How to word questions: `ko prompt decide`. Alias: `ko judge`."""
     try:  # bad options are a usage error, before we spend a call
         if sum(bool(x) for x in (choice, score, tags)) > 1:
             raise ValueError("--choice, --score and --tags are different kinds of question; pick one")
@@ -260,9 +261,9 @@ def judge_cmd(
         _die(str(e), as_json=as_json, code="usage")
     text, attachments = _inputs(files)
     if attachments:
-        _die("judge reads text: images/audio/video can't be the input", as_json=as_json, code="usage")
+        _die("decide reads text: images/audio/video can't be the input", as_json=as_json, code="usage")
     if not text:
-        _die("nothing to judge: pipe the text in or pass -f", as_json=as_json, code="usage")
+        _die("nothing to decide on: pipe the text in or pass -f", as_json=as_json, code="usage")
     try:
         d = llm_mod.decide(question, text, model=model, choice=choice_opts, score=score_opts, tags=tag_opts)
     except Exception as e:

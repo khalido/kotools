@@ -419,12 +419,12 @@ def test_gateway_cost_estimate_from_cached_catalog(monkeypatch, tmp_path):
 @pytest.mark.parametrize(
     ("args", "stdin", "msg"),
     [
-        (["judge", "q"], "", "nothing to judge"),
-        (["judge", "q", "--choice", "a,b", "--score", "x,y"], "t", "pick one"),
-        (["judge", "q", "--tags", "a", "--score", "x,y"], "t", "pick one"),
-        (["judge", "q", "--score", "only"], "t", "2 to 10"),
-        (["judge", "q", "--choice", "read=read it, take notes,skip"], "t", "single words"),
-        (["llm", "-m", "jev", "q"], "t", "ko judge"),
+        (["decide", "q"], "", "nothing to decide on"),
+        (["decide", "q", "--choice", "a,b", "--score", "x,y"], "t", "pick one"),
+        (["decide", "q", "--tags", "a", "--score", "x,y"], "t", "pick one"),
+        (["decide", "q", "--score", "only"], "t", "2 to 10"),
+        (["decide", "q", "--choice", "read=read it, take notes,skip"], "t", "single words"),
+        (["llm", "-m", "jev", "q"], "t", "ko decide"),
     ],
 )
 def test_decision_usage_errors_cost_nothing(monkeypatch, args, stdin, msg):
@@ -479,15 +479,22 @@ def test_decide_reads_provider_details(monkeypatch, kwargs, output, details, wan
 
 
 def test_run_refuses_prose_from_a_decision_model():
-    with pytest.raises(ValueError, match="ko judge"):
+    with pytest.raises(ValueError, match="ko decide"):
         llm.run("summarize", stdin="x", model="jev")
+
+
+def test_judge_still_works_as_a_hidden_alias():
+    r = runner.invoke(app, ["judge", "q"], input="")
+    assert r.exit_code == 2 and "nothing to decide on" in r.output
+    assert " decide " in runner.invoke(app, ["--help"]).output
+    assert " judge " not in runner.invoke(app, ["--help"]).output
 
 
 def test_judge_json_carries_everything(monkeypatch):
     d = llm.Decision("choice", "read", {"read": 0.88, "archive": 0.12}, 0.77, None, "typesafe/jev-test")
     monkeypatch.setattr(llm, "decide", lambda *a, **k: d)
     monkeypatch.setattr(llm, "last_cost", llm.RunCost("typesafe/jev-test", 1, 1))
-    r = runner.invoke(app, ["judge", "q", "--choice", "read,archive", "--json"], input="text")
+    r = runner.invoke(app, ["decide", "q", "--choice", "read,archive", "--json"], input="text")
     assert r.exit_code == 0
     assert json.loads(r.stdout.splitlines()[0])["probabilities"] == {"read": 0.88, "archive": 0.12}
 

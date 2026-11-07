@@ -19,7 +19,7 @@ This file is a stub, not a manual — same rule as agent-browser/herdr: **the in
 | `fetch <url>...` | URL→markdown, deterministic routing (arxiv/yt/pdf/doi/reddit/wikipedia/walls→archives); alias `webfetch` |
 | `sum [url\|file...]` | fetch + summarize in one move; stdin-aware |
 | `llm "<prompt>"` | one-shot LLM; `-f` attaches anything, `-x` extracts code, `--schema` constrains JSON |
-| `judge "<question>"` | typed answer with probabilities (Jev): yes/no, `--choice`, `--score`, `--tags`; guide `ko prompt judge` |
+| `decide "<question>"` (alias `judge`) | typed answer with probabilities (Jev): yes/no, `--choice`, `--score`, `--tags`; guide `ko prompt decide` |
 | `models [info <name>...]` | model strings usable with `-m`; `info` = newest matching gateway model: price, hosts' speed, top HN threads + best comment (no LLM); several names = one comparison table |
 | `pkg info <name>...` | npm/PyPI package: latest + date (and what the 3-day floor picks), version in this repo, advisories, stars, last push, release notes head (deps.dev + registry + GitHub, no key) |
 | `doc <file>` | PDF/Office/image → text (liteparse); pages with no text layer OCR'd via `ocr` (DeepSeek on the gateway; stops first over 50 pages or $0.25; `-e vision` free on a Mac) |
@@ -66,7 +66,7 @@ Releasing: `/release` repo skill — CalVer, CHANGELOG canonical, human approves
 
 ## Things `--help` can't tell you
 - **Google auth:** one shared OAuth token per account across gsheets/gdocs/cal/gmail; accounts are short tags, default set by `ko google use` (state/settings.json, per machine — commands never rewrite config.toml). Personal Gmail + External app in Testing = refresh token dies in 7 days — publish the app or use Workspace-Internal. Service-account profiles (`auth --service-account key.json`), multi-account `-a`, token paths — all in `google_auth.py` + README. Scope is per-API, never per-folder; Drive is the full `drive` scope since 2026-09 (per-folder = a service account).
-- **Models** (`models.py`, ko's twin of everx's `ai-models.ts`): a `ModelSpec` per tested model (note, gateway host order, pydantic-ai settings) and the basic/medium/smart price tiers, all via Vercel AI Gateway. Every call goes through `models.resolve()`; nothing else builds a model; override in config.toml `[llm]`. OpenRouter stays only for Jev (`ko judge`) and `ko yt -s` (video input). Re-check prices whenever touching the tier table — they drift fast. Every LLM call prints a cost note to stderr (gateway calls: estimated from the cached catalog price).
+- **Models** (`models.py`, ko's twin of everx's `ai-models.ts`): a `ModelSpec` per tested model (note, gateway host order, pydantic-ai settings) and the basic/medium/smart price tiers, all via Vercel AI Gateway. Every call goes through `models.resolve()`; nothing else builds a model; override in config.toml `[llm]`. OpenRouter stays only for Jev (`ko decide`). Re-check prices whenever touching the tier table — they drift fast. Every LLM call prints a cost note to stderr (gateway calls: estimated from the cached catalog price).
 - **Directories** (`dirs.py`): config (`~/.config/ko`, dotfile-synced, keys fall back to `[keys]` in config.toml) · state (`~/.local/state/ko`, tokens/sessions/memory, never synced) · cache (disposable). Env overrides `KO_*_DIR`.
 - **Keys:** modules call `config.require_key(name, hint)` → one `MissingKeyError` type; `ko doctor` reports the lot.
 

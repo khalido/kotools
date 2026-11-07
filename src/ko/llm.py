@@ -300,7 +300,7 @@ def run(
     error to raise, not ours to predict. The cost note (last_cost) is set on every path."""
     global last_cost
     if is_decision_model(model) and schema is None:
-        raise ValueError(f"{model} answers typed questions, not prose: use `ko judge`")
+        raise ValueError(f"{model} answers typed questions, not prose: use `ko decide`")
     if stdin:
         # Input BEFORE the prompt — simonw-llm's fragment convention (and what the -f help
         # promises): the stable prefix (documents) ahead of the variable suffix (the question)

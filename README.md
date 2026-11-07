@@ -34,7 +34,7 @@ Full docs: **[kotools.khalido.dev](https://kotools.khalido.dev/)**.
 | `ko ai` | the default agent: every tool above + its own memory | find X, read it, tell me what matters |
 | `ko agent` | specialist agents (`research`, `repo`, `tv`), resumable sessions | deep literature digs; how repo X does Y |
 | `ko llm` | one-shot LLM, stdin-aware, no tools; `-f` attaches files, `--schema` constrains JSON | `… \| ko llm "summarize"` inside a pipe |
-| `ko judge` | a typed answer with probabilities: yes/no, `--choice`, `--score`, `--tags` (Jev) | `ko judge "is this a paywall page?" -f page.md` |
+| `ko decide` | a typed answer with probabilities: yes/no, `--choice`, `--score`, `--tags` (Jev) | `ko decide "is this a paywall page?" -f page.md` |
 | `ko brief` | morning brief: calendar + mail + HN + papers → one summary | the day's triage in one read |
 | `ko models` | model strings for `-m`; `info <name>` = price, hosts' speed, top HN threads | picking or comparing models |
 
@@ -95,7 +95,7 @@ Keys come from environment variables or a `[keys]` table in `~/.config/ko/config
 | `VERCEL_AI_GATEWAY_API_KEY` | `ko llm`, `ko ai`, agents, `ko sum`, `ko brief`, `ko yt -s`, `ko doc` OCR | 💰 | [Vercel AI Gateway](https://vercel.com/docs/ai-gateway): one prepaid pool, any model (`vercel ai-gateway api-keys create`). Tiers by price: basic = deepseek-v4.1-flash (`ko llm`, `ko ai`, `ko brief`), medium = gpt-6.1-terra, smart = kimi-k3.1-pro (research). Tested models and their host order live in `src/ko/models.py`. Override a tier in `[llm]`, or `-m` per run. |
 | `EXA_API_KEY` | `ko exa`, agents | 💰 | $7 per 1k searches (contents for 10 results included); contents alone $1 per 1k pages. [exa.ai](https://exa.ai) |
 | `X_BEARER_TOKEN` | `ko x` | 💰 | X API v2 bearer token. Pay-per-use: prepaid credits, ~$0.005 per post read. [developer.x.com](https://developer.x.com) |
-| `OPENROUTER_API_KEY` | `ko judge` (Jev) | 💰 | Jev's endpoint is only on OpenRouter. |
+| `OPENROUTER_API_KEY` | `ko decide` (Jev) | 💰 | Jev's endpoint is only on OpenRouter. |
 | `GEMINI_API_KEY` | `ko doc --deep --describe`, `-m google:…` | 💰 | Direct Gemini on a paid project, so Google doesn't train on what's sent. |
 | `GEMINI_FREE_API_KEY` | `ko yt -s` (optional) | free | A key from an AI Studio project without billing. When set, `-s` tries Google's free tier first and falls back to the gateway on 503/429. Free-tier content may be used by Google, so ko sends it public video only. Never name it `GEMINI_API_KEY`: Google's SDK reads that automatically. |
 | `GOOGLE_CLOUD_API_KEY` | `ko yt info`, `ko yt channel` | free | One Cloud API key for public Google data (YouTube Data API). |
