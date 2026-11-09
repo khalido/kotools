@@ -54,7 +54,7 @@ This file is a stub, not a manual — same rule as agent-browser/herdr: **the in
 - **One file per domain.** No shared `utils/` until three callers exist.
 
 ## Stack
-Python 3.15, `uv`, `ruff`, `pytest`, `typer`. Module-local dataclasses; `@lru_cache` singletons. Lint with `ruff check`; never run `ruff format`, because the repo isn't formatted with it and one run rewrites 43 files.
+Python 3.15, `uv`, `ruff`, `pytest`, `typer`. Module-local dataclasses; `@lru_cache` singletons. Lint with `ruff check`. Don't run `ruff format`: the repo isn't formatted with it, so one run rewrites 43 files (adopting it is an open call, `docs/handover.md`).
 
 ## Adding a subcommand
 1. `src/ko/<thing>.py` — thin SDK wrapper + dataclass results

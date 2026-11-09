@@ -11,7 +11,7 @@ Run `ko doctor`. It reports, per tool, which keys and binaries it needs and whet
 - **stdout is data; stderr is everything else.** Errors, notes and "no results" messages go to stderr, so stdout pipes into `jq`, `cut` or `awk` clean.
 - **Default format is plain text or TSV**, safe for `cut -f N`. Tabular commands such as `ko gsheets get` pad rows to a true rectangle, so a short row never shifts a column index.
 - **`--json` for structure.** Most read commands take it. The shape is a JSON array of objects unless the command's `--help` says otherwise. Exceptions: `ko tv --json` is `{top, matches}`, `ko hn item --json` is `{story, comments}`, `ko papers get --json` and `ko hf info --json` are single objects, and `ko gsheets get --json` is a 2D array.
-  - Under `--json`, **errors are a JSON object on stderr**: `{"error": "...", "code": "..."}`, plus `"fix": "<command>"` when one command resolves it (e.g. `ko google auth sfl`). `code` is a coarse label (`auth`, `network`, `usage`, `not_found`, `error`). In text mode the fix reads "— run `<command>`".
+  - Under `--json`, **errors are a JSON object on stderr**: `{"error": "...", "code": "..."}`, plus `"fix": "<command>"` when one command resolves it (e.g. `ko google auth sfl`). `code` is a coarse label: `config` (a missing key or bad config), `auth` (Google sign-in), `network`, `usage`, `not_found` or `error`. In text mode the fix reads "— run `<command>`".
   - Under `--json`, **empty results are `[]` on stdout** (plus a note on stderr), so a downstream `jq` never chokes.
   - `ko fetch --json` keeps one row per URL. A failed row has `code`: `blocked`, `not_found`, `network`, `not_public`, `timeout` or `error`. Use `--live-only` for a privately shared link, and `--timeout` to cap a URL.
 - **A command that writes a file prints only that file's path to stdout**, so it composes: `ko gmail draft new … -a "$(ko pdf status.md)"`. Notes about the render go to stderr.
@@ -19,7 +19,7 @@ Run `ko doctor`. It reports, per tool, which keys and binaries it needs and whet
 ## Exit codes
 
 - `0`: success, including empty results.
-- `1`: runtime error (network, auth, bad upstream). One clean line on stderr, no traceback. An unset API key lands here too, including mid-run in `ko ai` and `ko agent`, which abort rather than work around the missing tool. The line names the env var and where to get a key.
+- `1`: runtime error (network, auth, bad upstream). One clean line on stderr, no traceback. An unset API key lands here too, including mid-run in `ko ai` and `ko agent`, which abort rather than work around the missing tool. The line names the env var and where to get a key. A traceback means a bug in `ko` itself, never your input: report it. `ko logs --errors --json` gives where it crashed (`error_at`).
 - `2`: usage error (bad flags or args; Typer prints usage to stderr).
 
 ## What costs money

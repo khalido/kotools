@@ -2,6 +2,8 @@
 
 Read CLAUDE.md first, then this.
 
+**2026-11-09: code-smell pass, on main** (WORKLOG has what was fixed, what was left and why). New shared helpers: `_die_from`, `_emit_json`, `dirs.write_atomic`; CLAUDE.md's "Adding a subcommand" says when to use them. Left for a later pass: ~15 Google `except` blocks made redundant by `_GoogleTyper`, and the four front-matter parsers.
+
 **2026-11-07: v2026.11.7 is the first PyPI release since July.** `ko judge` is now `ko decide` (alias kept). Chota replaces yaad, and `ko` stays the toolbox. Next: install on the Pi5 (needs `uv`), then Chota swaps `fetchPage` for `ko fetch` on X links. Then `ko decide --each` (`docs/ideas.md`, "More use of Jev"). OpenRouter serves `ko decide` and is nearly empty ($0.03); pydantic-ai can't reach Jev on the gateway, so moving it waits on them. The re-check and the one-provider gaps are in `docs/ideas.md`.
 
 **2026-11-06: `ko publish` fix pass, on main** (WORKLOG). `ko-test`, `kotools` and `robot-arm` are redeployed. Still local: the PIN patch in `ops/proposals/uts-tmos-robot-arm/src/index.ts` is uncommitted in ops, and `labs/claude-code-workshop` is patched but has no live Worker. `docs/ideas.md` keeps `worker_exists` for `wrangler login` users. Not built, KO's call: `--ttl`, encrypted share links, `Accept: text/markdown`, signed PIN cookies.
@@ -43,7 +45,7 @@ Next on this thread, in order: (1) `model_info` tool returns clipped comments + 
 5. `ko ai` against the one-agent-loop guidance (svelte skill `references/agent-sidepanel.md`, checked 2026-10-25): 24 tools, no subagents, so nothing to fold. Two follow-ups: fold the repo agent's refs map into `ko ai` (as instructions or a tool) instead of telling the user to switch to `ko agent repo`; and add ~10 golden questions with known answers, each run 2–3 times, alongside the trace-reading eval, then use them to judge each toolset change.
 6. `lazy import` (PEP 810) can replace `_cli_shared.lazy()` and the in-function SDK imports — a separate cleanup.
 7. Carried over: retire `docs/assistant.md` and `docs/yaad.md`; move the live-network test out of the default suite (`tests/test_gsheets.py:494`); `accounts --check`; fetch logins in the `ko-fetch` agent-browser session; trafilatura import cost upstream issues.
-8. `ruff format --check` wants to reformat 65 files — pre-existing; decide whether to adopt the formatter repo-wide in one commit.
+8. KO to decide: adopt `ruff format` repo-wide in one commit, or not at all. Today it would rewrite 43 files in `src/`, so don't run it as part of other work (CLAUDE.md).
 
 ## Open calls for KO
 
