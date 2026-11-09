@@ -6,6 +6,8 @@ Read CLAUDE.md first, then this.
 
 Fable 5.2 is out. Start the next session on it as the **orchestrator**: sweep the whole project, judge it, then direct the work. Give the heavy lifting (reading many files, sweeps, drafts, fixes) to Opus and Sonnet subagents, check what they bring back against the code, and keep the judgment calls in the main thread.
 
+Read first: Anthropic's [Building effective agents](https://www.anthropic.com/research/building-effective-agents) (KO's pick). Use it as the yardstick for `ko ai` and `src/ko/agents/`: simplest pattern that works, workflows vs agents, tool design.
+
 Questions for the sweep:
 - **Direction.** Does ko still match its vision (CLAUDE.md: bake in the best library once, 2–3 flags, safe for an agent to call blind)? What's drifted, what's dead weight, what's missing?
 - **Sensible.** Is anything over-built, hand-rolled where a library exists, or inconsistent between commands (flags, `--json` shapes, error codes, help text)?
