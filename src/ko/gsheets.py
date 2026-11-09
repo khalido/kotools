@@ -17,16 +17,16 @@ from __future__ import annotations
 
 import json
 import math
-import os
 import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import NoReturn
 
 import httpx2 as httpx
 from googleapiclient.errors import HttpError
 
-from ko.dirs import state_dir
+from ko.dirs import state_dir, write_atomic
 from ko.google_auth import (
     GoogleError,
     get_credentials,
@@ -63,7 +63,7 @@ class SheetsAliasError(SheetsError):
     pass
 
 
-def _handle(e: HttpError, context: str) -> None:
+def _handle(e: HttpError, context: str) -> NoReturn:
     raise_for_status(
         e,
         context,
@@ -110,12 +110,9 @@ def load_aliases() -> dict[str, dict]:
 
 
 def save_aliases(data: dict) -> None:
-    # tmp + os.replace: hand-pinned aliases aren't rebuildable, and load_aliases() answers a
-    # corrupt file with {} — a crash mid-write would silently drop every pin.
-    path = aliases_path()
-    tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(data, indent=2, sort_keys=True))
-    os.replace(tmp, path)
+    # Atomic: hand-pinned aliases aren't rebuildable, and load_aliases() answers a corrupt file
+    # with {}, so a crash mid-write would silently drop every pin.
+    write_atomic(aliases_path(), json.dumps(data, indent=2, sort_keys=True))
 
 
 def alias_key(name: str) -> str:

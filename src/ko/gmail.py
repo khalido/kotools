@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 from email.message import EmailMessage
 from email.utils import formataddr, getaddresses, parseaddr, parsedate_to_datetime
 from pathlib import Path
+from typing import NoReturn
 
 from googleapiclient.errors import HttpError
 
@@ -59,7 +60,7 @@ class GmailError(GoogleError):
     pass
 
 
-def _handle(e: HttpError, context: str, lookup: bool = False) -> None:
+def _handle(e: HttpError, context: str, lookup: bool = False) -> NoReturn:
     # Gmail says 400 "Invalid id value" for malformed message/thread ids — speak
     # in ko's voice, not the API's ("no message with id 'X'", not "[400] Invalid id value")
     # Message/thread ids are per-account, so a not-found on one (`lookup`) names the account —
@@ -244,7 +245,6 @@ def get_message(msg_id: str) -> tuple[GmailMessage, str]:
         return _message(m), _message_body(m)
     except HttpError as e:
         _handle(e, msg_id, lookup=True)
-        raise  # unreachable: _handle always raises
 
 
 def _full_thread(svc, ref: str) -> dict:
@@ -260,7 +260,6 @@ def _full_thread(svc, ref: str) -> dict:
         return svc.users().threads().get(userId="me", id=m["threadId"], format="full").execute(num_retries=3)
     except HttpError as e:
         _handle(e, ref, lookup=True)
-        raise  # unreachable: _handle always raises
 
 
 def get_thread(ref: str) -> list[tuple[GmailMessage, str]]:
@@ -318,7 +317,6 @@ def list_attachments(msg_id: str) -> list[Attachment]:
         m = svc.users().messages().get(userId="me", id=msg_id, format="full").execute(num_retries=3)
     except HttpError as e:
         _handle(e, msg_id, lookup=True)
-        raise  # unreachable
     return [
         Attachment(i, name, mime, size, att_id)
         for i, (name, mime, size, att_id) in enumerate(_walk_attachments(m.get("payload", {})), 1)
@@ -367,7 +365,6 @@ def download_attachments(msg_id: str, index: int | None = None, out_dir: Path | 
             )
         except HttpError as e:
             _handle(e, msg_id, lookup=True)
-            raise  # unreachable
         name = Path(a.filename).name or "attachment"  # strip any path components in the filename
         path = _unique_path(out_dir / name)
         path.write_bytes(_decode_bytes(body["data"]))
@@ -550,7 +547,6 @@ def create_draft(
         d = svc.users().drafts().create(userId="me", body={"message": {"raw": raw}}).execute(num_retries=3)
     except HttpError as e:
         _handle(e, "create draft")
-        raise  # unreachable
     return d["id"]
 
 
@@ -616,7 +612,6 @@ def create_reply_draft(
         d = svc.users().drafts().create(userId="me", body={"message": message}).execute(num_retries=3)
     except HttpError as e:
         _handle(e, "create reply draft")
-        raise  # unreachable
     return d["id"], r
 
 
@@ -651,7 +646,6 @@ def list_drafts(n: int = 10) -> list[DraftInfo]:
         return out
     except HttpError as e:
         _handle(e, "list drafts")
-        raise  # unreachable
 
 
 def get_draft(draft_id: str) -> tuple[str, GmailMessage, str, list[str]]:
@@ -662,7 +656,6 @@ def get_draft(draft_id: str) -> tuple[str, GmailMessage, str, list[str]]:
         d = svc.users().drafts().get(userId="me", id=draft_id, format="full").execute(num_retries=3)
     except HttpError as e:
         _handle(e, draft_id)
-        raise  # unreachable
     m = d.get("message", {})
     names = [name for name, _mime, _size, _att_id in _walk_attachments(m.get("payload", {}))]
     return d["id"], _message(m), _message_body(m), names
@@ -687,7 +680,6 @@ def draft_summary(draft_id: str) -> dict:
         d = svc.users().drafts().get(userId="me", id=draft_id, format="full").execute(num_retries=3)
     except HttpError as e:
         _handle(e, draft_id)
-        raise  # unreachable
     m = d.get("message", {})
     h = _headers(m)
     return {
@@ -738,7 +730,6 @@ def update_draft(
         existing = svc.users().drafts().get(userId="me", id=draft_id, format="full").execute(num_retries=3)
     except HttpError as e:
         _handle(e, draft_id)
-        raise  # unreachable
     n_att = len(_walk_attachments(existing.get("message", {}).get("payload", {})))
     if n_att and not force:
         raise GmailError(
@@ -772,7 +763,6 @@ def update_draft(
         )
     except HttpError as e:
         _handle(e, draft_id)
-        raise  # unreachable
     return d["id"]
 
 
@@ -784,31 +774,29 @@ def send_allowed() -> bool:
 
 
 def send_draft(draft_id: str) -> str:
-    """Send an existing draft; returns the sent message id. Gate + confirm live in the CLI."""
+    """Send an existing draft; returns the sent message id. Refuses unless send_allowed(), so
+    no caller can skip the gate; the CLI adds the confirm."""
+    if not send_allowed():
+        raise GmailError("sending is disabled: set `[gmail] allow_send = true` in config.toml or KO_GMAIL_SEND=1")
     svc = _compose_service()
     try:
         sent = svc.users().drafts().send(userId="me", body={"id": draft_id}).execute(num_retries=3)
     except HttpError as e:
         _handle(e, draft_id)
-        raise  # unreachable
     return sent.get("id", "")
 
 
-@dataclass
-class _ProfileCache:
-    addr: str | None = None
-
-
-_PROFILE = _ProfileCache()
+_PROFILE: dict[str, str] = {}  # account tag -> its address, per run
 
 
 def my_address() -> str:
-    """The authed account's own email (users.getProfile — works under readonly). Cached per run."""
-    if _PROFILE.addr is None:
+    """The authed account's own email (users.getProfile — works under readonly). Cached per
+    account per run: `-a` switches account, and the address must follow."""
+    account = active_account()
+    if account not in _PROFILE:
         svc = service("gmail")
         try:
-            _PROFILE.addr = svc.users().getProfile(userId="me").execute(num_retries=3)["emailAddress"]
+            _PROFILE[account] = svc.users().getProfile(userId="me").execute(num_retries=3)["emailAddress"]
         except HttpError as e:
             _handle(e, "get profile")
-            raise  # unreachable
-    return _PROFILE.addr
+    return _PROFILE[account]

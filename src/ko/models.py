@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ko import config
+from ko.dirs import write_atomic
 
 if TYPE_CHECKING:
     from pydantic_ai.models import Model
@@ -274,9 +275,7 @@ def refresh_catalog(provider: str, ttl: int = _CATALOG_TTL, *, force: bool = Fal
             for m in data
             if {"input", "output"} <= (m.get("pricing") or {}).keys()  # language models; image/video price differently
         }
-    tmp = path.with_suffix(".tmp")  # atomic: a crash mid-write must not corrupt the cache
-    tmp.write_text(json.dumps(out))
-    os.replace(tmp, path)
+    write_atomic(path, json.dumps(out))
     last_refresh_hit_network = True
     return out["models"]
 

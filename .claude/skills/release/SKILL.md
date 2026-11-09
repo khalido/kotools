@@ -131,4 +131,4 @@ may be required" error.
 gh release view v2026.7.9 --json url,tagName -q '.url'
 uvx --from . ko --version   # the built package installs and reports the new version
 ```
-Report the release URL at wrap-up. Once the publish run finishes, check PyPI: `uvx --refresh-package kotools kotools --version`.
+Report the release URL at wrap-up. Once the publish run finishes, check PyPI with `uvx --isolated --refresh --from kotools==<version> ko --version`. Without `--isolated`, `uvx` reuses the installed editable `ko`, which reports whatever version it was installed at. Then reinstall the local tool against the lock (the command is in `docs/handover.md`) so `ko --version` matches.

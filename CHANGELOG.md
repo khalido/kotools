@@ -13,6 +13,12 @@ Cut a release with the repo's `/release` skill.
 
 ## [Unreleased]
 
+### Fixed
+- A missing key or bad config now exits as `code: "config"` and a Google sign-in problem as `code: "auth"` with its `fix`, instead of a plain `error`. A bug in ko itself crashes with a traceback rather than passing as a one-line error.
+- A Google command whose cached token won't do says the real reason (unreadable, read-only grant, no refresh token, refresh refused), not always "expired".
+- `ko gmail` replies use the right account's address under `-a`. Sending a draft is refused outside the CLI too unless `allow_send` is on.
+- `ko x` says when X bills its minimum of 10 posts (5 for a user timeline) for a smaller `-n`. Several `--json` outputs no longer crash on a date or path.
+
 ## [2026.11.7] - 2026-11-07
 
 Model calls move to the Vercel AI Gateway, `ko doc` OCRs scans with a spend stop, and YouTube, Drive, PDF, decision model and package lookups arrive. The PyPI release 2026.7.27 crashed on startup; this one fixes it.

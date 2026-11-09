@@ -27,6 +27,8 @@ from dataclasses import dataclass, field
 
 import httpx2 as httpx
 
+from ko import config
+
 OPENALEX = "https://api.openalex.org"
 S2 = "https://api.semanticscholar.org"
 MAILTO = "ko@khalido.dev"  # OpenAlex polite pool — better rate limits, no key
@@ -259,11 +261,7 @@ def _s2_tldr(doi: str) -> str:
 
 def similar(ref: str, n: int = DEFAULT_SIMILAR_N) -> list[Work]:
     """S2 paper recommendations. Requires S2_API_KEY (free; keyless 429s immediately)."""
-    key = os.environ.get("S2_API_KEY")
-    if not key:
-        raise RuntimeError(
-            "`similar` needs S2_API_KEY (free key: https://www.semanticscholar.org/product/api)"
-        )
+    key = config.require_key("S2_API_KEY", "`similar` needs it, free: https://www.semanticscholar.org/product/api")
     resp = httpx.get(
         f"{S2}/recommendations/v1/papers/forpaper/{_s2_id(ref)}",
         params={"fields": "title,year,externalIds,citationCount,venue", "limit": n},

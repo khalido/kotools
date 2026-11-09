@@ -2,6 +2,16 @@
 
 Newest first. Big picture only — git commits have the detail; candidate ideas and decisions live in `docs/ideas.md`.
 
+## 2026-11-09 — Code-smell pass
+
+Two Sonnet agents (state machines, duplication) and Gemini 4 Argon reviewed `src/ko`, and each finding was checked in the code. **No state machine anywhere, and none needed:** `fetch` is a ladder of routes, Drive sync a three-way merge on plain data, and the two `fetch` flags are independent. Gemini had two of its twelve claims wrong (the JSONC parser does take trailing commas; a gdocs bounds check it cited doesn't exist).
+
+**Fixed:** 41 commands caught every exception and printed it as `error`, so a missing key logged as a failure and a programming bug lost its crash site. `_die_from(e)` now labels `config` and `auth` and re-raises our bugs. `google_auth` decided whether a token works in one function and guessed why not in another, falling back to "expired"; one function returns both now, and a test had encoded the wrong guess. `gmail.send_draft` owns the send gate (it lived only in the CLI). Gmail's own-address cache follows `-a`. 33 Google print-and-exit blocks go through `_die`, so `ko logs` records them. One `dirs.write_atomic` for five copies, one `_BUGS` tuple for four, `_emit_json` for 16 hand-rolled dumps. X says when it bills its 10-post floor.
+
+**Left:** big functions that read top to bottom (`doctor`, `_fetch`), the per-API `_get` wrappers (their error text is deliberate), the four front-matter parsers (moving them to pyyaml could change how prompts parse), and ~15 Google `except` blocks now redundant with `_GoogleTyper`'s net (removing them means re-indenting each `try`).
+
+**Learned:** `ruff format` isn't this repo's style; one run rewrote 43 files (now in CLAUDE.md). `uvx --from kotools` reuses the installed editable `ko`, so a PyPI check needs `--isolated` (now in the release skill).
+
 ## 2026-11-07 — MCP probe for the stateless spec, and PyPI install checks
 
 **`ko fetch` kept losing code blocks on docs pages.** trafilatura drops many highlighters' markup as link clutter or boilerplate, and `favor_recall` and `include_formatting` don't help. `_extract` now rebuilds each `<pre>` as a bare `<pre><code>` first, keeping line breaks. Fenced blocks on 14 real pages: uv docs 0 → 12, Python docs 14 → 83, Svelte 0 → 24, React 6 → 9, the rest unchanged. Still 0 on Cloudflare docs and AI SDK docs: their code sits in tab widgets. Clearing the wrappers' attributes fixed AI SDK but not Cloudflare, so it isn't in.

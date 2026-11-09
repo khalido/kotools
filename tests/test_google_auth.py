@@ -270,10 +270,22 @@ def _flow_stub(monkeypatch, calls):
     monkeypatch.setattr(g, "client_file", lambda account=None: __import__("pathlib").Path(__file__))
 
 
+class _ExpiredCreds(_FakeCreds):
+    """An expired token whose refresh the server refuses (revoked, or a 7-day Testing token)."""
+
+    def __init__(self, scopes):
+        super().__init__(scopes)
+        self.valid, self.expired = False, True
+
+    def refresh(self, request):
+        raise ValueError("invalid_grant")
+
+
 @pytest.mark.parametrize(
     "token,readonly,reason",
     [
         (None, True, "isn't signed in"),
+        ("not json", True, "unreadable token"),
         (g.SCOPES_READONLY, False, "read-only grant and this is a write"),
         ([s.replace("drive.readonly", "drive.file") for s in g.SCOPES_READONLY], True, "pre-2026-09 token"),
         (g.SCOPES_READWRITE, False, "expired token that couldn't refresh"),
@@ -281,16 +293,20 @@ def _flow_stub(monkeypatch, calls):
 )
 def test_implicit_flow_fails_fast_without_a_tty(monkeypatch, tmp_path, token, readonly, reason):
     """An agent (no /dev/tty) running a write on a read-only token used to hang for minutes on
-    a browser callback nobody would click. Now: a one-line AuthError naming the fix."""
+    a browser callback nobody would click. Now: a one-line AuthError naming the fix, and the
+    reason is the one the token check found (it used to guess "expired" for anything else)."""
     monkeypatch.setenv("KO_STATE_DIR", str(tmp_path))
     monkeypatch.setenv("KO_GOOGLE_ACCOUNT", g.DEFAULT_ACCOUNT)
     monkeypatch.setattr(g, "_has_tty", lambda: False)
     calls = []
     _flow_stub(monkeypatch, calls)
-    if token is not None:
-        (tmp_path / "google_token.json").write_text(json.dumps({"scopes": token}))
+    if isinstance(token, str):
+        (tmp_path / "google_token.json").write_text(token)
+    elif token is not None:
+        (tmp_path / "google_token.json").write_text("{}")
+        monkeypatch.setattr(g.Credentials, "from_authorized_user_file", lambda *a, **k: _ExpiredCreds(token))
     with pytest.raises(g.AuthError, match=reason) as exc:
-        _REAL_RUN_FLOW(readonly, g.DEFAULT_ACCOUNT)
+        _REAL_RUN_FLOW(readonly, g.DEFAULT_ACCOUNT, reason=g._check_cached(readonly, g.DEFAULT_ACCOUNT)[1])
     assert "ko google auth default" in str(exc.value) and calls == []
 
 
@@ -299,8 +315,9 @@ def test_implicit_flow_with_a_tty_says_why_then_runs(monkeypatch, tmp_path, caps
     monkeypatch.setattr(g, "_has_tty", lambda: True)
     calls = []
     _flow_stub(monkeypatch, calls)
-    (tmp_path / "google_token.json").write_text(json.dumps({"scopes": g.SCOPES_READONLY}))
-    _REAL_RUN_FLOW(False, g.DEFAULT_ACCOUNT)
+    (tmp_path / "google_token.json").write_text("{}")
+    monkeypatch.setattr(g.Credentials, "from_authorized_user_file", lambda *a, **k: _FakeCreds(g.SCOPES_READONLY))
+    _REAL_RUN_FLOW(False, g.DEFAULT_ACCOUNT, reason=g._check_cached(False, g.DEFAULT_ACCOUNT)[1])
     assert calls == [g.SCOPES_READWRITE]
     assert "read-only grant" in capsys.readouterr().err  # the browser pop-up is explained
 
@@ -325,7 +342,8 @@ def test_cli_write_on_readonly_token_exits_clean_not_hangs(monkeypatch, tmp_path
     monkeypatch.setenv("KO_GOOGLE_ACCOUNT", "work")
     monkeypatch.setattr(g, "_has_tty", lambda: False)
     monkeypatch.setattr(g, "_run_flow", _REAL_RUN_FLOW)  # conftest stubs it; we want the real refusal
-    (tmp_path / "google_token_work.json").write_text(json.dumps({"scopes": g.SCOPES_READONLY}))
+    (tmp_path / "google_token_work.json").write_text("{}")
+    monkeypatch.setattr(g.Credentials, "from_authorized_user_file", lambda *a, **k: _FakeCreds(g.SCOPES_READONLY))
     g.get_credentials.cache_clear()
     # a command whose FIRST call is the write (gdocs push reads the doc first)
     sid = "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms"  # id-shaped, so no alias lookup

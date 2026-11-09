@@ -15,7 +15,15 @@ import typer
 from googleapiclient.errors import HttpError
 
 from . import config, google_auth
-from ._cli_shared import _die, _no_results, _reject_group_flags, _tsv_cell, app, lazy
+from ._cli_shared import (
+    _die,
+    _emit_json,
+    _no_results,
+    _reject_group_flags,
+    _tsv_cell,
+    app,
+    lazy,
+)
 from .publish import slugify
 
 gcal_mod = lazy("gcal")
@@ -364,7 +372,7 @@ def gsheets_info(
     """Show a sheet's title and tab names."""
     info = gsheets_mod.get_info(_resolve_sid(spreadsheet_id, as_json))
     if as_json:
-        typer.echo(json.dumps(asdict(info)))
+        _emit_json(info)
         return
     typer.echo(info.title)
     for t in info.tabs:
@@ -446,11 +454,9 @@ def gsheets_set(
             overwrite=overwrite,
         )
     except (gsheets_mod.SheetsError, ValueError, json.JSONDecodeError) as e:
-        typer.echo(str(e), err=True)
-        raise typer.Exit(1) from None
+        _die(str(e))
     except HttpError as e:
-        typer.echo(_http_error_msg(e), err=True)
-        raise typer.Exit(1) from None
+        _die(_http_error_msg(e))
     typer.echo(f"{n} cell(s) updated", err=True)
 
 
@@ -478,11 +484,9 @@ def gsheets_put(
             _resolve_sid(spreadsheet_id), data, raw=raw, overwrite=overwrite
         )
     except (gsheets_mod.SheetsError, ValueError, json.JSONDecodeError) as e:
-        typer.echo(str(e), err=True)
-        raise typer.Exit(1) from None
+        _die(str(e))
     except HttpError as e:
-        typer.echo(_http_error_msg(e), err=True)
-        raise typer.Exit(1) from None
+        _die(_http_error_msg(e))
     typer.echo(f"{n} cell(s) updated", err=True)
 
 
@@ -574,11 +578,9 @@ def gsheets_header(
             freeze=freeze,
         )
     except (gsheets_mod.SheetsError, ValueError) as e:
-        typer.echo(str(e), err=True)
-        raise typer.Exit(1) from None
+        _die(str(e))
     except HttpError as e:
-        typer.echo(_http_error_msg(e), err=True)
-        raise typer.Exit(1) from None
+        _die(_http_error_msg(e))
     typer.echo("header formatted", err=True)
 
 
@@ -591,11 +593,9 @@ def gsheets_add_tab(
     try:
         gid = gsheets_mod.add_tab(_resolve_sid(spreadsheet_id), title)
     except gsheets_mod.SheetsError as e:
-        typer.echo(str(e), err=True)
-        raise typer.Exit(1) from None
+        _die(str(e))
     except HttpError as e:
-        typer.echo(_http_error_msg(e), err=True)
-        raise typer.Exit(1) from None
+        _die(_http_error_msg(e))
     typer.echo(str(gid))
 
 
@@ -613,11 +613,9 @@ def gsheets_dup_tab(
     try:
         gid = gsheets_mod.duplicate_tab(_resolve_sid(spreadsheet_id), source, new_name)
     except gsheets_mod.SheetsError as e:
-        typer.echo(str(e), err=True)
-        raise typer.Exit(1) from None
+        _die(str(e))
     except HttpError as e:
-        typer.echo(_http_error_msg(e), err=True)
-        raise typer.Exit(1) from None
+        _die(_http_error_msg(e))
     typer.echo(f"duplicated {source!r} -> {new_name or f'Copy of {source}'!r}", err=True)
     typer.echo(str(gid))
 
@@ -635,11 +633,9 @@ def gsheets_delete_tab(
     try:
         info = gsheets_mod.get_info(sid)
     except gsheets_mod.SheetsError as e:
-        typer.echo(str(e), err=True)
-        raise typer.Exit(1) from None
+        _die(str(e))
     except HttpError as e:
-        typer.echo(_http_error_msg(e), err=True)
-        raise typer.Exit(1) from None
+        _die(_http_error_msg(e))
     if title not in info.tabs:
         _die(f"no tab named {title!r} in {info.title!r} — tabs: {', '.join(info.tabs)}")
     if not yes:
@@ -651,11 +647,9 @@ def gsheets_delete_tab(
     try:
         gsheets_mod.delete_tab(sid, title)
     except gsheets_mod.SheetsError as e:
-        typer.echo(str(e), err=True)
-        raise typer.Exit(1) from None
+        _die(str(e))
     except HttpError as e:
-        typer.echo(_http_error_msg(e), err=True)
-        raise typer.Exit(1) from None
+        _die(_http_error_msg(e))
     typer.echo(f"deleted tab {title!r} from {info.title!r}", err=True)
 
 
@@ -681,11 +675,9 @@ def gsheets_pdf(
         )
         name = tab or gsheets_mod.get_info(sid).title.strip()
     except gsheets_mod.SheetsError as e:
-        typer.echo(str(e), err=True)
-        raise typer.Exit(1) from None
+        _die(str(e))
     except HttpError as e:
-        typer.echo(_http_error_msg(e), err=True)
-        raise typer.Exit(1) from None
+        _die(_http_error_msg(e))
     path = out or Path(f"{name.replace(chr(47), chr(45))}.pdf")
     path.write_bytes(pdf)
     typer.echo(f"{len(pdf) / 1024:.0f} KB, {size} {'landscape' if landscape else 'portrait'}", err=True)
@@ -717,11 +709,9 @@ def gsheets_insert_rows(
             inherit_from_before=False if no_inherit else None,
         )
     except gsheets_mod.SheetsError as e:
-        typer.echo(str(e), err=True)
-        raise typer.Exit(1) from None
+        _die(str(e))
     except HttpError as e:
-        typer.echo(_http_error_msg(e), err=True)
-        raise typer.Exit(1) from None
+        _die(_http_error_msg(e))
     typer.echo(f"inserted {n} row(s) before row {row} in {tab!r}", err=True)
 
 
@@ -754,11 +744,9 @@ def gsheets_insert_cols(
             inherit_from_before=False if no_inherit else None,
         )
     except gsheets_mod.SheetsError as e:
-        typer.echo(str(e), err=True)
-        raise typer.Exit(1) from None
+        _die(str(e))
     except HttpError as e:
-        typer.echo(_http_error_msg(e), err=True)
-        raise typer.Exit(1) from None
+        _die(_http_error_msg(e))
     typer.echo(f"inserted {n} column(s) before {col.upper()} in {tab!r}", err=True)
 
 
@@ -791,11 +779,9 @@ def gsheets_replace(
             include_formulas=in_formulas,
         )
     except gsheets_mod.SheetsError as e:
-        typer.echo(str(e), err=True)
-        raise typer.Exit(1) from None
+        _die(str(e))
     except HttpError as e:
-        typer.echo(_http_error_msg(e), err=True)
-        raise typer.Exit(1) from None
+        _die(_http_error_msg(e))
     typer.echo(str(n))
 
 
@@ -807,11 +793,9 @@ def gsheets_new(
     try:
         new_id = gsheets_mod.create_spreadsheet(title)
     except gsheets_mod.SheetsError as e:
-        typer.echo(str(e), err=True)
-        raise typer.Exit(1) from None
+        _die(str(e))
     except HttpError as e:
-        typer.echo(_http_error_msg(e), err=True)
-        raise typer.Exit(1) from None
+        _die(_http_error_msg(e))
     typer.echo(new_id)
     typer.echo(f"https://docs.google.com/spreadsheets/d/{new_id}/edit", err=True)
 
@@ -825,11 +809,9 @@ def gsheets_clear(
     try:
         cleared = gsheets_mod.clear_range(_resolve_sid(spreadsheet_id), range_name)
     except gsheets_mod.SheetsError as e:
-        typer.echo(str(e), err=True)
-        raise typer.Exit(1) from None
+        _die(str(e))
     except HttpError as e:
-        typer.echo(_http_error_msg(e), err=True)
-        raise typer.Exit(1) from None
+        _die(_http_error_msg(e))
     typer.echo(f"cleared {cleared}", err=True)
 
 
@@ -888,7 +870,7 @@ def gdocs_tabs(
     except gdocs_mod.DocsError as e:
         _die(str(e), as_json=as_json)
     if as_json:
-        typer.echo(json.dumps([asdict(t) for t in tabs]))
+        _emit_json(tabs)
         return
     for t in tabs:
         typer.echo(f"{t.index}\t{'  ' * t.nesting_level}{t.title}\t{t.tab_id}")
@@ -908,8 +890,7 @@ def gdocs_get(
     try:
         md = gdocs_mod.get_tab_text(doc, tab) if tab else gdrive_mod.export_markdown(doc)
     except (gdrive_mod.DriveError, gdocs_mod.DocsError) as e:
-        typer.echo(str(e), err=True)
-        raise typer.Exit(1) from None
+        _die(str(e))
     if out:
         out.write_text(md)
         typer.echo(f"wrote {len(md)} char(s) to {out}", err=True)
@@ -923,8 +904,7 @@ def gdocs_info(doc: str = typer.Argument(..., help="Google Doc ID or URL")) -> N
     try:
         info = gdocs_mod.get_info(doc)
     except gdocs_mod.DocsError as e:
-        typer.echo(str(e), err=True)
-        raise typer.Exit(1) from None
+        _die(str(e))
     typer.echo(info.title)
     typer.echo(info.id, err=True)
 
@@ -945,8 +925,7 @@ def gdocs_append(
             _guard_multi_tab(doc)  # multi-tab: force an explicit --tab (bare append hits tab 0)
         n = gdocs_mod.append_text(doc, body, tab=tab)
     except gdocs_mod.DocsError as e:
-        typer.echo(str(e), err=True)
-        raise typer.Exit(1) from None
+        _die(str(e))
     typer.echo(f"appended {n} char(s)", err=True)
 
 
@@ -982,8 +961,7 @@ def gdocs_replace(
                 _guard_multi_tab(doc, extra=" or --all-tabs")  # bare replace clobbers all tabs
             n = gdocs_mod.replace_text(doc, find, replace, match_case=match_case)
     except gdocs_mod.DocsError as e:
-        typer.echo(str(e), err=True)
-        raise typer.Exit(1) from None
+        _die(str(e))
     typer.echo(f"replaced {n} occurrence(s)", err=True)
 
 
@@ -997,8 +975,7 @@ def gdocs_add_tab(
     try:
         tab_id = gdocs_mod.add_tab(doc, title)
     except gdocs_mod.DocsError as e:
-        typer.echo(str(e), err=True)
-        raise typer.Exit(1) from None
+        _die(str(e))
     typer.echo(tab_id)
     typer.echo(f"added tab {title!r}", err=True)
 
@@ -1126,8 +1103,7 @@ def gdocs_reply(
     try:
         r = gdrive_mod.reply_comment(doc, comment_id, body)
     except gdrive_mod.DriveError as e:
-        typer.echo(str(e), err=True)
-        raise typer.Exit(1) from None
+        _die(str(e))
     typer.echo(f"replied to {comment_id} ({r['id']})", err=True)
 
 
@@ -1161,8 +1137,7 @@ def gdocs_shade_table(
             doc, rows=rows_l, cols=cols_l, color=color, table_index=(None if all_tables else table)
         )
     except gdocs_mod.DocsError as e:
-        typer.echo(str(e), err=True)
-        raise typer.Exit(1) from None
+        _die(str(e))
     typer.echo(f"shaded {n} range(s)", err=True)
 
 
@@ -1225,7 +1200,7 @@ def _emit_events(events, as_json: bool, window_start: str | None = None) -> bool
     `window_start` (YYYY-MM-DD) is forwarded to `_fmt_events` to clamp all-day event headers
     for bounded views like `--today` / `cal day`."""
     if as_json:
-        typer.echo(json.dumps([asdict(e) for e in events], default=str))
+        _emit_json(events)
         return True
     if not events:
         return False
@@ -1320,7 +1295,7 @@ def cal_add(
             cal_id = gcal_mod.resolve_calendar_ids([cal], gcal_mod.list_calendars(acct))[0]
         ev = gcal_mod.create_event(title, when, end=end, calendar_id=cal_id, minutes=minutes, account=acct)
     except (gcal_mod.CalError, ValueError) as e:
-        _die(str(e))
+        _die(str(e), as_json=as_json)
     typer.echo(f"created: {ev.summary}  {ev.start}  [{acct} · {ev.calendar_id}]", err=True)
     typer.echo(json.dumps(asdict(ev)) if as_json else ev.id)
 
@@ -1572,7 +1547,7 @@ def gmail_attach(
     if not atts:
         _no_results("no attachments", as_json)
     if as_json:
-        typer.echo(json.dumps([asdict(a) for a in atts]))
+        _emit_json(atts)
         return
     for a in atts:
         typer.echo(f"{a.index}\t{_tsv_cell(a.filename)}\t{a.size}\t{a.mime_type}")
@@ -1650,7 +1625,7 @@ def gmail_draft_list(
     if not drafts:
         _no_results("no drafts", as_json)
     if as_json:
-        typer.echo(json.dumps([asdict(d) for d in drafts]))
+        _emit_json(drafts)
         return
     for d in drafts:
         typer.echo(f"{d.id}\t{_tsv_cell(d.to)}\t{_tsv_cell(d.subject)}\t{_tsv_cell(d.cc)}")

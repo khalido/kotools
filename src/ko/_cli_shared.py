@@ -44,9 +44,40 @@ def lazy(name: str) -> ModuleType:
     return module
 
 
-def _emit_json(items: list) -> None:
-    """Shared --json path: list of dataclasses -> one JSON array on stdout."""
-    typer.echo(json.dumps([asdict(i) for i in items], default=str))
+def _jsonable(obj):
+    """Dataclasses (alone or in a list) to dicts; json.dumps' default=str does the rest."""
+    from dataclasses import is_dataclass
+
+    if is_dataclass(obj) and not isinstance(obj, type):
+        return asdict(obj)
+    if isinstance(obj, list | tuple):
+        return [_jsonable(o) for o in obj]
+    return obj
+
+
+def _emit_json(obj) -> None:
+    """Shared --json path: a dataclass, a list of them, or plain data -> JSON on stdout.
+    `default=str` so a date or path never crashes the output."""
+    typer.echo(json.dumps(_jsonable(obj), default=str))
+
+
+# Our bugs, not the user's: re-raised so they crash with a traceback and a logged crash site.
+_BUGS = (TypeError, AttributeError, NameError, ImportError)
+
+
+def _die_from(e: Exception, *, as_json: bool = False) -> NoReturn:
+    """`except Exception as e: _die_from(e, as_json=...)`: the error exit for a caught exception.
+    A missing key or bad config exits as `config`, a Google token problem as `auth` with its fix,
+    both user-fixable (logged as warnings). Programming errors re-raise."""
+    from ko import config, google_auth
+
+    if isinstance(e, _BUGS):
+        raise e
+    if isinstance(e, google_auth.AuthError):
+        _die(e.msg, as_json=as_json, code="auth", fix=e.fix)
+    if isinstance(e, config.MissingKeyError | config.ConfigError):
+        _die(str(e), as_json=as_json, code="config")
+    _die(str(e), as_json=as_json)
 
 
 def _die(

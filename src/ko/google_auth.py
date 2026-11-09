@@ -398,36 +398,43 @@ def _has_drive_scope(granted: list[str], readonly: bool) -> bool:
     return _DRIVE_RW in granted or (readonly and _DRIVE_RO in granted)
 
 
-def _load_cached(readonly: bool, account: str) -> Credentials | None:
+def _check_cached(readonly: bool, account: str) -> tuple[Credentials | None, str]:
+    """The cached token if it serves this call, else (None, why not): one place decides both,
+    so the reason a user is sent to re-consent is the real one."""
+    who = f"'{account}'"
     tf = token_file(account)
     if not tf.exists():
-        return None
+        return None, f"{who} isn't signed in"
     try:
         # Load with the token's OWN granted scopes (omit `scopes=`), NOT a readonly/readwrite-derived
         # list. Requesting a *narrower* set than was granted makes the refresh fail with "scope has
         # changed" and silently triggers a fresh browser auth — so one read+write token must be able
         # to serve read-only reads (a superset covers the subset).
         creds = Credentials.from_authorized_user_file(str(tf))
-    except Exception:
-        return None
+    except Exception as e:
+        return None, f"{who} has an unreadable token ({type(e).__name__}: {e})"
     # A write op can't run on a token granted only read-only scopes — force a re-auth to upgrade.
     granted = creds.scopes or []
     if not readonly and _WRITE_MARKER_SCOPE not in granted:
-        return None
+        return None, f"{who} has a read-only grant and this is a write"
     if not _has_drive_scope(granted, readonly):
-        return None  # old drive.file-only token — one re-consent upgrades it
+        return None, f"{who} has a pre-2026-09 token (per-file Drive only)"  # one re-consent upgrades it
     if creds.valid:
-        return creds
-    if creds.expired and creds.refresh_token:
-        try:
-            creds.refresh(Request())
-        except TransportError:
-            raise  # offline — not a dead token; never answer a network blip with a browser
-        except Exception:
-            return None
-        _write_token(tf, creds)
-        return creds
-    return None
+        return creds, ""
+    if not creds.refresh_token:
+        return None, f"{who} has an expired token with no refresh token"
+    try:
+        creds.refresh(Request())
+    except TransportError:
+        raise  # offline — not a dead token; never answer a network blip with a browser
+    except Exception as e:
+        return None, f"{who} has an expired token that couldn't refresh ({e.args[0] if e.args else e})"
+    _write_token(tf, creds)
+    return creds, ""
+
+
+def _load_cached(readonly: bool, account: str) -> Credentials | None:
+    return _check_cached(readonly, account)[0]
 
 
 def _has_tty() -> bool:
@@ -440,33 +447,16 @@ def _has_tty() -> bool:
         return False
 
 
-def _consent_reason(readonly: bool, account: str) -> str:
-    """Why the cached token won't do — the one line a user (or agent) needs to act on."""
-    tf = token_file(account)
-    if not tf.exists():
-        return f"'{account}' isn't signed in"
-    try:
-        scopes = json.loads(tf.read_text()).get("scopes") or []
-    except (OSError, ValueError):
-        return f"'{account}' has an unreadable token"
-    if not readonly and _WRITE_MARKER_SCOPE not in scopes:
-        return f"'{account}' has a read-only grant and this is a write"
-    if not _has_drive_scope(scopes, readonly):
-        return f"'{account}' has a pre-2026-09 token (per-file Drive only)"
-    return f"'{account}' has an expired token that couldn't refresh"
-
-
 def _auth_cmd(account: str) -> str:
     return f"ko google auth {account}"
 
 
-def _run_flow(readonly: bool, account: str, *, explicit: bool = False) -> Credentials:
+def _run_flow(readonly: bool, account: str, *, explicit: bool = False, reason: str = "") -> Credentials:
     """Browser consent. Reached implicitly (a command found no usable token) it refuses without
     a terminal — an agent would otherwise hang on a callback nobody will click — and says why
     on stderr before opening the browser when there is one. `explicit` is the `auth` command:
-    the user asked, so it always runs."""
+    the user asked, so it always runs. `reason`: why the cached token won't do (_check_cached)."""
     if not explicit:
-        reason = _consent_reason(readonly, account)
         if not _has_tty():
             raise AuthError(f"{reason} — re-consent needs a browser (in a terminal)", fix=_auth_cmd(account))
         grant = "read-only" if readonly else "read+write"
@@ -512,12 +502,12 @@ def get_credentials(
         return service_account.Credentials.from_service_account_file(
             str(sa), scopes=_scopes(readonly)
         )
-    creds = _load_cached(readonly, account)
+    creds, reason = _check_cached(readonly, account)
     if creds is not None:
         return creds
     if not token_file(account).exists():
         raise unknown_account(account)
-    return _run_flow(readonly, account)
+    return _run_flow(readonly, account, reason=reason)
 
 
 def unknown_account(account: str) -> AuthError:

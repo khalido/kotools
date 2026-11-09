@@ -14,9 +14,11 @@ from typing import NoReturn
 import typer
 
 from ._cli_shared import (
+    _BUGS,
     _big,
     _clip,
     _die,
+    _die_from,
     _emit_json,
     _link,
     _no_results,
@@ -196,7 +198,7 @@ def llm_cmd(
         if llm_mod.last_cost:
             typer.echo(llm_mod.last_cost.note, err=True)
     except Exception as e:
-        _die(str(e))
+        _die_from(e)
 
 
 def _inputs(files: list[str] | None) -> tuple[str | None, list]:
@@ -267,9 +269,9 @@ def decide_cmd(
     try:
         d = llm_mod.decide(question, text, model=model, choice=choice_opts, score=score_opts, tags=tag_opts)
     except Exception as e:
-        _die(str(e), as_json=as_json)
+        _die_from(e, as_json=as_json)
     if as_json:
-        typer.echo(json.dumps(asdict(d)))
+        _emit_json(d)
     else:
         _print_decision(d)
     typer.echo(llm_mod.last_cost.note, err=True)
@@ -370,7 +372,7 @@ def sum_cmd(
         try:
             out = llm_mod.run(sum_prompt, stdin=text, model=use_model)
         except Exception as e:  # model/key errors fail the run — they'd fail every input
-            _die(str(e))
+            _die_from(e)
         if llm_mod.last_cost:
             typer.echo(llm_mod.last_cost.note, err=True)
         return out
@@ -467,7 +469,7 @@ def models_info(
     for part in info.unavailable:
         typer.echo(f"[unavailable: {part}]", err=True)
     if as_json:
-        typer.echo(json.dumps(asdict(info), default=str))
+        _emit_json(info)
         return
     for line in _model_info_lines(info, years, links=sys.stdout.isatty()):
         typer.echo(line)
@@ -483,7 +485,7 @@ def _models_compare(queries: list[str], years: int, as_json: bool) -> None:
             return models_mod.info(q, years=years, threads=1)
         except LookupError as e:
             return {"query": q, "error": str(e), "code": "not_found"}
-        except TypeError, AttributeError, NameError, ImportError:
+        except _BUGS:
             raise  # our bug, not the upstream's: surface it
         except Exception as e:
             return {"query": q, "error": f"model lookup failed: {e}", "code": "upstream"}
@@ -615,7 +617,7 @@ def ai_cmd(
     except typer.Exit:
         raise
     except Exception as e:
-        _die(str(e))
+        _die_from(e)
 
 
 # --- agent commands ---
@@ -652,7 +654,7 @@ def agent_research(
     except typer.Exit:
         raise
     except Exception as e:
-        _die(str(e))
+        _die_from(e)
 
 
 @agent_app.command("repo")
@@ -684,7 +686,7 @@ def agent_repo(
     except typer.Exit:
         raise
     except Exception as e:
-        _die(str(e))
+        _die_from(e)
 
 
 @agent_app.command("tv")
@@ -711,7 +713,7 @@ def agent_tv(
     except typer.Exit:
         raise
     except Exception as e:
-        _die(str(e))
+        _die_from(e)
 
 
 sessions_app = typer.Typer(
@@ -915,7 +917,7 @@ def tt_lists(
     try:
         projects = ticktick_mod.list_projects()
     except Exception as e:
-        _die(str(e), as_json=json_out)
+        _die_from(e, as_json=json_out)
     if not projects:
         _no_results("no lists", json_out)
     if json_out:
@@ -944,7 +946,7 @@ def tt_items(
     except typer.Exit:
         raise
     except Exception as e:
-        _die(str(e), as_json=json_out)
+        _die_from(e, as_json=json_out)
     if not tasks:
         _no_results(f"{proj.name}: no open tasks", json_out)
     if json_out:
@@ -1017,7 +1019,7 @@ def tt_add(
     except typer.Exit:
         raise
     except Exception as e:
-        _die(str(e), as_json=json_out)
+        _die_from(e, as_json=json_out)
     if json_out:
         _emit_json([task])
         return
@@ -1052,7 +1054,7 @@ def tt_done(
     except typer.Exit:
         raise
     except Exception as e:
-        _die(str(e), as_json=json_out)
+        _die_from(e, as_json=json_out)
     names = {p.id: p.name for p in projects}
 
     def _list_of(task) -> str:
@@ -1078,7 +1080,7 @@ def tt_done(
     try:
         ticktick_mod.complete_task(task.project_id, task.id)
     except Exception as e:
-        _die(str(e), as_json=json_out)
+        _die_from(e, as_json=json_out)
     if json_out:
         _emit_json([task])
         return
@@ -1099,7 +1101,7 @@ def tt_search(
     try:
         hits = ticktick_mod.search(query)
     except Exception as e:
-        _die(str(e), as_json=json_out)
+        _die_from(e, as_json=json_out)
     if not hits:
         _no_results(f"no tasks matching {query!r}", json_out)
     hits = hits[:n]
@@ -1274,7 +1276,7 @@ def publish_list(
     if not rows and not extra:
         _no_results("nothing published yet", as_json)
     if as_json:
-        typer.echo(json.dumps([asdict(p) for p in rows] + extra, default=str))
+        _emit_json([*rows, *extra])
         return
     for p in rows:
         typer.echo(f"{p.name}\t{p.url}\t{p.folder}\t{p.updated_at[:10]}")
@@ -1428,7 +1430,7 @@ def prompt_cmd(
         )
         return
     if as_json:
-        typer.echo(json.dumps(asdict(p)))
+        _emit_json(p)
         return
     typer.echo(p.body)
 
@@ -1489,7 +1491,7 @@ def mcp_inspect(
         typer.echo(json.dumps(match.schema, indent=2, default=str))
         return
     if as_json:
-        typer.echo(json.dumps(asdict(info), default=str))
+        _emit_json(info)
         return
     typer.echo(f"✓ {info.name} v{info.version}  (protocol {info.protocol})", err=True)
     typer.echo(f"  capabilities: {', '.join(info.capabilities) or '(none)'}", err=True)
@@ -1762,7 +1764,10 @@ def brief_cmd(
 
     Sends calendar and email content to the configured LLM. Use --raw for a local-only view.
     """
-    sections = brief_mod.gather()
+    try:
+        sections = brief_mod.gather()
+    except Exception as e:  # a missing key: each source's own failure is already a note
+        _die_from(e)
 
     if raw:
         typer.echo(brief_mod.render_raw(sections))
@@ -1787,7 +1792,7 @@ def brief_cmd(
     try:
         result = llm_mod.run(brief_mod.BRIEF_SYSTEM, stdin=content, model=model)
     except Exception as e:
-        _die(str(e))
+        _die_from(e)
     typer.echo(result)
     if llm_mod.last_cost:
         typer.echo(llm_mod.last_cost.note, err=True)

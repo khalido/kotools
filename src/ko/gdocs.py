@@ -14,6 +14,7 @@ reading review comments, see `gdrive.py` — those are Drive-API features the Do
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import NoReturn
 
 from googleapiclient.errors import HttpError
 
@@ -48,7 +49,7 @@ class DocsPermissionDenied(DocsError):
     pass
 
 
-def _handle(e: HttpError, context: str) -> None:
+def _handle(e: HttpError, context: str) -> NoReturn:
     raise_for_status(
         e,
         context,

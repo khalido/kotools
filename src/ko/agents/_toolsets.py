@@ -21,6 +21,7 @@ from ko import hf as hf_mod
 from ko import hn as hn_mod
 from ko import papers as papers_mod
 from ko import tmdb as tmdb_mod
+from ko._cli_shared import _BUGS
 from ko.agents import _files as _files_mod
 from ko.arxiv import SearchResult as ArxivResult
 from ko.config import MissingKeyError
@@ -43,7 +44,7 @@ def _try(label: str, fn, *args, **kwargs):
     missing — so it aborts the run and lands as one clear line on stderr instead."""
     try:
         return fn(*args, **kwargs)
-    except TypeError, AttributeError, NameError, ImportError, MissingKeyError:
+    except (*_BUGS, MissingKeyError):
         raise
     except Exception as e:
         return f"{label} unavailable ({type(e).__name__}: {e}). Note this and try another source."

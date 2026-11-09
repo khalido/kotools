@@ -32,8 +32,8 @@ everything else works — `my_lists` skips it rather than failing.
 from __future__ import annotations
 
 import json
-import os
 import re
+import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from functools import lru_cache
@@ -42,7 +42,7 @@ from typing import TYPE_CHECKING
 import requests
 
 from . import config
-from .dirs import state_file
+from .dirs import state_file, write_atomic
 
 if TYPE_CHECKING:
     from xdk import Client
@@ -139,7 +139,7 @@ def search(
     start = datetime.now(UTC) - timedelta(days=days)
     common = {
         "query": query,
-        "max_results": max(10, min(n, 100)),  # API floor is 10, cap 100
+        "max_results": _page_size(n, 10),
         "start_time": start.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "post_fields": ["created_at", "public_metrics", "author_id"],
         "expansions": ["author_id"],
@@ -179,11 +179,16 @@ def _cache() -> dict:
     return {}
 
 
+def _page_size(n: int, floor: int) -> int:
+    """X's max_results for `n` posts: the endpoint's floor up to 100 a page. X bills every post
+    it returns, so asking below the floor says so instead of quietly paying for more."""
+    if n < floor:
+        print(f"note: X returns at least {floor} posts a request and bills each; showing {n}", file=sys.stderr)
+    return max(floor, min(n, 100))
+
+
 def _cache_write(data: dict) -> None:
-    CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    tmp = CACHE_FILE.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, indent=1))
-    os.replace(tmp, CACHE_FILE)  # atomic — a crash mid-write can't corrupt the cache
+    write_atomic(CACHE_FILE, json.dumps(data, indent=1))
 
 
 def _user_id(handle: str) -> str:
@@ -276,7 +281,7 @@ def list_posts(
     handle = handle or _default_handle()
     pages = _client().lists.get_posts(
         id=_resolve_list(name, handle),
-        max_results=max(10, min(n, 100)),
+        max_results=_page_size(n, 10),
         post_fields=["created_at", "public_metrics", "author_id"],
         expansions=["author_id"],
         user_fields=["username"],
@@ -297,7 +302,7 @@ def user_posts(handle: str, n: int = DEFAULT_MAX_RESULTS) -> list[Post]:
     uid = _user_id(_parse_handle(handle))
     pages = _client().users.get_posts(
         id=uid,
-        max_results=max(5, min(n, 100)),  # user-timeline floor is 5
+        max_results=_page_size(n, 5),
         post_fields=["created_at", "public_metrics", "author_id"],
         expansions=["author_id"],
         user_fields=["username"],

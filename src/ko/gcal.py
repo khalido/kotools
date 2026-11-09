@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+from typing import NoReturn
 from zoneinfo import ZoneInfo
 
 from googleapiclient.errors import HttpError
@@ -60,7 +61,7 @@ class CalError(GoogleError):
     pass
 
 
-def _handle(e: HttpError, context: str) -> None:
+def _handle(e: HttpError, context: str) -> NoReturn:
     raise_for_status(
         e, context, not_found=CalError, permission=CalError, hint="Did you `ko google auth` (read+write)?"
     )

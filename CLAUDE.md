@@ -54,11 +54,11 @@ This file is a stub, not a manual — same rule as agent-browser/herdr: **the in
 - **One file per domain.** No shared `utils/` until three callers exist.
 
 ## Stack
-Python 3.15, `uv`, `ruff`, `pytest`, `typer`. Module-local dataclasses; `@lru_cache` singletons.
+Python 3.15, `uv`, `ruff`, `pytest`, `typer`. Module-local dataclasses; `@lru_cache` singletons. Lint with `ruff check`; never run `ruff format`, because the repo isn't formatted with it and one run rewrites 43 files.
 
 ## Adding a subcommand
 1. `src/ko/<thing>.py` — thin SDK wrapper + dataclass results
-2. `cli.py` — Typer subapp, every flag with `help=`
+2. `cli.py` — Typer subapp, every flag with `help=`. Use the shared helpers in `_cli_shared.py`: a caught exception exits through `_die_from(e, as_json=...)` (missing key → `config`, Google token → `auth`, our bugs re-raise), `--json` output through `_emit_json`. A gate (send, spend, delete) lives in the module function, not only in the CLI. Cache and state files are written with `dirs.write_atomic`.
 3. `tests/test_<thing>.py` — smoke test; skip live calls without keys
 4. Deps into `[project].dependencies`
 

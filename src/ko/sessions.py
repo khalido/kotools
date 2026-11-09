@@ -20,7 +20,6 @@ LLM-generated summaries and tags that are too expensive to regenerate on every
 from __future__ import annotations
 
 import json
-import os
 import sqlite3
 from contextlib import closing
 from datetime import UTC, datetime
@@ -29,7 +28,7 @@ from uuid import uuid4
 
 from pydantic_ai.messages import ModelMessagesTypeAdapter
 
-from ko.dirs import state_dir
+from ko.dirs import state_dir, write_atomic
 
 
 def sessions_dir() -> Path:
@@ -86,10 +85,7 @@ def save(session_id: str, agent: str, messages: list) -> Path:
         },
         indent=2,
     )
-    # atomic: this is rewritten every REPL turn — a crash mid-write must not corrupt the file
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(payload)
-    os.replace(tmp, path)
+    write_atomic(path, payload)  # rewritten every REPL turn: a crash mid-write must not corrupt it
     return path
 
 

@@ -26,6 +26,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from . import config
+from .dirs import write_atomic
 
 WRITEUP_COST = "~10–15c"  # a `-s` write-up on the default model; measured 9–15c (WORKLOG 2026-11-04)
 
@@ -126,10 +127,7 @@ def _cache(kind: str, name: str) -> Path:
 
 def _write(path: Path, data) -> None:
     """Write a cache file whole or not at all, so a killed run can't leave half a JSON behind."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data))
-    tmp.replace(path)
+    write_atomic(path, json.dumps(data))
 
 
 def snippets(vid: str, languages: tuple[str, ...] = ("en",), *, refresh: bool = False) -> list[Snippet]:

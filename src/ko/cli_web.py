@@ -11,8 +11,10 @@ import typer
 
 from . import config
 from ._cli_shared import (
+    _BUGS,
     _big,
     _die,
+    _die_from,
     _emit_json,
     _fmt_day,
     _link,
@@ -120,7 +122,7 @@ def arxiv_search(
     try:
         results = arxiv_mod.search(query, max_results=n, recent=recent, since_months=since)
     except Exception as e:
-        _die(str(e), as_json=as_json)
+        _die_from(e, as_json=as_json)
     if not results:
         _no_results(f"No results for '{query}'.", as_json)
     if as_json:
@@ -152,7 +154,7 @@ def arxiv_fetch(
     try:
         content = arxiv_mod.fetch(arxiv_id)
     except Exception as e:
-        _die(str(e))
+        _die_from(e)
     if out is None:
         typer.echo(content)
     else:
@@ -271,7 +273,7 @@ def exa_search(
             with_summary=not no_text and not highlights,
         )
     except Exception as e:
-        _die(str(e), as_json=as_json)
+        _die_from(e, as_json=as_json)
     if not results:
         _no_results(f"No results for '{query}'.", as_json)
     if as_json:
@@ -308,7 +310,7 @@ def exa_get(
     try:
         result = exa_mod.get_contents(urls)
     except Exception as e:
-        _die(str(e))
+        _die_from(e)
     # A URL can come back present-but-empty (Exa returns HTTP 200 with a per-URL status even
     # on failure); treat both "absent" and "empty text" as failed so agents see a partial run.
     got = {u: t for u, t in result.texts.items() if t}
@@ -363,7 +365,7 @@ def hf_top(
     try:
         papers = hf_mod.top(n=n, date=date)
     except Exception as e:
-        _die(str(e), as_json=as_json)
+        _die_from(e, as_json=as_json)
     _echo_papers(papers, as_json, long)
 
 
@@ -378,7 +380,7 @@ def hf_search(
     try:
         results = hf_mod.search(query, n=n)
     except Exception as e:
-        _die(str(e), as_json=as_json)
+        _die_from(e, as_json=as_json)
     if not results:
         _no_results(f"No results for '{query}'.", as_json)
     _echo_papers(results, as_json, long)
@@ -393,9 +395,9 @@ def hf_info(
     try:
         p = hf_mod.info(ref)
     except Exception as e:
-        _die(str(e), as_json=as_json)
+        _die_from(e, as_json=as_json)
     if as_json:
-        typer.echo(json.dumps(asdict(p), default=str))
+        _emit_json(p)
         return
     typer.echo(f"{p.title}  ({p.upvotes}▲, {p.published_at.strftime('%Y-%m-%d')})")
     typer.echo(p.hf_url)
@@ -428,7 +430,7 @@ def hf_get(
     try:
         content = hf_mod.get(ref)
     except Exception as e:
-        _die(str(e))
+        _die_from(e)
     if out is None:
         typer.echo(content)
     else:
@@ -484,7 +486,7 @@ def papers_search(
     try:
         results = papers_mod.search(query, n=n)
     except Exception as e:
-        _die(str(e), as_json=as_json)
+        _die_from(e, as_json=as_json)
     if not results:
         _no_results(f"No results for '{query}'.", as_json)
     _echo_works(results, as_json)
@@ -508,9 +510,9 @@ def papers_get(
     try:
         w = papers_mod.get(ref)
     except Exception as e:
-        _die(str(e), as_json=as_json)
+        _die_from(e, as_json=as_json)
     if as_json:
-        typer.echo(json.dumps(asdict(w), default=str))
+        _emit_json(w)
         return
     if not info:
         # try each OA candidate in turn — direct PDFs first, landing page last;
@@ -548,7 +550,7 @@ def papers_cites(
     try:
         results = papers_mod.cites(ref, n=n)
     except Exception as e:
-        _die(str(e), as_json=as_json)
+        _die_from(e, as_json=as_json)
     if not results:
         _no_results(f"No citing works for {ref}.", as_json)
     _echo_works(results, as_json)
@@ -564,7 +566,7 @@ def papers_refs(
     try:
         results = papers_mod.refs(ref, n=n)
     except Exception as e:
-        _die(str(e), as_json=as_json)
+        _die_from(e, as_json=as_json)
     if not results:
         _no_results(f"No resolvable references for {ref}.", as_json)
     _echo_works(results, as_json)
@@ -580,7 +582,7 @@ def papers_similar(
     try:
         results = papers_mod.similar(ref, n=n)
     except Exception as e:
-        _die(str(e), as_json=as_json)
+        _die_from(e, as_json=as_json)
     if not results:
         _no_results(f"No recommendations for {ref}.", as_json)
     _echo_works(results, as_json)
@@ -622,7 +624,7 @@ def hn_top(
     try:
         stories = hn_mod.front_page(n=n) if now else hn_mod.top(n=n, days=days)
     except Exception as e:
-        _die(str(e), as_json=as_json)
+        _die_from(e, as_json=as_json)
     _echo_stories(stories, as_json)
 
 
@@ -645,7 +647,7 @@ def hn_search(
             query, n=n, years=years, by_date=new, min_comments=min_comments
         )
     except Exception as e:
-        _die(str(e), as_json=as_json)
+        _die_from(e, as_json=as_json)
     if not results:
         all_time = not years or hn_mod._is_url(query)
         window = "" if all_time else f" in the last {years} year(s) (use -y 0 for all time)"
@@ -665,7 +667,7 @@ def hn_item(
     try:
         story, comments = hn_mod.item(item_id, max_comments=n)
     except Exception as e:
-        _die(str(e), as_json=as_json)
+        _die_from(e, as_json=as_json)
     if as_json:
         typer.echo(
             json.dumps(
@@ -733,7 +735,7 @@ def doc(
         try:
             parsed, figures = doc_mod.deep(file, pages=pages, assets_dir=assets, describe=describe)
         except Exception as e:
-            _die(str(e))
+            _die_from(e)
         _write_doc(doc_mod.marked(parsed), out)
         if figures and assets:
             kept = len(list(assets.glob("*.png")))
@@ -745,7 +747,7 @@ def doc(
         try:
             head, body = doc_mod.docx_markdown(file)
         except Exception as e:
-            _die(str(e))
+            _die_from(e)
         _write_doc(f"{head}\n\n{body}", out)
         return
     try:
@@ -754,7 +756,7 @@ def doc(
         fix = "--yes spends it, -e vision reads it for free on a Mac, --no-ocr keeps text layers only."
         _die(f"{file.name}: {e.facts} {fix}", as_json=as_json, code="usage")
     except Exception as e:
-        _die(str(e), as_json=as_json)
+        _die_from(e, as_json=as_json)
     if as_json:
         import json
 
@@ -778,7 +780,7 @@ def ocr_serve(
     try:
         read = ocr.reader(name)
     except Exception as e:  # a missing key, no swiftc, not macOS
-        _die(str(e))
+        _die_from(e)
     try:
         srv = ocr.server(name, port=port, read=read)
     except OSError as e:
@@ -922,7 +924,7 @@ def x_search(
         try:
             lid = x_mod._resolve_list(scope_list, x_mod._default_handle())
         except Exception as e:
-            _die(str(e), as_json=as_json)
+            _die_from(e, as_json=as_json)
         q = f"{query} list:{lid}"
     if days > 7:
         note = f"full-archive search, {days}d back — costs credits per read"
@@ -932,7 +934,7 @@ def x_search(
     try:
         posts = x_mod.search(q, n=n, days=days, top=top)
     except Exception as e:
-        _die(str(e), as_json=as_json)
+        _die_from(e, as_json=as_json)
     if not posts:
         _no_results(f"No posts for '{query}' in the last {days} days.", as_json)
     _echo_posts(posts, as_json)
@@ -956,7 +958,7 @@ def x_list(
     try:
         posts = x_mod.list_posts(name, n=n)
     except Exception as e:
-        _die(str(e), as_json=as_json)
+        _die_from(e, as_json=as_json)
     if not posts:
         _no_results(f"No recent posts in list '{name}'.", as_json)
     _echo_posts(posts, as_json)
@@ -979,7 +981,7 @@ def x_user(
     try:
         posts = x_mod.user_posts(handle, n=n)
     except Exception as e:
-        _die(str(e), as_json=as_json)
+        _die_from(e, as_json=as_json)
     if not posts:
         _no_results(f"No recent posts for {handle!r}.", as_json)
     _echo_posts(posts, as_json)
@@ -994,7 +996,7 @@ def x_lists(
     try:
         lists = x_mod.my_lists()
     except Exception as e:
-        _die(str(e), as_json=as_json)
+        _die_from(e, as_json=as_json)
     if not lists:
         _no_results("no lists found (or your API tier can't read them)", as_json)
     lists = sorted(lists, key=lambda lst: lst.member_count, reverse=True)
@@ -1142,7 +1144,7 @@ def tv(
     try:
         top, rest = tmdb_mod.lookup(query, kind=kind, year=year, country=country)
     except Exception as e:
-        _die(str(e), as_json=as_json)
+        _die_from(e, as_json=as_json)
     if top is None:
         if as_json:  # keep the {top, matches} shape valid for a downstream parser
             typer.echo(json.dumps({"top": None, "matches": []}))
@@ -1212,7 +1214,7 @@ def yt_transcript(
         try:
             c = yt_mod.condense(vid, model=model, refresh=refresh)
         except Exception as e:
-            _die(str(e), as_json=as_json)
+            _die_from(e, as_json=as_json)
         _say_condensed(c)
         typer.echo(json.dumps(asdict(c), ensure_ascii=False) if as_json else c.text)
         return
@@ -1223,7 +1225,7 @@ def yt_transcript(
         _die(f"{e}{paid}", as_json=as_json, code=e.code)
     text = yt_mod.join(segs)
     if as_json:
-        typer.echo(json.dumps([asdict(s) for s in segs]))
+        _emit_json(segs)
         return
     typer.echo(f"[{vid}  ~{len(text) // 4:,} tokens]", err=True)
     typer.echo(text)
@@ -1251,7 +1253,7 @@ def yt_info(
     except ValueError as e:
         _die(str(e), as_json=as_json, code="usage")
     except (yt_mod.YtError, config.MissingKeyError) as e:
-        _die(str(e), as_json=as_json, code=getattr(e, "code", "error"))
+        _die(str(e), as_json=as_json, code=getattr(e, "code", "config"))
     out = []
     for v in videos:
         row = asdict(v) | {"url": v.url, "transcript": yt_mod.transcript_status(v.id, full=full)}
@@ -1298,7 +1300,7 @@ def yt_channel(
     except ValueError as e:
         _die(str(e), as_json=as_json, code="usage")
     except (yt_mod.YtError, config.MissingKeyError) as e:
-        _die(str(e), as_json=as_json, code=getattr(e, "code", "error"))
+        _die(str(e), as_json=as_json, code=getattr(e, "code", "config"))
     if ch.hidden:
         typer.echo(f"[{ch.title}: skipped {ch.hidden} private, deleted or not-yet-live uploads]", err=True)
     if ch.shorts_skipped:
@@ -1333,7 +1335,7 @@ def pkg_info(
             return pkg_mod.info(q, notes=len(names) == 1)
         except LookupError as e:
             return {"query": q, "error": str(e), "code": "not_found"}
-        except TypeError, AttributeError, NameError, ImportError:
+        except _BUGS:
             raise  # our bug, not the upstream's: surface it
         except Exception as e:
             return {"query": q, "error": f"package lookup failed: {e}", "code": "upstream"}

@@ -14,13 +14,19 @@ from __future__ import annotations
 
 
 def _try(label: str, fn, *args, **kwargs) -> tuple[str, str]:
-    """Call fn(); on any exception, return a one-liner fallback note instead of raising.
+    """Call fn(); on an error, return a one-liner fallback note instead of raising. Our bugs and
+    a missing key still raise, as in agents/_toolsets.py.
 
     Returns (section_title, text) — on failure the text is a single note line so
     the caller always gets something printable, never an exception.
     """
+    from ko._cli_shared import _BUGS
+    from ko.config import MissingKeyError
+
     try:
         return (label, fn(*args, **kwargs))
+    except (*_BUGS, MissingKeyError):
+        raise  # our bug, or an unset key to fix: never a section quietly left out
     except Exception as e:
         return (label, f"({label}: {e})")
 

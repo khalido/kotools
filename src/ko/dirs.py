@@ -40,3 +40,12 @@ def state_file(name: str) -> Path:
     if old.is_file() and not new.exists():
         shutil.move(old, new)
     return new
+
+
+def write_atomic(path: Path, text: str) -> None:
+    """Write a file whole or not at all (tmp file, then rename), creating its folder, so a crash
+    mid-write never leaves a half file that the next read takes for corrupt or empty."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text)
+    os.replace(tmp, path)
