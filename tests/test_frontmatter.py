@@ -68,3 +68,20 @@ def test_one_broken_user_prompt_stops_only_its_own_lookup(monkeypatch, tmp_path,
     assert err.startswith("skipped:") and "prompts/bad.md line 2" in err
     with pytest.raises(frontmatter.FrontMatterError, match="bad.md line 2"):
         prompt.get_prompt("bad")
+
+
+def test_skip_bad_drops_the_block_keeps_the_body(capsys):
+    text = "---\ntitle: Phase 2: costs\n---\n# Hi\n"
+    assert frontmatter.split(text, "x.md", skip_bad=True) == ({}, "# Hi\n")
+    assert capsys.readouterr().err.startswith("skipped front matter: x.md line 2")
+    assert frontmatter.split("---\ntitle: Notes #3\n---\nb", skip_bad=True) == ({}, "b")
+
+
+def test_publish_and_pdf_stop_by_default_and_name_the_flag(tmp_path):
+    from typer.testing import CliRunner
+
+    from ko.cli import app
+
+    (tmp_path / "bad.md").write_text("---\ntitle: Phase 2: costs\n---\n# Hi\n")
+    r = CliRunner().invoke(app, ["pdf", str(tmp_path / "bad.md")])
+    assert r.exit_code == 1 and "--skip-bad-front-matter" in r.stderr

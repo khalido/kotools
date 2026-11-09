@@ -36,6 +36,7 @@ models_mod = lazy("models")
 mcp_client_mod = lazy("mcp_client")
 prompt_mod = lazy("prompt")
 publish_mod = lazy("publish")
+frontmatter_mod = lazy("frontmatter")
 ticktick_mod = lazy("ticktick")
 agents = lazy("agents")  # pydantic-ai + every toolset: the bulk of the old startup
 
@@ -1203,12 +1204,17 @@ def publish_up(
         "--pin",
         help="set/rotate the gate PIN on a --hono site ('new' = random 6-digit)",
     ),
+    skip_bad_front_matter: bool = typer.Option(False, "--skip-bad-front-matter", help="drop malformed front matter (note on stderr) instead of stopping"),
 ) -> None:
     """Deploy a folder to Cloudflare. Prints the URL. Re-running overwrites the same URL."""
     try:
-        url = publish_mod.deploy(Path(path), name=name, force=force, pin=pin)
+        url = publish_mod.deploy(
+            Path(path), name=name, force=force, pin=pin, skip_bad_front_matter=skip_bad_front_matter
+        )
     except publish_mod.PublishError as e:
         _publish_die(e)
+    except frontmatter_mod.FrontMatterError as e:
+        _die(str(e), code="config", fix=f"ko publish up {path} --skip-bad-front-matter")
     if url:
         typer.echo(url)  # stdout: the URL itself (pipeable)
         gate_pin = publish_mod.config_pin(Path(path))

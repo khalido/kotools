@@ -355,7 +355,7 @@ def _strip_html(md_text: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", "\n".join(out))
 
 
-def _page_info(path: Path) -> dict:
+def _page_info(path: Path, skip_bad: bool = False) -> dict:
     """title/desc/tags/body for one md page. Front matter wins (`title:`,
     `description:`/`summary:`/`desc:`, `tags:`); fallbacks are the first `# ` heading
     and the first prose paragraph."""
@@ -363,7 +363,7 @@ def _page_info(path: Path) -> dict:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return {}
-    meta, body = frontmatter.split(text, str(path))
+    meta, body = frontmatter.split(text, str(path), skip_bad=skip_bad)
     body = _strip_html(body)  # llms.txt is for agents — tag soup is noise there
     lines = [ln.strip() for ln in body.splitlines()]
     title = meta.get("title") or next(
@@ -405,14 +405,14 @@ def is_md_site(folder: Path) -> bool:
         return False
 
 
-def generate_llms_txt(folder: Path) -> str | None:
+def generate_llms_txt(folder: Path, skip_bad: bool = False) -> str | None:
     """Build llms.txt from a site's top-level md pages (README first — its title/first
     paragraph become the H1/summary). None when `folder` isn't an md site."""
     if not is_md_site(folder):
         return None
     d = content_dir(folder)
     pages = sorted(d.glob("*.md"), key=lambda p: (p.name != "README.md", p.name))
-    infos = [(p, _page_info(p)) for p in pages if p.name != "CLAUDE.md"]
+    infos = [(p, _page_info(p, skip_bad)) for p in pages if p.name != "CLAUDE.md"]
     infos = [(p, i) for p, i in infos if i]
     if not infos:
         return None
@@ -457,7 +457,7 @@ _TEXT_HEADERS = """\
 """
 
 
-def write_llms_txt(folder: Path) -> Path | None:
+def write_llms_txt(folder: Path, skip_bad: bool = False) -> Path | None:
     """(Re)generate the site's llms.txt (plus a `_headers` charset file when the site
     has none). A hand-authored llms.txt (marker line removed) is never touched;
     non-md sites are skipped. Returns the path when (re)written."""
@@ -468,7 +468,7 @@ def write_llms_txt(folder: Path) -> Path | None:
             encoding="utf-8", errors="replace"
         ):
             return None
-        text = generate_llms_txt(folder)
+        text = generate_llms_txt(folder, skip_bad)
         if text is None:
             return None
         out.write_text(text, encoding="utf-8")
@@ -855,6 +855,7 @@ def deploy(
     name: str | None = None,
     force: bool = False,
     pin: str | None = None,
+    skip_bad_front_matter: bool = False,
 ) -> str:
     """Deploy `folder` to Cloudflare via `wrangler deploy` run inside it. Returns the URL
     (or "" if wrangler succeeded but we couldn't parse one).
@@ -893,7 +894,7 @@ def deploy(
 
     # md sites: refresh the agent-facing index first. It parses every page's front matter,
     # so a bad page stops the deploy before the PIN, ignore list or config change.
-    write_llms_txt(folder)
+    write_llms_txt(folder, skip_bad_front_matter)
     if pin is not None:
         set_pin(folder, pin)  # before wrangler, so the new PIN ships
     _write_ignore(folder)

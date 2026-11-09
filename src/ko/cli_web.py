@@ -26,6 +26,7 @@ from ._cli_shared import (
 )
 
 arxiv_mod = lazy("arxiv")
+frontmatter_mod = lazy("frontmatter")
 doc_mod = lazy("doc")
 exa_mod = lazy("exa")
 fetch_mod = lazy("fetch")
@@ -843,6 +844,7 @@ def pdf(
         help="which identity to send as: a name in ~/.config/ko/brands/ (or a path to a "
         "brand.yml); else $KO_BRAND or `\\[pdf] brand`",
     ),
+    skip_bad_front_matter: bool = typer.Option(False, "--skip-bad-front-matter", help="drop malformed front matter (note on stderr) instead of stopping"),
 ) -> None:
     """Markdown → print-ready PDF (A4, code highlighting, page footer). Prints the path it
     wrote to stdout, so `-a "$(ko pdf doc.md)"` composes. Alias: `ko md-to-pdf`."""
@@ -850,8 +852,11 @@ def pdf(
 
     try:
         written, used_brand = pdf_mod.render(
-            file, out, style=style, letterhead=letterhead, brand_file=brand
+            file, out, style=style, letterhead=letterhead, brand_file=brand,
+            skip_bad_front_matter=skip_bad_front_matter,
         )
+    except frontmatter_mod.FrontMatterError as e:
+        _die(str(e), code="config", fix=f"ko pdf {file} --skip-bad-front-matter")
     except ValueError as e:  # unknown --style / --brand: a usage error, not a runtime one
         _die(str(e), code="usage")
     except FileNotFoundError as e:
