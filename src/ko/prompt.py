@@ -29,8 +29,8 @@ class Prompt:
     source: str  # "packaged" (ships with ko) or "user" (~/.config/ko/prompts)
 
 
-def _make(name_fallback: str, text: str, source: str, path: str) -> Prompt:
-    meta, body = frontmatter.split(text, path)
+def _make(name_fallback: str, text: str, source: str, path: str, warn: bool) -> Prompt:
+    meta, body = frontmatter.split(text, path, warn=warn)
     return Prompt(
         name=meta.get("name") or name_fallback,
         description=meta.get("description", ""),
@@ -43,12 +43,10 @@ def _user_dir() -> Path:
     return dirs.config_dir() / "prompts"
 
 
-def _scan() -> tuple[dict[str, Prompt], dict[str, frontmatter.FrontMatterError]]:
-    """Every brief by name, plus the files whose front matter doesn't parse (by file stem).
-    Packaged first, then user briefs overlaid (user wins by name). A broken file stops only
-    a command that asks for it, so one bad brief can't take down `ko sum` or completion."""
-    prompts: dict[str, Prompt] = {}
-    broken: dict[str, frontmatter.FrontMatterError] = {}
+def list_prompts(*, warn: bool = True) -> list[Prompt]:
+    """All briefs, sorted by name. Packaged first, then user briefs overlaid (user wins by
+    name). A brief whose front matter doesn't parse keeps its body under its file name, with a
+    note on stderr (`warn=False` for shell completion)."""
     sources = []
     packaged = resources.files("ko") / "prompts"
     if packaged.is_dir():
@@ -56,24 +54,10 @@ def _scan() -> tuple[dict[str, Prompt], dict[str, frontmatter.FrontMatterError]]
     user = _user_dir()
     if user.is_dir():
         sources += [(p.stem, p, "user", str(p)) for p in sorted(user.glob("*.md"))]
+    prompts: dict[str, Prompt] = {}
     for stem, file, source, label in sources:
-        try:
-            p = _make(stem, file.read_text(encoding="utf-8"), source, label)
-        except frontmatter.FrontMatterError as e:
-            broken[stem] = e
-            continue
+        p = _make(stem, file.read_text(encoding="utf-8"), source, label, warn)
         prompts[p.name] = p  # a user brief overrides a packaged one by name
-        broken.pop(p.name, None)
-    return prompts, broken
-
-
-def list_prompts(*, warn: bool = True) -> list[Prompt]:
-    """All briefs, sorted by name. A brief whose front matter doesn't parse is left out with
-    a note on stderr (`warn=False` for shell completion)."""
-    prompts, broken = _scan()
-    if warn:
-        for e in broken.values():
-            print(f"skipped: {e}", file=sys.stderr)
     return sorted(prompts.values(), key=lambda p: p.name)
 
 
@@ -89,13 +73,10 @@ def resolve(name: str) -> Prompt | None:
     ambiguous tag notes the alternatives on stderr and takes the first rather than failing,
     because in a personal library of a dozen briefs a near-miss is more useful than an error.
     """
-    prompts, broken = _scan()
-    if name in prompts:
-        return prompts[name]
-    if name in broken:
-        raise broken[name]
+    ordered = list_prompts()
+    if exact := next((p for p in ordered if p.name == name), None):
+        return exact
     lowered = name.lower()
-    ordered = sorted(prompts.values(), key=lambda p: p.name)
     for match in (
         [p for p in ordered if p.name.lower().startswith(lowered)],
         [p for p in ordered if lowered in p.name.lower()],

@@ -634,12 +634,11 @@ def render(
     style: str | None = None,
     letterhead: bool | None = None,
     brand_file: str | Path | None = None,
-    skip_bad_front_matter: bool = False,
 ) -> tuple[Path, dict]:
     """Render a markdown file to PDF. Returns (path written, the brand actually used) —
     the caller needs the brand to warn when it never resolved past the placeholder."""
     # Recognised keys: title, date and author (into the PDF's own metadata) and style.
-    front, md_text = frontmatter.split(input_path.read_text(), input_path.name, skip_bad=skip_bad_front_matter)
+    front, md_text = frontmatter.split(input_path.read_text(), input_path.name)
     resolved = resolve_style(style or front.get("style"))
     # The one per-run override that earns a flag: the `report` look is also how internal
     # docs are rendered, minus the letterhead they shouldn't carry.

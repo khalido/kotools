@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from ko import frontmatter, prompt
 
 
@@ -35,9 +33,12 @@ def test_front_matter_one_parser_for_pdf_publish_prompt():
     assert frontmatter.split("---\ntitle: A\nno closing fence") == ({}, "---\ntitle: A\nno closing fence")
 
 
-def test_front_matter_bad_yaml_stops_with_the_file_and_line():
-    with pytest.raises(frontmatter.FrontMatterError, match=r'notes\.md line 3: .*title: "Phase 2: costs"'):
-        frontmatter.split("---\nname: x\ntitle: Phase 2: costs\n---\nbody", "notes.md")
+def test_bad_yaml_drops_the_block_keeps_the_body_and_names_the_line(capsys):
+    assert frontmatter.split("---\nname: x\ntitle: Phase 2: costs\n---\n# Hi\n", "notes.md") == ({}, "# Hi\n")
+    err = capsys.readouterr().err
+    assert err.startswith("skipped front matter: notes.md line 3") and 'title: "Phase 2: costs"' in err
+    frontmatter.split("---\ntitle: Phase 2: costs\n---\nb", warn=False)
+    assert capsys.readouterr().err == ""
 
 
 def test_values_stay_as_written():
@@ -46,9 +47,9 @@ def test_values_stay_as_written():
     assert meta == {"title": "yes", "version": "1.10", "time": "12:30", "code": "0123", "on": "x"}
 
 
-def test_unquoted_hash_stops_instead_of_cutting_the_value():
-    with pytest.raises(frontmatter.FrontMatterError, match=r'x\.md line 2: " #"'):
-        frontmatter.split("---\ntitle: Notes #3\n---\nb", "x.md")
+def test_unquoted_hash_drops_the_block_instead_of_cutting_the_value(capsys):
+    assert frontmatter.split("---\ntitle: Notes #3\n---\nb", "x.md") == ({}, "b")
+    assert 'x.md line 2: " #"' in capsys.readouterr().err
     assert frontmatter.split('---\ntitle: "Notes #3"\n# a comment\n---\nb')[0] == {"title": "Notes #3"}
 
 
@@ -57,31 +58,21 @@ def test_two_horizontal_rules_are_not_front_matter():
     assert frontmatter.split(text) == ({}, text)
 
 
-def test_one_broken_user_prompt_stops_only_its_own_lookup(monkeypatch, tmp_path, capsys):
+def test_a_broken_user_prompt_keeps_its_body(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(prompt.dirs, "config_dir", lambda: tmp_path)
     (tmp_path / "prompts").mkdir()
     (tmp_path / "prompts" / "bad.md").write_text("---\ntitle: Phase 2: costs\n---\nbody")
-    assert prompt.get_prompt("decide").name == "decide"  # others still resolve
-    assert "bad" not in prompt.names() and capsys.readouterr().err == ""  # completion stays quiet
-    prompt.list_prompts()
-    err = capsys.readouterr().err
-    assert err.startswith("skipped:") and "prompts/bad.md line 2" in err
-    with pytest.raises(frontmatter.FrontMatterError, match="bad.md line 2"):
-        prompt.get_prompt("bad")
+    assert "bad" in prompt.names() and capsys.readouterr().err == ""  # completion stays quiet
+    assert prompt.get_prompt("bad").body == "body"
+    assert "prompts/bad.md line 2" in capsys.readouterr().err
 
 
-def test_skip_bad_drops_the_block_keeps_the_body(capsys):
-    text = "---\ntitle: Phase 2: costs\n---\n# Hi\n"
-    assert frontmatter.split(text, "x.md", skip_bad=True) == ({}, "# Hi\n")
-    assert capsys.readouterr().err.startswith("skipped front matter: x.md line 2")
-    assert frontmatter.split("---\ntitle: Notes #3\n---\nb", skip_bad=True) == ({}, "b")
-
-
-def test_publish_and_pdf_stop_by_default_and_name_the_flag(tmp_path):
+def test_pdf_renders_past_bad_front_matter(tmp_path):
     from typer.testing import CliRunner
 
     from ko.cli import app
 
     (tmp_path / "bad.md").write_text("---\ntitle: Phase 2: costs\n---\n# Hi\n")
-    r = CliRunner().invoke(app, ["pdf", str(tmp_path / "bad.md")])
-    assert r.exit_code == 1 and "--skip-bad-front-matter" in r.stderr
+    r = CliRunner().invoke(app, ["pdf", str(tmp_path / "bad.md"), "--brand", ""])
+    assert r.exit_code == 0, r.output
+    assert "skipped front matter: bad.md line 2" in r.stderr and (tmp_path / "bad.pdf").exists()

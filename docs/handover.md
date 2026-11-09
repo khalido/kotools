@@ -1,8 +1,22 @@
-# Handover — 2026-10-28
+# Handover — 2026-11-10
 
 Read CLAUDE.md first, then this.
 
-**2026-11-09: code-smell pass, on main** (WORKLOG has what was fixed, what was left and why). New shared helpers: `_die_from`, `_emit_json`, `dirs.write_atomic`; CLAUDE.md's "Adding a subcommand" says when to use them. Left for a later pass: ~15 Google `except` blocks made redundant by `_GoogleTyper`, and the four front-matter parsers.
+## Next session: big-picture review (KO, 2026-11-10)
+
+Fable 5.2 is out. Start the next session on it as the **orchestrator**: sweep the whole project, judge it, then direct the work. Give the heavy lifting (reading many files, sweeps, drafts, fixes) to Opus and Sonnet subagents, check what they bring back against the code, and keep the judgment calls in the main thread.
+
+Questions for the sweep:
+- **Direction.** Does ko still match its vision (CLAUDE.md: bake in the best library once, 2–3 flags, safe for an agent to call blind)? What's drifted, what's dead weight, what's missing?
+- **Sensible.** Is anything over-built, hand-rolled where a library exists, or inconsistent between commands (flags, `--json` shapes, error codes, help text)?
+- **Auth and keys.** Google OAuth (`google_auth.py`, one token per account, `_GoogleTyper`), API keys (`config.require_key`, `[keys]` in config.toml), and the two LLM providers (Vercel AI Gateway for everything, OpenRouter only for Jev). Is it simple and in one place? Can a new user add one provider key and have everything work (not yet, `docs/ideas.md` "One provider isn't automatic yet")?
+- **Easy to add things.** How much does a new command, agent tool or provider take today? Is CLAUDE.md's "Adding a subcommand" enough, or does it need a scaffold or a shared pattern?
+
+Output: a short ranked list of what to change and why, shown to KO as a diagram or HTML page before any big refactor. Then rewrite this handover clean around that plan (it has grown into a log; most dated entries below can go to WORKLOG).
+
+**2026-11-10: front matter skips, never stops.** One parser, `frontmatter.split`, for `ko pdf`, `ko publish` and `ko prompt`. A block that doesn't parse is dropped with a stderr note naming the file and line, and the content still comes back (KO: an opinionated tool should get the job done). The short-lived `--skip-bad-front-matter` flag is gone. Candidate: `fetch._text_title` could now use `split(..., warn=False)` too. `main` is ahead of GitHub and not pushed.
+
+**2026-11-09: code-smell pass, on main** (WORKLOG has what was fixed, what was left and why). New shared helpers: `_die_from`, `_emit_json`, `dirs.write_atomic`; CLAUDE.md's "Adding a subcommand" says when to use them. Left for a later pass: ~15 Google `except` blocks made redundant by `_GoogleTyper`.
 
 **2026-11-07: v2026.11.7 is the first PyPI release since July.** `ko judge` is now `ko decide` (alias kept). Chota replaces yaad, and `ko` stays the toolbox. Next: install on the Pi5 (needs `uv`), then Chota swaps `fetchPage` for `ko fetch` on X links. Then `ko decide --each` (`docs/ideas.md`, "More use of Jev"). OpenRouter serves `ko decide` and is nearly empty ($0.03); pydantic-ai can't reach Jev on the gateway, so moving it waits on them. The re-check and the one-provider gaps are in `docs/ideas.md`.
 
