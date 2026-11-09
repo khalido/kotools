@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from ko import pdf
+from ko import frontmatter, pdf
 
 DOC = """---
 title: Front matter wins
@@ -40,7 +40,7 @@ BARE = pdf.BUILTIN_STYLES["bare"]
 
 @pytest.fixture
 def body():
-    return pdf.split_front_matter(DOC)[1]
+    return frontmatter.split(DOC)[1]
 
 
 @pytest.fixture(autouse=True)
@@ -54,13 +54,13 @@ def _no_machine_config(monkeypatch):
 
 
 def test_front_matter_split():
-    front, rest = pdf.split_front_matter(DOC)
+    front, rest = frontmatter.split(DOC)
     assert front["title"] == "Front matter wins" and front["author"] == "Ko"
     assert rest.startswith("# Heading one")
 
 
 def test_front_matter_absent_passes_through():
-    front, rest = pdf.split_front_matter("# Plain\n")
+    front, rest = frontmatter.split("# Plain\n")
     assert front == {} and rest == "# Plain\n"
 
 

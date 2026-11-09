@@ -40,7 +40,7 @@ from functools import lru_cache
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from ko import config, dirs
+from ko import config, dirs, frontmatter
 
 # --- Brand -------------------------------------------------------------------------
 
@@ -394,24 +394,10 @@ def _highlight_css() -> str:
 
 # --- Markdown ----------------------------------------------------------------------
 
-FRONT_MATTER_RE = re.compile(r"\A---\r?\n(.*?)\r?\n---\r?\n", re.DOTALL)
 HEADING_RE = re.compile(r"^(#{1,3})\s+(.+?)\s*$")
 H2_TAG_RE = re.compile(r"<h2>(.*?)</h2>", re.DOTALL)
 SLUG_NON_WORD_RE = re.compile(r"[^\w\s-]")
 SLUG_WS_RE = re.compile(r"[\s_-]+")
-
-
-def split_front_matter(text: str) -> tuple[dict, str]:
-    """Split a leading YAML front-matter block (--- … ---) from the body. Recognised keys:
-    `title`, `date`, `author` (the last two land in the PDF's own metadata) and `style`.
-    Everything else is carried but unused."""
-    m = FRONT_MATTER_RE.match(text)
-    if not m:
-        return {}, text
-    import yaml
-
-    data = yaml.safe_load(m.group(1))
-    return (data if isinstance(data, dict) else {}), text[m.end() :]
 
 
 def _slugify(text: str) -> str:
@@ -651,7 +637,8 @@ def render(
 ) -> tuple[Path, dict]:
     """Render a markdown file to PDF. Returns (path written, the brand actually used) —
     the caller needs the brand to warn when it never resolved past the placeholder."""
-    front, md_text = split_front_matter(input_path.read_text())
+    # Recognised keys: title, date and author (into the PDF's own metadata) and style.
+    front, md_text = frontmatter.split(input_path.read_text(), input_path.name)
     resolved = resolve_style(style or front.get("style"))
     # The one per-run override that earns a flag: the `report` look is also how internal
     # docs are rendered, minus the letterhead they shouldn't carry.

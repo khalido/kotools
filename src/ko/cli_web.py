@@ -857,7 +857,7 @@ def pdf(
     except FileNotFoundError as e:
         _die(f"{e.filename}: no such file")
     except (OSError, RuntimeError) as e:
-        _die(str(e))
+        _die_from(e)
     # The ops script's recurring bug: forgetting --brand shipped a PDF footed
     # "yourbrand.dev". Only worth saying when the document actually shows the brand.
     # `--brand ""` is an explicit "render unbranded" — warning about a choice you just made is noise.

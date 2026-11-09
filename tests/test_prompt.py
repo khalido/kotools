@@ -7,17 +7,6 @@ import pytest
 from ko import prompt
 
 
-def test_parse_frontmatter_and_body():
-    meta, body = prompt._parse("---\nname: x\ndescription: a brief\n---\n# Title\nbody\n")
-    assert meta == {"name": "x", "description": "a brief"}
-    assert body == "# Title\nbody\n"
-
-
-def test_parse_no_frontmatter_passthrough():
-    meta, body = prompt._parse("# Just markdown\nno meta")
-    assert meta == {} and body == "# Just markdown\nno meta"
-
-
 def test_packaged_briefs_present():
     names = prompt.names()
     assert "sveltekit-app" in names and "ko-publish-site" in names

@@ -35,7 +35,7 @@ from pathlib import Path
 
 import httpx2 as httpx
 
-from ko import config
+from ko import config, frontmatter
 from ko.dirs import state_dir
 
 COMPAT_DATE = "2026-06-01"
@@ -355,22 +355,6 @@ def _strip_html(md_text: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", "\n".join(out))
 
 
-def _parse_front_matter(text: str) -> tuple[dict, str]:
-    """Tiny `key: value` front matter between `---` fences → (meta, body). Deliberately
-    not YAML (no dep, no nesting) — flat string values only; quotes trimmed."""
-    if not text.startswith("---\n"):
-        return {}, text
-    end = text.find("\n---", 4)
-    if end == -1:
-        return {}, text
-    meta = {}
-    for line in text[4:end].splitlines():
-        if ":" in line:
-            k, v = line.split(":", 1)
-            meta[k.strip().lower()] = v.strip().strip("'\"")
-    return meta, text[end + 4 :].lstrip("\n")
-
-
 def _page_info(path: Path) -> dict:
     """title/desc/tags/body for one md page. Front matter wins (`title:`,
     `description:`/`summary:`/`desc:`, `tags:`); fallbacks are the first `# ` heading
@@ -379,7 +363,7 @@ def _page_info(path: Path) -> dict:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return {}
-    meta, body = _parse_front_matter(text)
+    meta, body = frontmatter.split(text, str(path))
     body = _strip_html(body)  # llms.txt is for agents — tag soup is noise there
     lines = [ln.strip() for ln in body.splitlines()]
     title = meta.get("title") or next(
@@ -907,11 +891,13 @@ def deploy(
             code="usage",
         )
 
+    # md sites: refresh the agent-facing index first. It parses every page's front matter,
+    # so a bad page stops the deploy before the PIN, ignore list or config change.
+    write_llms_txt(folder)
     if pin is not None:
         set_pin(folder, pin)  # before wrangler, so the new PIN ships
     _write_ignore(folder)
     name = ensure_config(folder, name)
-    write_llms_txt(folder)  # md sites: refresh the agent-facing index from the pages
     _npm_install(folder)  # worker sites (Hono) need deps bundled before deploy
     with tempfile.TemporaryDirectory() as td:
         out_file = Path(td) / "out.ndjson"

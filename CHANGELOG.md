@@ -13,6 +13,9 @@ Cut a release with the repo's `/release` skill.
 
 ## [Unreleased]
 
+### Changed
+- `ko pdf`, `ko publish` and `ko prompt` read front matter with one YAML parser, keeping values exactly as written. An unquoted value with `: ` or ` #` now stops with the file and line instead of being misread (quote it: `title: "Phase 2: costs"`). Windows line endings, a byte-order mark and list `tags:` now work. A broken user prompt is skipped with a note, and stops only `ko prompt <that one>`; a broken page stops `ko publish` before it changes anything.
+
 ### Fixed
 - A missing key or bad config now exits as `code: "config"` and a Google sign-in problem as `code: "auth"` with its `fix`, instead of a plain `error`. A bug in ko itself crashes with a traceback rather than passing as a one-line error.
 - A Google command whose cached token won't do says the real reason (unreadable, read-only grant, no refresh token, refresh refused), not always "expired".

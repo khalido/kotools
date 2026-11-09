@@ -10,6 +10,8 @@ Two Sonnet agents (state machines, duplication) and Gemini 4 Argon reviewed `src
 
 **Left:** big functions that read top to bottom (`doctor`, `_fetch`), the per-API `_get` wrappers (their error text is deliberate), the four front-matter parsers (moving them to pyyaml could change how prompts parse), and ~15 Google `except` blocks now redundant with `_GoogleTyper`'s net (removing them means re-indenting each `try`).
 
+**Front matter, one parser** (KO: stop on a bad line, don't skip). `pdf` used YAML, `publish` and `prompt` split lines by hand. All three now share `frontmatter.split` on YAML's BaseLoader: plain `safe_load` turned `yes` into True, `0123` into 83 and `12:30` into 750. An unquoted ` #` raises, because YAML would cut the value there. Of ~258,000 local md files with front matter, 5 now stop (jaldi's mac-check skill, three PakAirQuality data files, one koevguide harvest article); none is a published page or prompt. `fetch._text_title` stays separate: web front matter is untrusted and it must never raise.
+
 **Learned:** `ruff format` isn't this repo's style; one run rewrote 43 files (now in CLAUDE.md). `uvx --from kotools` reuses the installed editable `ko`, so a PyPI check needs `--isolated` (now in the release skill).
 
 ## 2026-11-07 — MCP probe for the stateless spec, and PyPI install checks

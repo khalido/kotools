@@ -327,16 +327,6 @@ def test_forget_removes_registry_entry(monkeypatch, tmp_path):
 # --- llms.txt generation ---
 
 
-def test_parse_front_matter():
-    meta, body = publish._parse_front_matter(
-        '---\ntitle: My Page\ndesc: "quoted"\ntags: a, b\n---\n\n# Hi\n'
-    )
-    assert meta == {"title": "My Page", "desc": "quoted", "tags": "a, b"}
-    assert body.startswith("# Hi")
-    meta, body = publish._parse_front_matter("# no front matter\n")
-    assert meta == {} and body.startswith("# no")
-
-
 def test_page_info_fallbacks_and_truncation(tmp_path):
     page = tmp_path / "notes.md"
     page.write_text("# The Title\n\n> a quote to skip\n\n" + "word " * 60 + "\n")

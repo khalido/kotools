@@ -121,6 +121,10 @@ Re-check at each pydantic-ai upgrade: `ko llm -m vercel:typesafe-ai/jev-1.14.0 "
 
 One provider isn't automatic yet (tried 2026-11-07, each key alone in an empty config). Gateway only: `ko llm` runs, `ko decide` stops and asks for OpenRouter, `ko decide -m vercel:<id>` runs on a chat model. OpenRouter only: `ko decide` runs, `ko llm` stops and asks for the gateway, and `ko llm` and `ko ai` run once `[llm] basic` is `openrouter:<id>`. Possible fix: when only OpenRouter is set, default the tiers to it, and when only the gateway is set, send `ko decide` to a chat model with a note that the probabilities aren't Jev's.
 
+## `ko doc` OCR: Flash-Lite on the flex tier (from pk_legal, 2026-11-09, not built)
+
+pk_legal measured `google/gemini-3.5-flash-lite` with `providerOptions.gateway.serviceTier: "flex"`: $0.15/$1.25 per 1M, half the standard price, about $0.0006 a court page against DeepSeek's $0.00085, but 8.8 s a page. On 57 scanned pages it tied DeepSeek on English (both silently fix spelling about once in 6,000 words) and did slightly better on 10 Urdu pages, where DeepSeek once stopped on `finish length`. The listed `-batch` model id answers "not found". Born-digital Urdu PDFs store each line's words reversed, so the text layer is no reference without reversing them. Before switching the default, measure on ko's own sample PDFs, and keep DeepSeek where speed matters (`ko ocr serve`). Details: pk_legal `docs/research/2026-11-text-extraction.md`.
+
 ## Agent steering (KO, 2026-11-07, not built)
 
 Beyond the wrap-up warning near the request limit: a steering message after N tool calls ("you've made 15 calls: answer now or say what's missing"), or when an agent repeats itself. Use pydantic-ai's own `ctx.enqueue` in a capability, which works on any model. The harness has `SystemReminders` and `DetectLoops` for this; both are 0.x, and the harness is only a dev dependency today. Not provider-native steering ([pydantic-ai #8163](https://github.com/pydantic/pydantic-ai/issues/8163), OpenAI Responses WebSocket only).
