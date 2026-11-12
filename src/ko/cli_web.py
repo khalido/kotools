@@ -21,6 +21,7 @@ from ._cli_shared import (
     _no_results,
     _table,
     _tsv_cell,
+    _write_doc,
     app,
     lazy,
 )
@@ -155,12 +156,7 @@ def arxiv_fetch(
         content = arxiv_mod.fetch(arxiv_id)
     except Exception as e:
         _die_from(e)
-    if out is None:
-        typer.echo(content)
-    else:
-        out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(content)
-        typer.echo(f"Wrote {len(content):,} chars to {out}", err=True)
+    _write_doc(content, out)
 
 
 # --- exa helpers ---
@@ -325,12 +321,7 @@ def exa_get(
         _die(f"no content returned for any of the {len(urls)} URL(s)")
     sections = [f"# {url}\n\n{text}" for url, text in got.items()]
     combined = "\n\n---\n\n".join(sections)
-    if out is None:
-        typer.echo(combined)
-    else:
-        out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(combined)
-        typer.echo(f"Wrote {len(combined):,} chars to {out}", err=True)
+    _write_doc(combined, out)
 
 
 # --- hf helpers ---
@@ -431,12 +422,7 @@ def hf_get(
         content = hf_mod.get(ref)
     except Exception as e:
         _die_from(e)
-    if out is None:
-        typer.echo(content)
-    else:
-        out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(content)
-        typer.echo(f"Wrote {len(content):,} chars to {out}", err=True)
+    _write_doc(content, out)
 
 
 # --- papers helpers ---
@@ -526,12 +512,7 @@ def papers_get(
                 continue
             note = f"oa copy: {url}" + (f"; {r.note}" if r.note else "")
             typer.echo(f"[{note}]", err=True)
-            if out is None:
-                typer.echo(r.text)
-            else:
-                out.parent.mkdir(parents=True, exist_ok=True)
-                out.write_text(r.text)
-                typer.echo(f"Wrote {len(r.text):,} chars to {out}", err=True)
+            _write_doc(r.text, out)
             return
         if w.full_text_urls:  # had OA links but none yielded text — card is the fallback
             typer.echo("[no OA copy fetched — metadata card instead]", err=True)
@@ -802,15 +783,6 @@ def ocr_serve(
         srv.server_close()
         if isinstance(srv.reader, ocr.Model) and (note := srv.reader.note()):
             typer.echo(note, err=True)
-
-
-def _write_doc(text: str, out: Path | None) -> None:
-    if out is None:
-        typer.echo(text)
-    else:
-        out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(text)
-        typer.echo(f"Wrote {len(text):,} chars to {out}", err=True)
 
 
 @app.command("pdf")
@@ -1113,12 +1085,7 @@ def fetch_cmd(
         combined = docs[0][1].text
     else:
         combined = "\n\n---\n\n".join(f"# {u}\n\n{r.text}" for u, r in docs)
-    if out is None:
-        typer.echo(combined)
-    else:
-        out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(combined)
-        typer.echo(f"Wrote {len(combined):,} chars to {out}", err=True)
+    _write_doc(combined, out)
 
 
 # --- tv command (root-level) ---

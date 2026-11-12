@@ -7,6 +7,7 @@ import mimetypes
 import os
 import re
 import sys
+from collections.abc import Callable
 from dataclasses import asdict
 from pathlib import Path
 from typing import NoReturn
@@ -589,6 +590,25 @@ def _model_info_lines(i, years: int, *, links: bool) -> list[str]:
     return out
 
 
+def _run_agent(
+    run: Callable[..., None], repl: Callable[..., None], prompt: str | None, model: str | None, resume: str | None
+) -> None:
+    """One-shot `run` with a prompt, else the `repl`; a missing resume id is a clean error."""
+    try:
+        if prompt:
+            run(prompt, model=model, resume=resume)
+        else:
+            repl(model=model, resume=resume)
+    except FileNotFoundError as e:
+        if not resume:
+            _die_from(e)
+        _die(f"no saved session {resume!r} — see `ko agent sessions`")
+    except typer.Exit:
+        raise
+    except Exception as e:
+        _die_from(e)
+
+
 @app.command("ai")
 def ai_cmd(
     prompt: str = typer.Argument(
@@ -607,17 +627,7 @@ def ai_cmd(
 ) -> None:
     """ko's default agent — all toolsets (web, papers, HN, movies, ~/code files read-only)
     + its own memory. One-shot or REPL; sessions saved; capped at 30 model requests/run."""
-    try:
-        if prompt:
-            agents.ai_run(prompt, model=model, resume=resume)
-        else:
-            agents.ai_repl(model=model, resume=resume)
-    except FileNotFoundError:
-        _die(f"no saved session {resume!r} — see `ko agent sessions`")
-    except typer.Exit:
-        raise
-    except Exception as e:
-        _die_from(e)
+    _run_agent(agents.ai_run, agents.ai_repl, prompt, model, resume)
 
 
 # --- agent commands ---
@@ -642,19 +652,7 @@ def agent_research(
     ),
 ) -> None:
     """Research agent across web (exa), papers (arxiv, hf), and HN. No prompt = interactive REPL."""
-    try:
-        if prompt:
-            agents.research_run(
-                prompt, model=model, resume=resume
-            )  # prints itself; resume continues a session
-        else:
-            agents.research_repl(model=model, resume=resume)
-    except FileNotFoundError:
-        _die(f"no saved session {resume!r} — see `ko agent sessions`")
-    except typer.Exit:
-        raise
-    except Exception as e:
-        _die_from(e)
+    _run_agent(agents.research_run, agents.research_repl, prompt, model, resume)
 
 
 @agent_app.command("repo")
@@ -676,17 +674,7 @@ def agent_repo(
 ) -> None:
     """Repo-explorer: answers 'how does repo X do Y' over ~/code (read-only; own repos +
     refs/ reference clones; knows the refs/CLAUDE.md map). Cheap model, cites file:line."""
-    try:
-        if prompt:
-            agents.repo_run(prompt, model=model, resume=resume)
-        else:
-            agents.repo_repl(model=model, resume=resume)
-    except FileNotFoundError:
-        _die(f"no saved session {resume!r} — see `ko agent sessions`")
-    except typer.Exit:
-        raise
-    except Exception as e:
-        _die_from(e)
+    _run_agent(agents.repo_run, agents.repo_repl, prompt, model, resume)
 
 
 @agent_app.command("tv")
@@ -703,17 +691,7 @@ def agent_tv(
     ),
 ) -> None:
     """TV/movie agent — what to watch in Australia, tuned to Ko. No prompt = interactive REPL."""
-    try:
-        if prompt:
-            agents.tv_run(prompt, model=model, resume=resume)
-        else:
-            agents.tv_repl(model=model, resume=resume)
-    except FileNotFoundError:
-        _die(f"no saved session {resume!r} — see `ko agent sessions`")
-    except typer.Exit:
-        raise
-    except Exception as e:
-        _die_from(e)
+    _run_agent(agents.tv_run, agents.tv_repl, prompt, model, resume)
 
 
 sessions_app = typer.Typer(
@@ -911,16 +889,16 @@ def agent_sessions_summarize(
 
 @tt_app.command("lists")
 def tt_lists(
-    json_out: bool = typer.Option(False, "--json", help="JSON instead of TSV"),
+    as_json: bool = typer.Option(False, "--json", help="JSON instead of TSV"),
 ) -> None:
     """List your TickTick lists (TSV: id, name)."""
     try:
         projects = ticktick_mod.list_projects()
     except Exception as e:
-        _die_from(e, as_json=json_out)
+        _die_from(e, as_json=as_json)
     if not projects:
-        _no_results("no lists", json_out)
-    if json_out:
+        _no_results("no lists", as_json)
+    if as_json:
         _emit_json(projects)
         return
     for p in projects:
@@ -932,7 +910,7 @@ def tt_items(
     list_name: str = typer.Argument(
         ..., help="list name (substring/emoji ok) or id; `inbox` works"
     ),
-    json_out: bool = typer.Option(False, "--json", help="JSON instead of TSV"),
+    as_json: bool = typer.Option(False, "--json", help="JSON instead of TSV"),
 ) -> None:
     """Open tasks in a list (TSV: priority, due, title). `ko tt <list>` is a shortcut.
 
@@ -941,15 +919,15 @@ def tt_items(
     try:
         proj = ticktick_mod.resolve_list(list_name)
         if not proj:
-            _die(f"no list matching {list_name!r}", as_json=json_out, code="not_found")
+            _die(f"no list matching {list_name!r}", as_json=as_json, code="not_found")
         tasks = ticktick_mod.get_tasks(proj.id)
     except typer.Exit:
         raise
     except Exception as e:
-        _die_from(e, as_json=json_out)
+        _die_from(e, as_json=as_json)
     if not tasks:
-        _no_results(f"{proj.name}: no open tasks", json_out)
-    if json_out:
+        _no_results(f"{proj.name}: no open tasks", as_json)
+    if as_json:
         _emit_json(tasks)
         return
     for t in tasks:
@@ -975,7 +953,7 @@ def tt_add(
         None, "--priority", "-p", help="none|low|med|high (default: none)"
     ),
     tag: list[str] = typer.Option(None, "--tag", help="tag to attach (repeatable)"),
-    json_out: bool = typer.Option(False, "--json", help="JSON instead of TSV"),
+    as_json: bool = typer.Option(False, "--json", help="JSON instead of TSV"),
 ) -> None:
     """Create a task (TSV: id, list, title). No LIST → your Inbox.
 
@@ -989,7 +967,7 @@ def tt_add(
             _die(
                 f"bad --priority {priority!r}: pick one of "
                 f"{', '.join(sorted(set(ticktick_mod.PRIORITIES)))}",
-                as_json=json_out,
+                as_json=as_json,
                 code="usage",
             )
         level = ticktick_mod.PRIORITIES[priority.lower()]
@@ -999,7 +977,7 @@ def tt_add(
         except ValueError:
             _die(
                 f"bad --due {due!r}: use today | tomorrow | YYYY-MM-DD | YYYY-MM-DDTHH:MM",
-                as_json=json_out,
+                as_json=as_json,
                 code="usage",
             )
     try:
@@ -1007,7 +985,7 @@ def tt_add(
         if list_name:
             proj = ticktick_mod.resolve_list(list_name)
             if not proj:
-                _die(f"no list matching {list_name!r}", as_json=json_out, code="not_found")
+                _die(f"no list matching {list_name!r}", as_json=as_json, code="not_found")
         task = ticktick_mod.create_task(
             title,
             projectId=proj.id if proj else None,
@@ -1019,8 +997,8 @@ def tt_add(
     except typer.Exit:
         raise
     except Exception as e:
-        _die_from(e, as_json=json_out)
-    if json_out:
+        _die_from(e, as_json=as_json)
+    if as_json:
         _emit_json([task])
         return
     typer.echo(f"{task.id}\t{proj.name if proj else 'Inbox'}\t{_tsv_cell(task.title)}")
@@ -1033,7 +1011,7 @@ def tt_done(
         None, "--list", "-l", help="only look in this list (name substring/emoji ok, or id)"
     ),
     yes: bool = typer.Option(False, "--yes", "-y", help="skip the TTY confirmation"),
-    json_out: bool = typer.Option(False, "--json", help="JSON instead of TSV"),
+    as_json: bool = typer.Option(False, "--json", help="JSON instead of TSV"),
 ) -> None:
     """Complete a task, matched by id or title substring (TSV: id, list, title).
 
@@ -1048,13 +1026,13 @@ def tt_done(
         if list_name:
             proj = ticktick_mod.resolve_list(list_name, projects)
             if not proj:
-                _die(f"no list matching {list_name!r}", as_json=json_out, code="not_found")
+                _die(f"no list matching {list_name!r}", as_json=as_json, code="not_found")
             scope = [proj.id]
         matches = ticktick_mod.find_tasks(query, ticktick_mod.open_tasks(scope))
     except typer.Exit:
         raise
     except Exception as e:
-        _die_from(e, as_json=json_out)
+        _die_from(e, as_json=as_json)
     names = {p.id: p.name for p in projects}
 
     def _list_of(task) -> str:
@@ -1062,10 +1040,10 @@ def tt_done(
 
     if not matches:
         where = f" in {list_name!r}" if list_name else ""
-        _die(f"no open task matching {query!r}{where}", as_json=json_out, code="not_found")
+        _die(f"no open task matching {query!r}{where}", as_json=as_json, code="not_found")
     if len(matches) > 1:
         note = f"{len(matches)} open tasks match {query!r} — narrow it or pass an id"
-        if json_out:
+        if as_json:
             # the {error, code} contract, plus the candidates so an agent can pick an id
             payload = {"error": note, "code": "ambiguous", "matches": [asdict(m) for m in matches]}
             typer.echo(json.dumps(payload), err=True)
@@ -1080,8 +1058,8 @@ def tt_done(
     try:
         ticktick_mod.complete_task(task.project_id, task.id)
     except Exception as e:
-        _die_from(e, as_json=json_out)
-    if json_out:
+        _die_from(e, as_json=as_json)
+    if as_json:
         _emit_json([task])
         return
     typer.echo(f"{task.id}\t{_list_of(task)}\t{_tsv_cell(task.title)}")
@@ -1091,7 +1069,7 @@ def tt_done(
 def tt_search(
     query: str = typer.Argument(..., help="keyword(s) to match against titles and bodies"),
     n: int = typer.Option(20, "-n", "--n", help="max results (default 20)"),
-    json_out: bool = typer.Option(False, "--json", help="JSON instead of TSV"),
+    as_json: bool = typer.Option(False, "--json", help="JSON instead of TSV"),
 ) -> None:
     """Keyword search over every task, open and completed (TSV: id, list, title, url).
 
@@ -1101,11 +1079,11 @@ def tt_search(
     try:
         hits = ticktick_mod.search(query)
     except Exception as e:
-        _die_from(e, as_json=json_out)
+        _die_from(e, as_json=as_json)
     if not hits:
-        _no_results(f"no tasks matching {query!r}", json_out)
+        _no_results(f"no tasks matching {query!r}", as_json)
     hits = hits[:n]
-    if json_out:
+    if as_json:
         _emit_json(hits)
         return
     for h in hits:

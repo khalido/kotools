@@ -16,7 +16,9 @@ Questions for the sweep:
 
 Output: a short ranked list of what to change and why, shown to KO as a diagram or HTML page before any big refactor. Then rewrite this handover clean around that plan (it has grown into a log; most dated entries below can go to WORKLOG).
 
-**2026-11-12: startup perf pass** (WORKLOG): heavy imports load on first use, ~212 → ~135 ms per command; a test guards it. `main` is 8 commits ahead of GitHub (public repo), not pushed: KO to push.
+**2026-11-13: cleanup pass** from Gemini's list (WORKLOG). Next candidate: move `doctor()` out of `cli.py` into `doctor.py`.
+
+**2026-11-12: startup perf pass** (WORKLOG): heavy imports load on first use, ~212 → ~135 ms per command; a test guards it. `main` is ahead of GitHub (public repo) and not pushed: KO to push.
 
 **2026-11-12: `ko gmail draft --md` embeds local images inline** (WORKLOG). Test draft `r-39674769328854445` ("ko inline image test (delete me)", account kd) is waiting for KO to open in Gmail and delete. Still open from everx's request: `draft update` keeping attachments, and `draft delete`; everx left drafts titled "OLD, delete: …" to clear by hand.
 

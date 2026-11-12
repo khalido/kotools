@@ -351,3 +351,32 @@ def test_startup_skips_heavy_imports():
     code = f"import sys, ko.cli; print(' '.join(m for m in {heavy!r} if m in sys.modules))"
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
     assert out.stdout.strip() == ""
+
+
+def test_main_missing_key_is_one_clean_line(monkeypatch, tmp_path, capsys):
+    """An unset key that escapes a command's own net still exits 1 with one line, no
+    traceback (AGENTS.md), and `--json` gets `{error, code: config}`."""
+    import json
+
+    from ko import cli, config
+
+    monkeypatch.setenv("KO_STATE_DIR", str(tmp_path))
+
+    def boom():
+        raise config.MissingKeyError("EXA_API_KEY is not set")
+
+    monkeypatch.setattr(cli, "app", boom)
+    monkeypatch.setattr(cli, "_route", lambda argv: argv)  # it reads the real app's groups
+    monkeypatch.setattr(cli, "_cmd_label", lambda argv: "exa search")
+    for argv, check in (
+        (["ko", "exa", "search", "x"], lambda err: err.strip() == "EXA_API_KEY is not set"),
+        (["ko", "exa", "search", "x", "--json"],
+         lambda err: json.loads(err) == {"error": "EXA_API_KEY is not set", "code": "config"}),
+    ):
+        monkeypatch.setattr("sys.argv", argv)
+        with pytest.raises(SystemExit) as exc:
+            cli.main()
+        assert exc.value.code == 1
+        captured = capsys.readouterr()
+        assert captured.out == ""  # stdout stays clean for a pipe
+        assert check(captured.err)

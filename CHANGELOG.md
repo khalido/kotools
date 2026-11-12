@@ -14,9 +14,12 @@ Cut a release with the repo's `/release` skill.
 ## [Unreleased]
 
 ### Changed
+- `ko gmail draft --md` embeds local images (`![alt](shot.png)`) inline in the mail body; http(s) image URLs stay remote.
+- Every command starts ~80 ms faster: HTTP clients, Google sign-in and the arxiv SDK load on first use.
 - `ko pdf`, `ko publish` and `ko prompt` read front matter with one YAML parser, keeping values exactly as written. Front matter that doesn't parse (an unquoted `: ` or ` #`) is skipped with a note naming the file and line, and the content still comes back: quote the value to keep it (`title: "Phase 2: costs"`). Windows line endings, a byte-order mark and list `tags:` now work.
 
 ### Fixed
+- `ko cal` and the `ko gmail` thread lists print a note on stderr when `--json` returns `[]`, like every other command. `ko gdocs get -o` creates missing folders. An unset key that reaches the top level exits with one line, not a traceback.
 - A missing key or bad config now exits as `code: "config"` and a Google sign-in problem as `code: "auth"` with its `fix`, instead of a plain `error`. A bug in ko itself crashes with a traceback rather than passing as a one-line error.
 - A Google command whose cached token won't do says the real reason (unreadable, read-only grant, no refresh token, refresh refused), not always "expired".
 - `ko gmail` replies use the right account's address under `-a`. Sending a draft is refused outside the CLI too unless `allow_send` is on.

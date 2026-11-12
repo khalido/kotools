@@ -14,6 +14,7 @@ from . import (  # noqa: F401  — triggers sub-app self-registration
 )
 from ._cli_shared import (  # noqa: F401 — re-exported for tests
     _die,
+    _die_from,
     _fmt_day,
     _no_results,
     _reject_group_flags,
@@ -770,33 +771,17 @@ def main() -> None:
         if logs.get("error") in _USER_ERRORS:  # set by _die(): the user can fix it, nothing broke
             level = "warning"
         raise
-    except google_auth.AuthError as e:
-        # The one Google failure every command can hit before its own error net: no usable
-        # token. One line naming the fix, never a traceback (agents read stderr, not frames).
+    except (google_auth.AuthError, config.ConfigError, config.MissingKeyError) as e:
+        # Failures any command can hit before its own error net: no usable Google token, an
+        # unreadable config file, an unset key. One line naming the fix, never a traceback
+        # (agents read stderr, not frames).
         code, level = 1, "warning"
-        logs.add(error="auth", error_msg=e.msg, fix=e.fix)
-        if "--json" in sys.argv:
-            import json
-
-            fix = {"fix": e.fix} if e.fix else {}
-            print(json.dumps({"error": e.msg, "code": "auth"} | fix), file=sys.stderr)
-        else:
-            print(str(e), file=sys.stderr)
-        raise SystemExit(1) from None
-    except config.ConfigError as e:
-        code, level = 1, "warning"
-        logs.add(error="config", error_msg=str(e))
-        if "--json" in sys.argv:
-            import json
-
-            print(json.dumps({"error": str(e), "code": "config"}), file=sys.stderr)
-        else:
-            print(str(e), file=sys.stderr)
-        raise SystemExit(1) from None
+        try:
+            _die_from(e, as_json="--json" in sys.argv)
+        except typer.Exit as x:  # outside app() nothing turns typer.Exit into an exit code
+            raise SystemExit(x.exit_code) from None
     except BaseException as e:
         code = 1
-        if isinstance(e, config.MissingKeyError):
-            level = "warning"
         logs.add(error=type(e).__name__, error_msg=str(e) or None, error_at=_crash_site(e))
         raise
     finally:

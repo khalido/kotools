@@ -7,9 +7,12 @@ import json
 import sys
 from dataclasses import asdict
 from types import ModuleType
-from typing import NoReturn
+from typing import TYPE_CHECKING, NoReturn
 
 import typer
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # The root Typer app — imported by all group modules so they can self-register.
 app = typer.Typer(
@@ -103,6 +106,16 @@ def _die(
     if exit_code is None:
         exit_code = 2 if code == "usage" else 1
     raise typer.Exit(exit_code)
+
+
+def _write_doc(text: str, out: Path | None) -> None:
+    """Print `text`, or write it to `out` (parents created) with a size note on stderr."""
+    if out is None:
+        typer.echo(text)
+    else:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(text)
+        typer.echo(f"Wrote {len(text):,} chars to {out}", err=True)
 
 
 def _reject_group_flags(ctx: typer.Context, **flags: str) -> None:

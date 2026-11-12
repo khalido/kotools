@@ -21,6 +21,7 @@ from ._cli_shared import (
     _no_results,
     _reject_group_flags,
     _tsv_cell,
+    _write_doc,
     app,
     lazy,
 )
@@ -330,12 +331,7 @@ def _parse_cells(text: str) -> list[list]:
     parses; else TSV (newlines = rows, tabs = cells); a bare scalar -> a single cell."""
     text = text.strip()
     if text[:1] in ("[", "{"):  # tuple, not substring — "" in "[{" is True
-        data = json.loads(text)
-        if isinstance(data, list):
-            if data and all(isinstance(r, list) for r in data):
-                return data
-            return [data]  # 1D list -> a single row
-        return [[data]]
+        return _norm_block(json.loads(text))
     if "\t" in text or "\n" in text:
         return [line.split("\t") for line in text.splitlines()]  # drops trailing-newline row
     return [[text]]
@@ -890,11 +886,7 @@ def gdocs_get(
         md = gdocs_mod.get_tab_text(doc, tab) if tab else gdrive_mod.export_markdown(doc)
     except (gdrive_mod.DriveError, gdocs_mod.DocsError) as e:
         _die(str(e))
-    if out:
-        out.write_text(md)
-        typer.echo(f"wrote {len(md)} char(s) to {out}", err=True)
-    else:
-        typer.echo(md)
+    _write_doc(md, out)
 
 
 @gdocs_app.command("info")
@@ -1193,18 +1185,17 @@ def _merged_events(fetch, calendar: list[str] | None, as_json: bool):
     return events
 
 
-def _emit_events(events, as_json: bool, window_start: str | None = None) -> bool:
-    """JSON or grouped text. Returns False if there were no events (and not JSON).
+def _emit_events(events, as_json: bool, empty_note: str, window_start: str | None = None) -> None:
+    """JSON or grouped text; no events -> `empty_note` on stderr (and `[]` under --json).
 
     `window_start` (YYYY-MM-DD) is forwarded to `_fmt_events` to clamp all-day event headers
     for bounded views like `--today` / `cal day`."""
+    if not events:
+        _no_results(empty_note, as_json)
     if as_json:
         _emit_json(events)
-        return True
-    if not events:
-        return False
+        return
     _fmt_events(events, window_start=window_start)
-    return True
 
 
 # --- cal commands ---
@@ -1241,8 +1232,7 @@ def _cal_main(
     events = _merged_events(
         lambda a, ids: gcal_mod.list_events(days=n, calendar_ids=ids, account=a), calendar, as_json
     )
-    if not _emit_events(events, as_json, window_start=win_start):
-        typer.echo(f"nothing in the next {n} day(s)", err=True)
+    _emit_events(events, as_json, f"nothing in the next {n} day(s)", window_start=win_start)
 
 
 @cal_app.command("day")
@@ -1271,8 +1261,7 @@ def cal_day(
         calendar,
         as_json,
     )
-    if not _emit_events(events, as_json, window_start=d.isoformat()):
-        typer.echo(f"nothing on {date_str}", err=True)
+    _emit_events(events, as_json, f"nothing on {date_str}", window_start=d.isoformat())
 
 
 @cal_app.command("add")
@@ -1337,8 +1326,7 @@ def cal_find(
     )
     if past:
         events.reverse()  # merged() sorts ascending; "when was my last X" wants most recent first
-    if not _emit_events(events, as_json):
-        typer.echo(f"no {'past' if past else 'upcoming'} '{text}' within {days} day(s)", err=True)
+    _emit_events(events, as_json, f"no {'past' if past else 'upcoming'} '{text}' within {days} day(s)")
 
 
 @cal_app.command("cals")
@@ -1381,12 +1369,11 @@ def _message_json(meta, body: str) -> dict:
 def _emit_threads(threads, as_json: bool) -> None:
     """One row per thread: unread mark, thread id, latest date, who (count), subject, then the
     latest snippet. `--json` rows carry the account too."""
+    if not threads:
+        _no_results("no threads", as_json)
     acct = google_auth.active_account()
     if as_json:
-        typer.echo(json.dumps([{"account": acct, **asdict(t)} for t in threads], default=str))
-        return
-    if not threads:
-        typer.echo("no threads", err=True)
+        _emit_json([{"account": acct, **asdict(t)} for t in threads])
         return
     me = google_auth.account_status(acct, lookup=False).email
     for t in threads:
