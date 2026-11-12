@@ -14,6 +14,7 @@ Cut a release with the repo's `/release` skill.
 ## [Unreleased]
 
 ### Changed
+- Dependencies upgraded, including pydantic-ai 2.66 (security fixes, now the minimum), google-genai 3 and typer 0.29.
 - `ko gmail draft --md` embeds local images (`![alt](shot.png)`) inline in the mail body; http(s) image URLs stay remote.
 - Every command starts ~80 ms faster: HTTP clients, Google sign-in and the arxiv SDK load on first use.
 - `ko pdf`, `ko publish` and `ko prompt` read front matter with one YAML parser, keeping values exactly as written. Front matter that doesn't parse (an unquoted `: ` or ` #`) is skipped with a note naming the file and line, and the content still comes back: quote the value to keep it (`title: "Phase 2: costs"`). Windows line endings, a byte-order mark and list `tags:` now work.

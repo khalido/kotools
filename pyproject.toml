@@ -33,7 +33,7 @@ dependencies = [
     "opentelemetry-exporter-otlp-proto-http>=1.44.0",
     "opentelemetry-sdk>=1.44.0",
     # floor = the version ko mcp (MCPToolset) was built and tested on, 2026-10-16
-    "pydantic-ai-slim[google,openrouter,mcp,typesafe]>=2.56,<3",
+    "pydantic-ai-slim[google,openrouter,mcp,typesafe]>=2.66,<3",
     "pygments>=2.20.0",
     "python-docx>=1.2",
     "pyyaml>=6.0.3",
@@ -85,7 +85,7 @@ exclude = [".claude", "node_modules", "package.json", "package-lock.json"]
 
 [dependency-groups]
 dev = [
-    "pydantic-ai-harness[codemode]>=0.23.0",
+    "pydantic-ai-harness[codemode]>=0.66.0",
     "pytest>=9.1.1",
     "ruff>=0.16",  # formatter output is version-sensitive; an older ruff would rewrap the repo
 ]
