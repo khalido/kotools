@@ -380,3 +380,22 @@ def test_main_missing_key_is_one_clean_line(monkeypatch, tmp_path, capsys):
         captured = capsys.readouterr()
         assert captured.out == ""  # stdout stays clean for a pipe
         assert check(captured.err)
+
+
+def test_doctor_json_shape(monkeypatch):
+    """`ko doctor --json` offline: one object with every section, each tool row has a status."""
+    import json
+
+    from typer.testing import CliRunner
+
+    from ko import cli_doctor
+    from ko.cli import app
+
+    monkeypatch.setattr(cli_doctor, "_online", lambda: False)  # no catalog refresh, balances or lookups
+    r = CliRunner().invoke(app, ["doctor", "--json"])
+    assert r.exit_code == 0, r.output
+    data = json.loads(r.stdout)
+    assert set(data) == {"tools", "settings", "dirs", "models", "config_error", "online"}
+    assert data["online"] is False
+    assert data["tools"] and all(t["tool"] and t["status"] for t in data["tools"])
+    assert {s["name"] for s in data["settings"]} >= {"llm model", "google account"}
