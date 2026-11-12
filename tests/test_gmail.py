@@ -673,3 +673,46 @@ def test_not_found_names_the_account_only_for_id_lookups(monkeypatch):
     with pytest.raises(gmail.GmailError) as e:
         gmail._handle(_HttpErr(404), "r-123")  # a draft id: plain not-found
     assert "wrong -a" not in str(e.value)
+
+
+# --- inline images -----------------------------------------------------------------------
+
+
+def test_md_inline_image_becomes_related_part(tmp_path):
+    """A local `![](shot.png)` is embedded: alternative[plain, related[html, image]], the html
+    points at the part's Content-ID, one part per file; remote image URLs stay as written."""
+    import base64
+    from email import message_from_bytes
+
+    (tmp_path / "my shot.png").write_bytes(b"\x89PNG fake")
+    md = "Look:\n\n![the shot](my%20shot.png)\n\n![again](<my shot.png>) ![r](https://x.com/a.png)"
+    html_body = gmail.md_to_html(md, base_dir=tmp_path)
+    pdf = tmp_path / "a.pdf"
+    pdf.write_bytes(b"%PDF")
+    raw = gmail._build_raw(to="a@x.com", subject="s", body=md, html_body=html_body, attachments=[pdf])
+    msg = message_from_bytes(base64.urlsafe_b64decode(raw))
+    assert msg.get_content_type() == "multipart/mixed"
+    types = [p.get_content_type() for p in msg.walk()]
+    assert types == [
+        "multipart/mixed", "multipart/alternative", "text/plain",
+        "multipart/related", "text/html", "image/png", "application/pdf",
+    ]
+    img = next(p for p in msg.walk() if p.get_content_type() == "image/png")
+    assert img.get_payload(decode=True) == b"\x89PNG fake"
+    assert img.get_content_disposition() == "inline"
+    cid = img["Content-ID"].strip("<>")
+    html_out = next(p for p in msg.walk() if p.get_content_type() == "text/html").get_payload(decode=True).decode()
+    assert html_out.count(f'src="cid:{cid}"') == 2
+    assert 'src="https://x.com/a.png"' in html_out
+    assert "file://" not in html_out
+
+
+def test_md_inline_image_errors(tmp_path):
+    with pytest.raises(gmail.GmailError, match="image not found: nope.png"):
+        gmail.md_to_html("![x](nope.png)", base_dir=tmp_path)
+    for name in ("notes.txt", "logo.svg"):
+        (tmp_path / name).write_text("hi")
+        with pytest.raises(gmail.GmailError, match=f"can't show {name} inline"):
+            gmail.md_to_html(f"![x]({name})", base_dir=tmp_path)
+    # without base_dir (no --md file), local srcs are left alone
+    assert 'src="nope.png"' in gmail.md_to_html("![x](nope.png)")

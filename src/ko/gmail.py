@@ -13,7 +13,8 @@ opt-in**: `draft send` refuses unless `[gmail] allow_send = true` / `KO_GMAIL_SE
 draft-first workflow (agents draft, a human sends from Gmail) is the default.
 
 Non-goals: labels / archive / mark-read (`gmail.modify`, later), re-attaching originals in
-replies, inline/CID images, open tracking. Scheduled send has no API — do it in Gmail's UI.
+replies, open tracking. Inline images: a local `![alt](shot.png)` in `--md` is embedded
+(multipart/related, `cid:`); http(s) image URLs stay remote. Scheduled send has no API — do it in Gmail's UI.
 """
 
 from __future__ import annotations
@@ -24,9 +25,17 @@ import mimetypes
 import re
 from dataclasses import dataclass, field
 from email.message import EmailMessage
-from email.utils import formataddr, getaddresses, parseaddr, parsedate_to_datetime
+from email.utils import (
+    formataddr,
+    getaddresses,
+    make_msgid,
+    parseaddr,
+    parsedate_to_datetime,
+)
 from pathlib import Path
 from typing import NoReturn
+from urllib.parse import unquote, urlparse
+from urllib.request import url2pathname
 
 from googleapiclient.errors import HttpError
 
@@ -418,15 +427,67 @@ def _style_tables(html_out: str) -> str:
     return html_out
 
 
-def md_to_html(md: str) -> str:
+_INLINE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}  # what Gmail shows inline
+
+
+def _inline_image_type(path: Path) -> str:
+    """The image's MIME type, or a GmailError when Gmail can't show it inline (svg, heic, non-images)."""
+    ctype, _ = mimetypes.guess_type(path.name)
+    if ctype not in _INLINE_TYPES:
+        raise GmailError(f"can't show {path.name} inline ({ctype or 'unknown type'}); use png, jpeg, gif or webp")
+    return ctype
+
+
+def _local_images_to_file_uris(tokens: list, base_dir: Path) -> None:
+    """Point every local image (no URL scheme) at an absolute file:// URI, resolved against
+    `base_dir` — `_build_raw` embeds those as inline parts. A missing file is an error naming it."""
+    for tok in tokens:
+        for child in tok.children or []:
+            if child.type != "image":
+                continue
+            src = child.attrs.get("src", "")
+            if not src or urlparse(src).scheme:  # http(s), cid:, data: … stay as written
+                continue
+            path = (base_dir / Path(unquote(src)).expanduser()).resolve()
+            if not path.is_file():
+                raise GmailError(f"image not found: {src} (looked for {path})")
+            _inline_image_type(path)
+            child.attrs["src"] = path.as_uri()
+
+
+def md_to_html(md: str, base_dir: Path | None = None) -> str:
     """Markdown -> HTML via markdown-it-py: CommonMark + GFM tables/strikethrough,
     tables styled inline (faint borders) so they read as tables in Gmail.
     (Tables are a GFM extension — the bare CommonMark preset renders them as literal
-    pipe text, which is how an agent's invoice table once went out.)"""
+    pipe text, which is how an agent's invoice table once went out.)
+    With `base_dir`, local images become file:// URIs that `_build_raw` embeds inline."""
     from markdown_it import MarkdownIt
 
-    out = MarkdownIt("commonmark").enable(["table", "strikethrough"]).render(md)
+    parser = MarkdownIt("commonmark").enable(["table", "strikethrough"])
+    tokens = parser.parse(md)
+    if base_dir is not None:
+        _local_images_to_file_uris(tokens, base_dir)
+    out = parser.renderer.render(tokens, parser.options, {})
     return _style_tables(out)
+
+
+_FILE_IMG_RE = re.compile(r'(<img src=")(file://[^"]+)(")')
+
+
+def _embed_file_images(html_body: str) -> tuple[str, list[tuple[str, Path]]]:
+    """Swap each `<img src="file://…">` for a `cid:` reference. Returns the new HTML and the
+    (cid, path) pairs to add as related parts; one part per file, however often it's used.
+    Raw HTML in the Markdown that writes `<img src="file://…">` itself is embedded the same way."""
+    cids: dict[Path, str] = {}
+
+    def swap(m: re.Match) -> str:
+        path = Path(url2pathname(urlparse(html.unescape(m.group(2))).path))
+        if path not in cids:
+            cids[path] = make_msgid(domain="ko")[1:-1]  # strip the <>
+        return f"{m.group(1)}cid:{cids[path]}{m.group(3)}"
+
+    out = _FILE_IMG_RE.sub(swap, html_body)
+    return out, [(cid, path) for path, cid in cids.items()]
 
 
 def _build_raw(
@@ -445,7 +506,8 @@ def _build_raw(
 
     Plain `body` -> a simple text/plain message. With `html_body` -> multipart/alternative,
     the plain part FIRST then html, both quoted-printable / utf-8. Threading headers
-    (In-Reply-To / References) are set when `in_reply_to` is given. `attachments` are
+    (In-Reply-To / References) are set when `in_reply_to` is given. `<img src="file://…">`
+    in the html is embedded inline (the html part becomes multipart/related). `attachments` are
     read from disk and added (multipart/mixed) — Gmail caps a message around 25 MB."""
     for hname, val in (
         ("To", to),
@@ -468,7 +530,18 @@ def _build_raw(
         msg["References"] = references or in_reply_to
     msg.set_content(body, subtype="plain", cte="quoted-printable")
     if html_body is not None:
+        html_body, inline = _embed_file_images(html_body)
         msg.add_alternative(html_body, subtype="html", cte="quoted-printable")
+        html_part = msg.get_payload()[-1]
+        for cid, path in inline:
+            ctype = _inline_image_type(path)
+            try:
+                data = path.read_bytes()
+            except OSError as e:
+                raise GmailError(f"can't read image {path}: {e}") from e
+            maintype, _, subtype = ctype.partition("/")
+            # no filename on purpose: _walk_attachments skips it, so `draft update` doesn't refuse
+            html_part.add_related(data, maintype=maintype, subtype=subtype, cid=f"<{cid}>", disposition="inline")
     for path in attachments or []:
         try:
             data = path.read_bytes()

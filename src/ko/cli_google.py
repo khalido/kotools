@@ -1413,7 +1413,7 @@ def _resolve_body(body: str | None, body_file: Path | None, md: Path | None) -> 
     except OSError as e:
         _die(f"can't read {src}: {e}")
     if md is not None:
-        return text, gmail_mod.md_to_html(text)
+        return text, gmail_mod.md_to_html(text, base_dir=md.parent)
     return text, None
 
 
@@ -1560,7 +1560,7 @@ def gmail_draft_new(
     body: str = typer.Option(None, "--body", help="body text (plain text/plain)"),
     body_file: Path = typer.Option(None, "--body-file", help="read the plain-text body from a file"),
     md: Path = typer.Option(
-        None, "--md", help="Markdown file → formatted mail (headings, lists, links, GFM tables)"
+        None, "--md", help="Markdown file → formatted mail (headings, lists, links, GFM tables, local images inline)"
     ),
     cc: str = typer.Option(None, "--cc", help="cc recipient(s), comma-separated"),
     attach: list[Path] = typer.Option(
@@ -1585,7 +1585,7 @@ def gmail_draft_reply(
     ),
     body: str = typer.Option(None, "--body", help="reply text (plain text/plain)"),
     body_file: Path = typer.Option(None, "--body-file", help="read the plain-text reply from a file"),
-    md: Path = typer.Option(None, "--md", help="Markdown reply → formatted mail (headings, lists, links, GFM tables)"),
+    md: Path = typer.Option(None, "--md", help="Markdown reply → formatted mail (headings, lists, links, GFM tables, local images inline)"),
     all_: bool = typer.Option(False, "--all", help="reply-all (cc the original To+Cc, minus you)"),
     cc: str = typer.Option(
         None, "--cc", help="extra cc recipient(s), comma-separated — added on top of --all's list"
@@ -1659,7 +1659,7 @@ def gmail_draft_update(
     draft_id: str = typer.Argument(..., help="draft id to update"),
     body: str = typer.Option(None, "--body", help="new body text (plain text/plain)"),
     body_file: Path = typer.Option(None, "--body-file", help="read the new plain-text body from a file"),
-    md: Path = typer.Option(None, "--md", help="new Markdown body → formatted mail (headings, lists, links, GFM tables)"),
+    md: Path = typer.Option(None, "--md", help="new Markdown body → formatted mail (headings, lists, links, GFM tables, local images inline)"),
     subject: str = typer.Option(None, "--subject", "-s", help="new subject (else keep the existing)"),
     to: str = typer.Option(None, "--to", help="new To recipient(s) (else keep the existing)"),
     cc: str = typer.Option(

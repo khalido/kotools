@@ -2,6 +2,12 @@
 
 Newest first. Big picture only — git commits have the detail; candidate ideas and decisions live in `docs/ideas.md`.
 
+## 2026-11-12 — Inline images in `ko gmail draft --md`
+
+Asked for by the everx session, which was drafting a release email with a screenshot. KO made an exception to the ko/jaldi split ("no new gmail features in ko") for this one. A local `![alt](shot.png)` in `--md` (path relative to the .md file) is embedded as alternative[plain, related[html, image]] with a `cid:` reference, which is how Gmail stores a pasted image. http(s) URLs stay remote. Only png, jpeg, gif and webp are embedded, because Gmail doesn't show svg or heic inline; a missing file or any other type is an error. The inline part has no filename, so `draft update` doesn't count it as an attachment and refuse; an update that uses `--md` embeds the images again. No size guard: Gmail's ~25 MB message cap still applies. The plain-text part is still the raw Markdown. Live draft checked through the API (structure and Content-ID as built), not yet opened in Gmail's UI.
+
+Not built, from the same request: `draft update` keeping real attachments, and `draft delete`.
+
 ## 2026-11-09 — Code-smell pass
 
 Two Sonnet agents (state machines, duplication) and Gemini 4 Argon reviewed `src/ko`, and each finding was checked in the code. **No state machine anywhere, and none needed:** `fetch` is a ladder of routes, Drive sync a three-way merge on plain data, and the two `fetch` flags are independent. Gemini had two of its twelve claims wrong (the JSONC parser does take trailing commas; a gdocs bounds check it cited doesn't exist).
