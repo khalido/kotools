@@ -25,8 +25,6 @@ import re
 import time
 from dataclasses import dataclass, field
 
-import httpx2 as httpx
-
 from ko import config
 
 OPENALEX = "https://api.openalex.org"
@@ -92,6 +90,8 @@ def _resolve_id(ref: str) -> str:
 
 
 def _get(path: str, params: dict | None = None) -> dict:
+    import httpx2 as httpx
+
     params = {"mailto": MAILTO, **(params or {})}
     # OpenAlex 503s intermittently under load — retry transient errors with a short backoff
     for attempt in range(3):
@@ -243,6 +243,8 @@ def _s2_id(ref: str) -> str:
 
 def _s2_tldr(doi: str) -> str:
     """S2 tldr for a DOI; '' without a key (keyless S2 429s immediately) or on any error."""
+    import httpx2 as httpx
+
     key = os.environ.get("S2_API_KEY")
     if not key or not doi:
         return ""
@@ -261,6 +263,8 @@ def _s2_tldr(doi: str) -> str:
 
 def similar(ref: str, n: int = DEFAULT_SIMILAR_N) -> list[Work]:
     """S2 paper recommendations. Requires S2_API_KEY (free; keyless 429s immediately)."""
+    import httpx2 as httpx
+
     key = config.require_key("S2_API_KEY", "`similar` needs it, free: https://www.semanticscholar.org/product/api")
     resp = httpx.get(
         f"{S2}/recommendations/v1/papers/forpaper/{_s2_id(ref)}",

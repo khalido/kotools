@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 
 import pytest
+from google.oauth2.credentials import Credentials
+from google.oauth2.service_account import Credentials as SACredentials
 
 from ko import google_auth as g
 
@@ -39,7 +41,7 @@ def _stub_load(monkeypatch, tmp_path, scopes):
     """Point _load_cached at an existing token file, and make the parser return _FakeCreds(scopes)."""
     monkeypatch.setenv("KO_STATE_DIR", str(tmp_path))
     (tmp_path / "google_token.json").write_text("{}")  # presence check only; parsing is stubbed
-    monkeypatch.setattr(g.Credentials, "from_authorized_user_file", lambda *a, **k: _FakeCreds(scopes))
+    monkeypatch.setattr(Credentials, "from_authorized_user_file", lambda *a, **k: _FakeCreds(scopes))
 
 
 def test_readwrite_token_serves_readonly_reads(monkeypatch, tmp_path):
@@ -122,7 +124,7 @@ def test_get_credentials_prefers_sa_profile(monkeypatch, tmp_path):
         seen["path"], seen["scopes"] = path, scopes
         return _FakeCreds(scopes)
 
-    monkeypatch.setattr(g.service_account.Credentials, "from_service_account_file", fake_from_file)
+    monkeypatch.setattr(SACredentials, "from_service_account_file", fake_from_file)
     g.get_credentials.cache_clear()
     g.get_credentials(readonly=True, account="bot")
     assert seen["path"].endswith("google_sa_bot.json")
@@ -264,7 +266,7 @@ def _flow_stub(monkeypatch, calls):
         def run_local_server(self, port=0):
             return _FakeCreds(g.SCOPES_READWRITE)
 
-    monkeypatch.setattr(g, "InstalledAppFlow", _Flow)
+    monkeypatch.setattr("google_auth_oauthlib.flow.InstalledAppFlow", _Flow)
     monkeypatch.setattr(g, "_write_token", lambda tf, creds: None)
     monkeypatch.setattr(g, "account_email", lambda account: None)
     monkeypatch.setattr(g, "client_file", lambda account=None: __import__("pathlib").Path(__file__))
@@ -304,7 +306,7 @@ def test_implicit_flow_fails_fast_without_a_tty(monkeypatch, tmp_path, token, re
         (tmp_path / "google_token.json").write_text(token)
     elif token is not None:
         (tmp_path / "google_token.json").write_text("{}")
-        monkeypatch.setattr(g.Credentials, "from_authorized_user_file", lambda *a, **k: _ExpiredCreds(token))
+        monkeypatch.setattr(Credentials, "from_authorized_user_file", lambda *a, **k: _ExpiredCreds(token))
     with pytest.raises(g.AuthError, match=reason) as exc:
         _REAL_RUN_FLOW(readonly, g.DEFAULT_ACCOUNT, reason=g._check_cached(readonly, g.DEFAULT_ACCOUNT)[1])
     assert "ko google auth default" in str(exc.value) and calls == []
@@ -316,7 +318,7 @@ def test_implicit_flow_with_a_tty_says_why_then_runs(monkeypatch, tmp_path, caps
     calls = []
     _flow_stub(monkeypatch, calls)
     (tmp_path / "google_token.json").write_text("{}")
-    monkeypatch.setattr(g.Credentials, "from_authorized_user_file", lambda *a, **k: _FakeCreds(g.SCOPES_READONLY))
+    monkeypatch.setattr(Credentials, "from_authorized_user_file", lambda *a, **k: _FakeCreds(g.SCOPES_READONLY))
     _REAL_RUN_FLOW(False, g.DEFAULT_ACCOUNT, reason=g._check_cached(False, g.DEFAULT_ACCOUNT)[1])
     assert calls == [g.SCOPES_READWRITE]
     assert "read-only grant" in capsys.readouterr().err  # the browser pop-up is explained
@@ -343,7 +345,7 @@ def test_cli_write_on_readonly_token_exits_clean_not_hangs(monkeypatch, tmp_path
     monkeypatch.setattr(g, "_has_tty", lambda: False)
     monkeypatch.setattr(g, "_run_flow", _REAL_RUN_FLOW)  # conftest stubs it; we want the real refusal
     (tmp_path / "google_token_work.json").write_text("{}")
-    monkeypatch.setattr(g.Credentials, "from_authorized_user_file", lambda *a, **k: _FakeCreds(g.SCOPES_READONLY))
+    monkeypatch.setattr(Credentials, "from_authorized_user_file", lambda *a, **k: _FakeCreds(g.SCOPES_READONLY))
     g.get_credentials.cache_clear()
     # a command whose FIRST call is the write (gdocs push reads the doc first)
     sid = "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms"  # id-shaped, so no alias lookup

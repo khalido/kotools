@@ -39,8 +39,6 @@ from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 from typing import TYPE_CHECKING
 
-import requests
-
 from . import config
 from .dirs import state_file, write_atomic
 
@@ -192,6 +190,8 @@ def _cache_write(data: dict) -> None:
 
 
 def _user_id(handle: str) -> str:
+    import requests
+
     cache = _cache()
     if uid := cache.get("users", {}).get(handle):
         return uid

@@ -10,8 +10,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-import httpx2 as httpx
-
 from . import config
 
 BASE = "https://api.themoviedb.org/3"
@@ -55,6 +53,8 @@ def _headers() -> dict[str, str]:
 
 
 def _get(path: str, params: dict | None = None) -> dict:
+    import httpx2 as httpx
+
     resp = httpx.get(f"{BASE}{path}", params=params, headers=_headers(), timeout=10)
     resp.raise_for_status()
     return resp.json()

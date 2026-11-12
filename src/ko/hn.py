@@ -22,8 +22,6 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-import httpx2 as httpx
-
 ALGOLIA = "https://hn.algolia.com/api/v1"
 FIREBASE = "https://hacker-news.firebaseio.com/v0"
 DEFAULT_TOP_N = 10
@@ -58,6 +56,8 @@ class Comment:
 
 
 def _get(path: str, params: dict | None = None, base: str = ALGOLIA) -> dict | list:
+    import httpx2 as httpx
+
     resp = httpx.get(f"{base}/{path}", params=params, timeout=30)
     try:
         resp.raise_for_status()

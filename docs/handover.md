@@ -16,6 +16,8 @@ Questions for the sweep:
 
 Output: a short ranked list of what to change and why, shown to KO as a diagram or HTML page before any big refactor. Then rewrite this handover clean around that plan (it has grown into a log; most dated entries below can go to WORKLOG).
 
+**2026-11-12: startup perf pass** (WORKLOG): heavy imports load on first use, ~212 → ~135 ms per command; a test guards it. `main` is 8 commits ahead of GitHub (public repo), not pushed: KO to push.
+
 **2026-11-12: `ko gmail draft --md` embeds local images inline** (WORKLOG). Test draft `r-39674769328854445` ("ko inline image test (delete me)", account kd) is waiting for KO to open in Gmail and delete. Still open from everx's request: `draft update` keeping attachments, and `draft delete`; everx left drafts titled "OLD, delete: …" to clear by hand.
 
 **2026-11-10: front matter skips, never stops.** One parser, `frontmatter.split`, for `ko pdf`, `ko publish` and `ko prompt`. A block that doesn't parse is dropped with a stderr note naming the file and line, and the content still comes back (KO: an opinionated tool should get the job done). The short-lived `--skip-bad-front-matter` flag is gone. Candidate: `fetch._text_title` could now use `split(..., warn=False)` too. `main` is ahead of GitHub and not pushed.

@@ -14,8 +14,6 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-import arxiv
-
 DEFAULT_MAX_RESULTS = 20
 DEFAULT_RECENT_SINCE_MONTHS = 18  # date window applied only in --recent (newest-first) mode
 
@@ -52,6 +50,8 @@ def search(
     (Note: date-sort was the old default and it effectively ignored the query — arxiv's
     API returns newest-overall when sorted by date, so topical searches came back junk.)
     """
+    import arxiv  # the library loads on use: ~20 ms, and the CLI reads DEFAULT_MAX_RESULTS at startup
+
     if recent and since_months is None:
         since_months = DEFAULT_RECENT_SINCE_MONTHS
     cutoff = (
@@ -90,6 +90,8 @@ def search(
 
 def client_results(search_query):
     """Thin seam over arxiv.Client().results — one place to mock in tests / tune retries."""
+    import arxiv
+
     return arxiv.Client().results(search_query)
 
 
@@ -127,6 +129,8 @@ def _fix_authors(md: str, arxiv_id: str) -> str:
     clean list; if it can't be reached, arxiv2md's line stays."""
     import json
     import re
+
+    import arxiv
 
     try:
         paper = next(client_results(arxiv.Search(id_list=[arxiv_id])))

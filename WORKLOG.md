@@ -2,6 +2,10 @@
 
 Newest first. Big picture only — git commits have the detail; candidate ideas and decisions live in `docs/ideas.md`.
 
+## 2026-11-12 — Startup perf pass
+
+Every `ko` command imports `ko.cli`, which took ~170 ms of imports, mostly for libraries the command never used. `lazy()` modules were loading at startup anyway, because a flag default reads one of their constants (`hf_mod.DEFAULT_TOP_N`), and those modules imported httpx2, requests or the arxiv SDK at the top. `google_auth` pulled the requests transport, service accounts, the OAuth flow and discovery (~100 ms), and `cli.py` imported `publish` (httpx) eagerly just for `doctor`. All of these now load on first use. `NETWORK_ERRORS` is built on first access (PEP 562), so httplib2 waits too. Fastest of 30 runs, `ko --help` / `fetch --help` / `gmail --help` / `tt --help`: ~212 → ~135 ms. Tests now patch the library classes rather than names on `google_auth`. `test_startup_skips_heavy_imports` fails, naming the module, when one creeps back. Left: typer itself (~20 ms) and the per-module work in cli_google/cli_web (~10 ms each).
+
 ## 2026-11-12 — Inline images in `ko gmail draft --md`
 
 Asked for by the everx session, which was drafting a release email with a screenshot. KO made an exception to the ko/jaldi split ("no new gmail features in ko") for this one. A local `![alt](shot.png)` in `--md` (path relative to the .md file) is embedded as alternative[plain, related[html, image]] with a `cid:` reference, which is how Gmail stores a pasted image. http(s) URLs stay remote. Only png, jpeg, gif and webp are embedded, because Gmail doesn't show svg or heic inline; a missing file or any other type is an error. The inline part has no filename, so `draft update` doesn't count it as an attachment and refuse; an update that uses `--md` embeds the images again. No size guard: Gmail's ~25 MB message cap still applies. The plain-text part is still the raw Markdown. Live draft checked through the API (structure and Content-ID as built), not yet opened in Gmail's UI.

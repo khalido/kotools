@@ -24,7 +24,6 @@ from ._cli_shared import (
     app,
     lazy,
 )
-from .publish import slugify
 
 gcal_mod = lazy("gcal")
 gdocs_mod = lazy("gdocs")
@@ -1767,6 +1766,8 @@ def _pull_target(target: str, dest: Path | None) -> tuple[str, Path]:
     p = Path(target)
     if dest is None and (p / gdrive_mod.MANIFEST).exists():
         return gdrive_mod.Manifest.load(p).folder, p
+    from .publish import slugify
+
     return target, dest or Path(slugify(gdrive_mod.folder_name(target)))
 
 

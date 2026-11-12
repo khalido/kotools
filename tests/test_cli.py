@@ -337,3 +337,17 @@ def test_route_leaves_the_web_aliases_alone(tmp_path):
     """A file named `webfetch` in cwd must not shadow the command (known names win)."""
     assert cli._route(["webfetch", "https://x.com"]) == ["webfetch", "https://x.com"]
     assert cli._route(["websearch", "some query"]) == ["websearch", "some query"]
+
+
+def test_startup_skips_heavy_imports():
+    """Every `ko` command imports ko.cli. HTTP clients, Google's auth transport and the arxiv
+    SDK load on first use, not here (~80 ms per command). A module-level import in a module
+    whose constant feeds a flag default brings them back; this names it."""
+    import subprocess
+    import sys
+
+    heavy = ["httpx2", "requests", "httplib2", "arxiv", "googleapiclient.discovery",
+             "google.auth.transport.requests", "google_auth_oauthlib", "pydantic_ai"]
+    code = f"import sys, ko.cli; print(' '.join(m for m in {heavy!r} if m in sys.modules))"
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+    assert out.stdout.strip() == ""

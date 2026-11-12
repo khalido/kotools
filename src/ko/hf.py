@@ -15,8 +15,10 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import TYPE_CHECKING
 
-import httpx2 as httpx
+if TYPE_CHECKING:
+    import httpx2 as httpx
 
 HF = "https://huggingface.co"
 DEFAULT_TOP_N = 10
@@ -55,6 +57,8 @@ def paper_id(ref: str) -> str:
 
 
 def _get(path: str, params: dict | None = None) -> httpx.Response:
+    import httpx2 as httpx
+
     resp = httpx.get(f"{HF}{path}", params=params, timeout=30, follow_redirects=True)
     resp.raise_for_status()
     return resp
@@ -94,6 +98,8 @@ def search(query: str, n: int = DEFAULT_SEARCH_N) -> list[Paper]:
 
 def info(ref: str) -> Paper:
     """Structured metadata for one paper. Raises for papers not indexed on hf.co."""
+    import httpx2 as httpx
+
     pid = paper_id(ref)
     try:
         return _paper(_get(f"/api/papers/{pid}").json())
@@ -111,6 +117,8 @@ def get(ref: str) -> str:
     For papers not indexed on hf.co/papers the endpoint silently serves the
     HTML page instead — we detect that and raise (use `ko arxiv fetch` there).
     """
+    import httpx2 as httpx
+
     pid = paper_id(ref)
     try:
         text = _get(f"/papers/{pid}.md").text

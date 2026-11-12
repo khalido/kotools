@@ -12,7 +12,6 @@ from . import (  # noqa: F401  — triggers sub-app self-registration
     cli_google,
     cli_web,
 )
-from . import publish as publish_mod
 from ._cli_shared import (  # noqa: F401 — re-exported for tests
     _die,
     _fmt_day,
@@ -20,6 +19,7 @@ from ._cli_shared import (  # noqa: F401 — re-exported for tests
     _reject_group_flags,
     _tsv_cell,
     app,
+    lazy,
 )
 from .cli_ai import publish_app, tt_app  # needed by main()'s bare-arg dispatcher
 
@@ -27,6 +27,8 @@ from .cli_ai import publish_app, tt_app  # needed by main()'s bare-arg dispatche
 from .cli_google import _norm_block, _parse_cells, _short_from  # noqa: F401
 from .cli_web import x_app, yt_app  # needed by main()'s bare-arg dispatcher
 from .refs import DEFAULT_JOBS as REFS_JOBS
+
+publish_mod = lazy("publish")  # only `doctor` needs it; eager, it pulled httpx into every command
 
 
 def _version_callback(value: bool) -> None:

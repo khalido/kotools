@@ -33,16 +33,17 @@ import sys
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import NoReturn
+from typing import TYPE_CHECKING, NoReturn
 
-import httplib2
 from google.auth.exceptions import TransportError
-from google.auth.transport.requests import Request
-from google.oauth2 import service_account
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
-from googleapiclient.discovery import Resource, build
 from googleapiclient.errors import HttpError
+
+# The google-auth transport, OAuth flow and discovery load on first use: at the top they cost
+# ~70 ms on every `ko` command, Google or not.
+if TYPE_CHECKING:
+    from google.oauth2 import service_account
+    from google.oauth2.credentials import Credentials
+    from googleapiclient.discovery import Resource
 
 from . import config
 from .dirs import config_dir, state_dir, state_file
@@ -70,12 +71,23 @@ SCOPES_READWRITE = [
 
 DEFAULT_ACCOUNT = "default"
 
-# What a flaky network raises through httplib2 — an SSL drop, reset, timeout, DNS miss. Named so
-# callers catch these and not every OSError (a full disk during a download isn't a network blip).
-# httplib2 wraps a DNS miss as ServerNotFoundError; google-auth wraps a failed refresh as TransportError.
-NETWORK_ERRORS = (
-    ssl.SSLError, ConnectionError, TimeoutError, socket.gaierror, httplib2.ServerNotFoundError, TransportError,
-)
+@lru_cache
+def _network_errors() -> tuple[type[BaseException], ...]:
+    """What a flaky network raises through httplib2 — an SSL drop, reset, timeout, DNS miss. Named so
+    callers catch these and not every OSError (a full disk during a download isn't a network blip).
+    httplib2 wraps a DNS miss as ServerNotFoundError; google-auth wraps a failed refresh as TransportError."""
+    import httplib2  # ~20 ms; loaded here so `ko` commands that never touch Google skip it
+
+    return (
+        ssl.SSLError, ConnectionError, TimeoutError, socket.gaierror, httplib2.ServerNotFoundError, TransportError,
+    )
+
+
+def __getattr__(name: str):
+    """`google_auth.NETWORK_ERRORS` stays the public name; it's built on first use (PEP 562)."""
+    if name == "NETWORK_ERRORS":
+        return _network_errors()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 class AuthError(RuntimeError):
@@ -181,6 +193,8 @@ def account_status(account: str, lookup: bool = True) -> AccountStatus:
 
 def _lookup_email(creds) -> str | None:
     """Ask Drive (any drive scope) who the token belongs to, else Gmail; None if neither can."""
+    from googleapiclient.discovery import build
+
     try:
         svc = build("drive", "v3", credentials=creds, cache_discovery=False)
         return svc.about().get(fields="user(emailAddress)").execute()["user"]["emailAddress"]
@@ -206,7 +220,7 @@ def account_email(account: str) -> str | None:
         return data["email"]
     try:
         creds = _load_cached(readonly=True, account=account)
-    except NETWORK_ERRORS:
+    except _network_errors():
         return None  # offline: the address is a nicety, not worth failing a listing over
     if creds is None:
         return None
@@ -405,6 +419,9 @@ def _check_cached(readonly: bool, account: str) -> tuple[Credentials | None, str
     tf = token_file(account)
     if not tf.exists():
         return None, f"{who} isn't signed in"
+    # imported outside the try: a broken install must fail loud, not read as a bad token
+    from google.oauth2.credentials import Credentials
+
     try:
         # Load with the token's OWN granted scopes (omit `scopes=`), NOT a readonly/readwrite-derived
         # list. Requesting a *narrower* set than was granted makes the refresh fail with "scope has
@@ -423,6 +440,8 @@ def _check_cached(readonly: bool, account: str) -> tuple[Credentials | None, str
         return creds, ""
     if not creds.refresh_token:
         return None, f"{who} has an expired token with no refresh token"
+    from google.auth.transport.requests import Request  # outside the try, as above
+
     try:
         creds.refresh(Request())
     except TransportError:
@@ -472,6 +491,8 @@ def _run_flow(readonly: bool, account: str, *, explicit: bool = False, reason: s
             f"https://console.cloud.google.com/apis/credentials and save the JSON to "
             f"~/.config/ko/{want}, or set KO_GOOGLE_CLIENT_FILE=<path>. See README for full setup."
         )
+    from google_auth_oauthlib.flow import InstalledAppFlow
+
     flow = InstalledAppFlow.from_client_secrets_file(str(cf), _scopes(readonly))
     creds = flow.run_local_server(port=0)
     _write_token(token_file(account), creds)
@@ -499,6 +520,8 @@ def get_credentials(
     if sa.exists():
         # An SA profile: the key is the credential — no browser flow, no token cache. Same
         # scope sets as OAuth; what it can reach is whatever's shared with its client_email.
+        from google.oauth2 import service_account
+
         return service_account.Credentials.from_service_account_file(
             str(sa), scopes=_scopes(readonly)
         )
@@ -535,6 +558,8 @@ _APIS = {
 @lru_cache
 def service(api: str, readonly: bool = True, account: str | None = None) -> Resource:
     """A Google API client for `api` (a key of `_APIS`) on an account — cached per args."""
+    from googleapiclient.discovery import build
+
     name, version = _APIS[api]
     return build(name, version, credentials=get_credentials(readonly, account), cache_discovery=False)
 
