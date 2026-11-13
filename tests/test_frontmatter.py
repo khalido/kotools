@@ -76,3 +76,20 @@ def test_pdf_renders_past_bad_front_matter(tmp_path):
     r = CliRunner().invoke(app, ["pdf", str(tmp_path / "bad.md"), "--brand", ""])
     assert r.exit_code == 0, r.output
     assert "skipped front matter: bad.md line 2" in r.stderr and (tmp_path / "bad.pdf").exists()
+
+
+def test_hash_inside_a_block_value_is_kept(capsys):
+    """A `|` or `>` value's lines are indented; their " #" is text, not a cut-off comment."""
+    text = "---\ntitle: Report\ndescription: |\n  note: see issue #42\nsummary: >\n  x: y #z\n---\nbody\n"
+    meta, body = frontmatter.split(text, "r.md")
+    assert meta == {"title": "Report", "description": "note: see issue #42\n", "summary": "x: y #z"}
+    assert body == "body\n" and capsys.readouterr().err == ""
+
+
+def test_nested_values_skip_the_block(capsys):
+    """A mapping under a key used to reach `ko pdf`'s author meta as "{'name': 'Ko'}"."""
+    for text in ("---\nauthor:\n  name: Ko\n---\nbody\n", "---\ntags:\n  - [a, b]\n---\nbody\n"):
+        assert frontmatter.split(text, "n.md") == ({}, "body\n")
+        assert "n.md" in capsys.readouterr().err
+    assert frontmatter.split("---\ntags:\n  - a\n  - b\n---\nbody\n")[0] == {"tags": "a, b"}
+

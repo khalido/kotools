@@ -44,3 +44,15 @@ def test_user_dir_overrides_packaged(tmp_path, monkeypatch):
     assert by_name["sveltekit-app"].body == "local body\n"
     assert by_name["extra"].source == "user"  # local-only brief shows up
     assert "ko-publish-site" in by_name  # packaged still present
+
+
+def test_a_broken_brief_warns_only_when_it_is_the_one_used(monkeypatch, tmp_path, capsys):
+    """`ko sum` resolves the summarize brief; another user brief's bad front matter stays quiet."""
+    monkeypatch.setattr(prompt.dirs, "config_dir", lambda: tmp_path)
+    (tmp_path / "prompts").mkdir()
+    (tmp_path / "prompts" / "bad.md").write_text("---\ntitle: Phase 2: costs\n---\nbody")
+    (tmp_path / "prompts" / "good.md").write_text("---\ndescription: fine\n---\ngood body")
+    assert prompt.get_prompt("good").body == "good body"
+    assert capsys.readouterr().err == ""
+    prompt.get_prompt("bad")
+    assert "prompts/bad.md line 2" in capsys.readouterr().err

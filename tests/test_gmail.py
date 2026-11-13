@@ -716,3 +716,29 @@ def test_md_inline_image_errors(tmp_path):
             gmail.md_to_html(f"![x]({name})", base_dir=tmp_path)
     # without base_dir (no --md file), local srcs are left alone
     assert 'src="nope.png"' in gmail.md_to_html("![x](nope.png)")
+
+
+def test_inline_image_symlink_judged_by_its_target(tmp_path):
+    """A `.png` symlink to a non-image must not smuggle that file into the draft."""
+    (tmp_path / "notes.txt").write_text("not an image")
+    (tmp_path / "link.png").symlink_to(tmp_path / "notes.txt")
+    raw_html = f'<p><img alt="x" src="{(tmp_path / "link.png").as_uri()}"></p>'
+    with pytest.raises(gmail.GmailError, match="can't show notes.txt inline"):
+        gmail._build_raw(to="a@x.com", subject="s", body="b", html_body=raw_html)
+    with pytest.raises(gmail.GmailError, match="can't show notes.txt inline"):
+        gmail.md_to_html("![x](link.png)", base_dir=tmp_path)
+
+
+def test_raw_html_img_with_src_not_first_is_embedded(tmp_path):
+    import base64
+    from email import message_from_bytes
+
+    (tmp_path / "shot.png").write_bytes(b"\x89PNG fake")
+    raw_html = f'<img alt="x" width="200" src="{(tmp_path / "shot.png").as_uri()}">'
+    raw = gmail._build_raw(to="a@x.com", subject="s", body="b", html_body=raw_html)
+    msg = message_from_bytes(base64.urlsafe_b64decode(raw))
+    assert [p.get_content_type() for p in msg.walk()].count("image/png") == 1
+    html_out = next(p for p in msg.walk() if p.get_content_type() == "text/html").get_payload(decode=True).decode()
+    assert "file://" not in html_out and 'src="cid:' in html_out
+    # a scheme-relative URL is remote, not a local path
+    assert 'src="//cdn.example.com/logo.png"' in gmail.md_to_html("![l](//cdn.example.com/logo.png)", base_dir=tmp_path)

@@ -446,7 +446,8 @@ def _local_images_to_file_uris(tokens: list, base_dir: Path) -> None:
             if child.type != "image":
                 continue
             src = child.attrs.get("src", "")
-            if not src or urlparse(src).scheme:  # http(s), cid:, data: … stay as written
+            url = urlparse(src)
+            if not src or url.scheme or url.netloc:  # http(s), //host, cid:, data: … stay as written
                 continue
             path = (base_dir / Path(unquote(src)).expanduser()).resolve()
             if not path.is_file():
@@ -471,17 +472,18 @@ def md_to_html(md: str, base_dir: Path | None = None) -> str:
     return _style_tables(out)
 
 
-_FILE_IMG_RE = re.compile(r'(<img src=")(file://[^"]+)(")')
+_FILE_IMG_RE = re.compile(r'(<img\b[^>]*?(?<![-\w])src=")(file://[^"]+)(")')  # not data-src
 
 
 def _embed_file_images(html_body: str) -> tuple[str, list[tuple[str, Path]]]:
     """Swap each `<img src="file://…">` for a `cid:` reference. Returns the new HTML and the
     (cid, path) pairs to add as related parts; one part per file, however often it's used.
-    Raw HTML in the Markdown that writes `<img src="file://…">` itself is embedded the same way."""
+    Raw HTML in the Markdown that writes `<img src="file://…">` itself is embedded the same way.
+    Paths are resolved, so a symlink is judged by the file it points at."""
     cids: dict[Path, str] = {}
 
     def swap(m: re.Match) -> str:
-        path = Path(url2pathname(urlparse(html.unescape(m.group(2))).path))
+        path = Path(url2pathname(urlparse(html.unescape(m.group(2))).path)).resolve()
         if path not in cids:
             cids[path] = make_msgid(domain="ko")[1:-1]  # strip the <>
         return f"{m.group(1)}cid:{cids[path]}{m.group(3)}"

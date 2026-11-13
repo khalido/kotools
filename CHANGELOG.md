@@ -20,6 +20,9 @@ Cut a release with the repo's `/release` skill.
 - `ko pdf`, `ko publish` and `ko prompt` read front matter with one YAML parser, keeping values exactly as written. Front matter that doesn't parse (an unquoted `: ` or ` #`) is skipped with a note naming the file and line, and the content still comes back: quote the value to keep it (`title: "Phase 2: costs"`). Windows line endings, a byte-order mark and list `tags:` now work.
 
 ### Fixed
+- Front matter with a `|` or `>` value containing ` #` no longer drops the whole block. A nested value (e.g. `author:` with `name:` under it) skips the block with a note instead of reaching the PDF as `{'name': 'Ko'}`. A broken prompt file warns only when it's the brief in use.
+- `ko gmail draft --md` judges a `.png` symlink by the file it points at, embeds raw `<img>` tags whatever their attribute order, and leaves `//host/x.png` links remote.
+- `ko doctor --json` no longer makes the account lookups, refs walk and credit calls that only the human report shows.
 - `ko cal` and the `ko gmail` thread lists print a note on stderr when `--json` returns `[]`, like every other command. `ko gdocs get -o` creates missing folders. An unset key that reaches the top level exits with one line, not a traceback.
 - A missing key or bad config now exits as `code: "config"` and a Google sign-in problem as `code: "auth"` with its `fix`, instead of a plain `error`. A bug in ko itself crashes with a traceback rather than passing as a one-line error.
 - A Google command whose cached token won't do says the real reason (unreadable, read-only grant, no refresh token, refresh refused), not always "expired".

@@ -14,7 +14,7 @@ by name to load it into an agent or copy-paste it: `ko prompt sveltekit-app`.
 from __future__ import annotations
 
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from importlib import resources
 from pathlib import Path
 
@@ -27,6 +27,8 @@ class Prompt:
     description: str
     body: str
     source: str  # "packaged" (ships with ko) or "user" (~/.config/ko/prompts)
+    text: str = field(default="", repr=False)  # the file as read, to re-check its front matter
+    path: str = field(default="", repr=False)  # where it came from, for that note
 
 
 def _make(name_fallback: str, text: str, source: str, path: str, warn: bool) -> Prompt:
@@ -36,6 +38,8 @@ def _make(name_fallback: str, text: str, source: str, path: str, warn: bool) -> 
         description=meta.get("description", ""),
         body=body,
         source=source,
+        text=text,
+        path=path,
     )
 
 
@@ -73,7 +77,13 @@ def resolve(name: str) -> Prompt | None:
     ambiguous tag notes the alternatives on stderr and takes the first rather than failing,
     because in a personal library of a dozen briefs a near-miss is more useful than an error.
     """
-    ordered = list_prompts()
+    found = _match(name, list_prompts(warn=False))
+    if found:  # only the brief in use warns about its front matter, not every file on every run
+        frontmatter.split(found.text, found.path)
+    return found
+
+
+def _match(name: str, ordered: list[Prompt]) -> Prompt | None:
     if exact := next((p for p in ordered if p.name == name), None):
         return exact
     lowered = name.lower()

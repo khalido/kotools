@@ -241,45 +241,14 @@ def doctor(
     from . import dirs, models
     from .cli_google import account_lines
 
-    console = Console(quiet=as_json)  # --json: suppress the human output, emit one object at the end
-
     rows = _tool_rows()
-    table = Table(title="ko doctor", title_justify="left")
-    table.add_column("tool", style="bold")
-    table.add_column("does")
-    table.add_column("needs", style="dim", overflow="fold")
-    table.add_column("status")
-    for name, does, needs, (status, color) in rows:
-        table.add_row(name, does, needs, f"[{color}]{status}[/{color}]")
-    console.print(table)
-
     online = _online()
     if online:
         models.refresh_catalogs()  # populate/refresh the model catalog caches
-    else:
-        console.print("[yellow]offline — skipped the live checks (model catalog refresh, credit balances, account lookups)[/yellow]")
     extra = [m for m in models.available_models() if ":" in m]
     providers = sorted({m.split(":")[0] for m in extra})
-    console.print(f"[dim]models available to -m: {len(extra)} across {', '.join(providers) or 'none'}[/dim]")
-
     settings = _settings()
-    console.print("google accounts:")
-    for line in account_lines(lookup=online):
-        console.print("  " + line, highlight=False, markup=False, soft_wrap=True)
-    console.print("[dim]settings: " + " · ".join(f"{name}={val} ({src})" for name, val, src in settings) + "[/dim]")
-    console.print(f"[dim]dirs: config={dirs.config_dir()} · state={dirs.state_dir()} · cache={dirs.cache_dir()}[/dim]")
-    console.print(f"[dim]versions: {_versions_line()}[/dim]", highlight=False)
-    if err := config.config_error():
-        console.print(f"[red]⚠ config.toml is malformed — keys/settings above are IGNORED: {err}[/red]")
-    elif not (dirs.config_dir() / "config.toml").exists():
-        console.print("[dim]no config.toml (env vars + baked defaults only)[/dim]")
-    if refs_line := _refs_line():
-        console.print(f"[dim]{refs_line}[/dim]")
-    if online:
-        for line in _balance_lines():
-            console.print(line)
-
-    if as_json:
+    if as_json:  # the data only: no account lookups, refs walk or credit calls
         _emit_json(
             {
                 "tools": [
@@ -297,3 +266,32 @@ def doctor(
                 "online": online,
             }
         )
+        return
+
+    console = Console()
+    table = Table(title="ko doctor", title_justify="left")
+    table.add_column("tool", style="bold")
+    table.add_column("does")
+    table.add_column("needs", style="dim", overflow="fold")
+    table.add_column("status")
+    for name, does, needs, (status, color) in rows:
+        table.add_row(name, does, needs, f"[{color}]{status}[/{color}]")
+    console.print(table)
+    if not online:
+        console.print("[yellow]offline — skipped the live checks (model catalog refresh, credit balances, account lookups)[/yellow]")
+    console.print(f"[dim]models available to -m: {len(extra)} across {', '.join(providers) or 'none'}[/dim]")
+    console.print("google accounts:")
+    for line in account_lines(lookup=online):
+        console.print("  " + line, highlight=False, markup=False, soft_wrap=True)
+    console.print("[dim]settings: " + " · ".join(f"{name}={val} ({src})" for name, val, src in settings) + "[/dim]")
+    console.print(f"[dim]dirs: config={dirs.config_dir()} · state={dirs.state_dir()} · cache={dirs.cache_dir()}[/dim]")
+    console.print(f"[dim]versions: {_versions_line()}[/dim]", highlight=False)
+    if err := config.config_error():
+        console.print(f"[red]⚠ config.toml is malformed — keys/settings above are IGNORED: {err}[/red]")
+    elif not (dirs.config_dir() / "config.toml").exists():
+        console.print("[dim]no config.toml (env vars + baked defaults only)[/dim]")
+    if refs_line := _refs_line():
+        console.print(f"[dim]{refs_line}[/dim]")
+    if online:
+        for line in _balance_lines():
+            console.print(line)

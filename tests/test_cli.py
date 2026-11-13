@@ -399,3 +399,26 @@ def test_doctor_json_shape(monkeypatch):
     assert data["online"] is False
     assert data["tools"] and all(t["tool"] and t["status"] for t in data["tools"])
     assert {s["name"] for s in data["settings"]} >= {"llm model", "google account"}
+
+
+def test_doctor_json_skips_the_human_only_live_work(monkeypatch):
+    """Online `--json` still refreshes the model catalog, but never does the account lookups,
+    refs walk or credit calls whose output only the human report shows."""
+    import json
+
+    from typer.testing import CliRunner
+
+    from ko import cli_doctor, cli_google, models
+    from ko.cli import app
+
+    def boom(*a, **k):
+        raise AssertionError("human-only work ran under --json")
+
+    monkeypatch.setattr(cli_doctor, "_online", lambda: True)
+    monkeypatch.setattr(models, "refresh_catalogs", lambda: None)
+    for name in ("_balance_lines", "_refs_line"):
+        monkeypatch.setattr(cli_doctor, name, boom)
+    monkeypatch.setattr(cli_google, "account_lines", boom)
+    r = CliRunner().invoke(app, ["doctor", "--json"])
+    assert r.exit_code == 0, r.output
+    assert json.loads(r.stdout)["online"] is True
