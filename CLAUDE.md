@@ -36,6 +36,7 @@ This file is a stub, not a manual — same rule as agent-browser/herdr: **the in
 | `x search\|list\|user\|lists` | X search/lists/timelines (pay-per-read) |
 | `tt ...` (`todo`) | TickTick read+write |
 | `tv <title>` | movie/TV + AU watch providers |
+| `flight <code> [date]` | flight status card: airports, local sched/est/actual times, terminal, gate (OAG free tier, cached 5 min) |
 | `brief [--raw]` | morning brief: gather + one cheap-model synthesis |
 | `publish ...` | folder → Cloudflare Worker (`new`/`preview`/`rm`/`list`) |
 | `ai "<prompt>"` | default agent, all toolsets + memory, basic tier (`-m` for hard questions) |

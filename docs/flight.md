@@ -1,6 +1,6 @@
-# `ko flight` — design, for KO's approval (2026-11-13)
+# `ko flight` — design (2026-11-13)
 
-`ko flight EK604 [date]` → what a search engine's flight card shows. Not built yet.
+`ko flight EK604 [date]` → what a search engine's flight card shows. **Built OAG-only** (KO, 2026-11-13: fallbacks later). The fallback sections below are the plan for that pass; `--source` and AeroDataBox are not built.
 
 ## What OAG's free tier returns (3 live calls, 2026-11-13)
 
@@ -12,7 +12,7 @@ Request: `GET https://api.oag.com/flight-instances/?version=v2&CarrierCode=EK&Fl
 | any EK from DXB, 13 Nov, `Limit=3` | 366 flights. Free tier **includes `Content=Status`**: gate, terminal, estimated + actual gate and runway times, state. |
 | EK604, 13–20 Nov | 4 instances: DXB 02:45 → KHI 05:45 on 14, 17, 18, 19 Nov. The 14th has `state: Scheduled`; later dates have no `statusDetails` at all. |
 
-So EK604 doesn't run every day, and the number lookup works. OAG returns codes only: no airport names, cities, IANA zones or airline names. Responses carry `cache-control: max-age=60`; no quota header. Raw responses are saved as fixtures in the notes folder (`flight/oag_*.json`).
+So EK604 doesn't run every day, and the number lookup works. OAG returns codes only: no airport names, cities, IANA zones or airline names. Responses carry `cache-control: max-age=60`; no quota header. Raw responses are the test fixtures in `tests/fixtures/flight/`.
 
 Trimmed live sample (EK2330, a flydubai codeshare):
 
@@ -35,7 +35,7 @@ Trimmed live sample (EK2330, a flydubai codeshare):
                        "inGate": {"local": "2026-11-13T07:50:00+06:00", "utc": "..."}}}}]}
 ```
 
-## Fallback: AeroDataBox (RapidAPI, free "Basic")
+## Fallback (not built): AeroDataBox (RapidAPI, free "Basic")
 
 | | Verdict |
 |---|---|
@@ -43,6 +43,8 @@ Trimmed live sample (EK2330, a flydubai codeshare):
 | FlightAware AeroAPI Personal | Runner-up. $5 free credit ≈ 1,000 calls, personal use only. Only 10 days back to 2 days ahead, times in UTC. |
 | AirLabs | Reject: no date parameter, returns only "the nearest" flight. |
 | aviationstack | Reject: 100 calls a month, and lookup by date is a paid feature. |
+| OpenSky | Reject as a card source: ADS-B positions by ICAO callsign, no schedule, terminal, gate or status; flights by callsign only for past days. Could add "in the air now" later. |
+| Scraping Google's flight box | Reject: against Google's terms, bot wall for scripts, unlabelled markup that breaks silently. |
 
 Sign-up (KO): rapidapi.com account (email or Google) → subscribe to AeroDataBox → Basic plan (free) → copy the RapidAPI key into `AERODATABOX_API_KEY`. Whether RapidAPI asks for a card on a free plan isn't stated on its pages.
 
@@ -54,13 +56,13 @@ Not yet seen live: AeroDataBox's `local` string format (the spec says `date-time
 - `CODE`: `EK604`, `ek604`, or ICAO `UAE604`. Three leading letters = ICAO, else a 2-character IATA code. Anything else exits 2.
 - `DATE`: `YYYY-MM-DD`, `today`, `tomorrow` or `yesterday`, read as the origin's local departure date (OAG's meaning).
 - **No date:** one OAG call for yesterday → tomorrow, then pick the instance that hasn't arrived yet and departs soonest, else the latest one. That's how a search card behaves, and it avoids "today in whose zone?" when KO is in Sydney and the flight leaves Dubai.
-- Flags: `--json`, `--source oag|aerodatabox` (forces one source; for testing and when OAG is wrong). Two flags.
+- Flags: `--json` only. `--source oag|aerodatabox` comes with the fallback. `ko flight EK 604` (with a space) also works.
 
 **Source order and fallback rule:** OAG first. AeroDataBox is called **only when OAG fails** (missing key, 401/403/429/5xx, network), never when OAG answers "no such flight". An empty OAG result is an answer, and AeroDataBox has only ~200 calls a month. Each fallback prints a note to stderr: `OAG failed (429 quota); answered by AeroDataBox`. Until `AERODATABOX_API_KEY` exists, an OAG failure exits 1 and names both: the OAG error, and the AeroDataBox key with its sign-up URL.
 
-**Exit codes:** found → 0 and one object. Not found → 0 with a stderr note via `_no_results`, which prints `[]` under `--json` (jaldi must handle `[]` as well as `{}`; or I special-case `null`, KO's call). Both sources fail → 1, `{error, code}`.
+**Exit codes:** found → 0 and one object. Not found → 0 with a stderr note via `_no_results`, which prints `[]` under `--json` (jaldi must handle `[]` as well as `{}`). OAG fails → 1, `{error, code}`.
 
-**Cache:** jaldi polling would burn 1,000 calls a month fast (one every 5 minutes for a day = 288). Disk cache per (flight, date): 5 minutes when departure is within 12 hours, 6 hours otherwise. jaldi should poll at most every 15 minutes.
+**Cache:** jaldi polling would burn 1,000 calls a month fast (one every 5 minutes for a day = 288). Disk cache per (flight, query window): 5 minutes when the window touches yesterday–tomorrow, 6 hours otherwise. jaldi should poll at most every 15 minutes.
 
 **Names:** airport name, city and IANA zone from the `airportsdata` package (MIT, updated weekly, 7,950 IATA codes, offline; checked: DXB → "Dubai International Airport", Dubai, Asia/Dubai). Used for both sources, so names don't change with the source. Unknown code → null fields, not an error. Airline name: OAG gives none. Proposal: one OAG Master Data call per new carrier (`OAG_MASTER_DATA_KEY`), cached for good; no key → `airline.name: null`. The Master Data endpoint is not verified yet.
 
@@ -98,7 +100,7 @@ Not yet seen live: AeroDataBox's `local` string format (the spec says `date-time
 | scheduled | `date.local` + `time.local`; offset = local − utc of the same pair | `scheduledTime.local` |
 | estimated | `statusDetails[].departure.estimatedTime.outGate.local` (arrival: `inGate`) | `revisedTime.local` before departure/arrival, else `predictedTime.local` |
 | actual | `…actualTime.outGate.local` / `inGate` | `revisedTime.local` once status is Departed / Arrived |
-| delay_min | `…Variation` (`d.HH:mm:ss`) | estimated/actual − scheduled |
+| delay_min | (actual or estimated) − scheduled, so it agrees with the times shown (OAG's own `…Variation` can differ by a minute) | estimated/actual − scheduled |
 | terminal | `statusDetails.actualTerminal`, else schedule `terminal` | `terminal` |
 | gate | `statusDetails.departure.gate` / `arrival.gate` | `gate` |
 | baggage | `statusDetails.arrival.baggage` | `arrival.baggageBelt` |
@@ -119,8 +121,8 @@ DXB Dubai → KHI Karachi  2h 00m  77W
 Depart   02:45 +04:00  —           3     —
 Arrive   05:45 +05:00  —           M     —
 ```
-A delay shows as `Delayed 45m` after the status; an AeroDataBox answer adds `Data: AeroDataBox` (attribution).
+A delay shows as `· 45m late` after the status, and a time on a later local day gets `+1d`; an AeroDataBox answer adds `Data: AeroDataBox` (attribution).
 
 ### Wiring
 
-`src/ko/flight.py` (OAG + AeroDataBox adapters → one `Flight` dataclass), CLI command in `cli_web.py` beside `tv`, `ko doctor` rows for `OAG_FLIGHT_INFO_KEY`, `AERODATABOX_API_KEY` (optional) and `OAG_MASTER_DATA_KEY` (optional), `airportsdata` added to deps, `tests/test_flight.py` on recorded fixtures with no live calls.
+`src/ko/flight.py` (OAG → one `Flight` dataclass), CLI command in `cli_web.py` beside `tv`, `ko doctor` rows for `OAG_FLIGHT_INFO_KEY` and `OAG_MASTER_DATA_KEY` (optional; free tier allows `Limit=1`), `airportsdata` added to deps, `tests/test_flight.py` on recorded fixtures with no live calls.

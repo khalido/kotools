@@ -17,6 +17,7 @@ classifiers = [
     "Topic :: Utilities",
 ]
 dependencies = [
+    "airportsdata>=20261103",  # ko flight: IATA -> airport name, city, IANA zone (offline)
     "arxiv>=4.0.0",
     "arxiv2markdown>=0.1.0",
     "exa-py>=2.16.2",  # search(contents=…) API; 2.14/2.15 lack it
