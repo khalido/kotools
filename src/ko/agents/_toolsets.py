@@ -356,7 +356,7 @@ packages = FunctionToolset(
 def pkg_info(name: str) -> list[dict]:
     """Look up an npm or PyPI package by exact name ('npm:x' / 'pypi:x' to pick; '@scope/x' is
     npm; else both are tried and every match returned): the registry's latest version and date,
-    the version uv/npm would pick under KO's 3-day release-age floor, the version locked in the
+    the version uv/npm would pick under KO's release-age floor (a day), the version locked in the
     current repo, advisories on latest and on the locked version, licence, GitHub stars, last
     push, releases in the last year, weekly downloads, and the first lines of the latest release
     notes with their link. Deterministic, no LLM."""

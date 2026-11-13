@@ -43,7 +43,7 @@ Next on this thread, in order: (1) `model_info` tool returns clipped comments + 
 ## Where things stand
 
 - **Python 3.15**, deps upgraded (pydantic-ai 2.56 with the `typesafe` extra). All committed; WORKLOG 2026-10-13/14 has the why.
-- **The installed `ko` is a uv tool env, which doesn't follow `uv lock`.** It also ignores the 3-day guard and pulls fresh releases, so reinstall against the lock: `uv export --frozen --no-hashes --no-dev --no-emit-project -o /tmp/c.txt && uv tool install --reinstall -e . -c /tmp/c.txt`
+- **The installed `ko` is a uv tool env, which doesn't follow `uv lock`.** It also ignores the release-age guard and pulls fresh releases, so reinstall against the lock: `uv export --frozen --no-hashes --no-dev --no-emit-project -o /tmp/c.txt && uv tool install --reinstall -e . -c /tmp/c.txt`
 - **New this session:**
   - `ko decide` (alias `ko judge`, a decision model): typed answers with probabilities from Jev (yes/no, `--choice`, `--score`, `--tags`) through OpenRouter on the existing key. Guide: `ko prompt decide`.
   - `ko yt`: `info` (batch, transcript excerpt or reason code), `channel` (`--since`, durations), `-s` = Gemini Flash watching the video through OpenRouter with `src/ko/prompts/yt-condense.md`. Transcripts and write-ups cached in `~/.cache/ko/yt/`.

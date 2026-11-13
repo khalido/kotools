@@ -1294,7 +1294,7 @@ def pkg_info(
     names: list[str] = typer.Argument(..., help="package names; `npm:x` / `pypi:x` to pick one; several = a comparison table"),
     as_json: bool = typer.Option(False, "--json", help="an array, one object per package found; {query, error, code} for a miss"),
 ) -> None:
-    """Latest version and date (and what the 3-day floor picks), this repo's locked version, advisories, stars, last push, release notes."""
+    """Latest version and date (and what the release-age floor picks), this repo's locked version, advisories, stars, last push, release notes."""
     from concurrent.futures import ThreadPoolExecutor
 
     def one(q: str):
@@ -1341,7 +1341,7 @@ def _pkg_activity(p) -> str:
 def _pkg_lines(p, links: bool) -> list[str]:
     head = f"{p.name} ({p.system})  {p.latest}  {p.released or 'date not indexed yet'}"
     if p.floor_pick:
-        head += f"  under the 3-day floor, {"npm" if p.system == "npm" else "uv"} picks {p.floor_pick}"
+        head += f"  under the {pkg_mod.FLOOR_DAYS}-day floor, {"npm" if p.system == "npm" else "uv"} picks {p.floor_pick}"
     out = [head]
     if p.description:
         out.append(p.description)

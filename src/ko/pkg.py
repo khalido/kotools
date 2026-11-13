@@ -27,7 +27,7 @@ from packaging.version import InvalidVersion, Version
 
 DEPS = "https://api.deps.dev/v3"
 SYSTEMS = ("npm", "pypi")
-FLOOR_DAYS = 3  # matches `exclude-newer = "3 days"` (pyproject) and `min-release-age=3` (.npmrc)
+FLOOR_DAYS = 1  # matches `exclude-newer = "1 day"` (pyproject) and `min-release-age=1` (.npmrc)
 NOTES_LINES = 6
 
 
@@ -315,7 +315,7 @@ def _one(system: str, name: str, pkg: dict, *, notes: bool) -> PkgInfo:
 
     # Below the registry's latest only: a stable 5.0 on another dist-tag isn't what npm picks.
     older = [v for v in stable if _vkey(system, v) < _vkey(system, latest)]
-    # Timestamps, not dates: uv's "3 days" is 72 hours. ISO UTC strings compare in time order.
+    # Timestamps, not dates: uv's "1 day" is 24 hours. ISO UTC strings compare in time order.
     now = datetime.now(UTC)
     cutoff = (now - timedelta(days=FLOOR_DAYS)).strftime("%Y-%m-%dT%H:%M:%S")
     year_ago = (now - timedelta(days=365)).strftime("%Y-%m-%dT%H:%M:%S")

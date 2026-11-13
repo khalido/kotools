@@ -35,10 +35,10 @@ def fake_web(monkeypatch):
             "versions": [
                 {"versionKey": {"version": "1.9.0"}, "publishedAt": _days_ago(40)},
                 {"versionKey": {"version": "1.10.0"}, "publishedAt": _days_ago(20)},
-                {"versionKey": {"version": "2.0.0"}, "publishedAt": _days_ago(1)},
+                {"versionKey": {"version": "2.0.0"}, "publishedAt": _days_ago(0)},
                 {
                     "versionKey": {"version": "3.0.0.dev1"},
-                    "publishedAt": _days_ago(1),
+                    "publishedAt": _days_ago(0),
                     "isDefault": True,
                 },
             ]
@@ -89,7 +89,7 @@ def test_info_uses_registry_latest_floor_lock_and_notes(fake_web, tmp_path, monk
         "pypi",
         "2.0.0",
     )  # not deps.dev's pre-release default
-    assert p.floor_pick == "1.10.0"  # 2.0.0 is a day old
+    assert p.floor_pick == "1.10.0"  # 2.0.0 is from today, inside the floor
     assert p.locked == "1.9.0"
     assert [a.title for a in p.locked_advisories] == ["bad thing"] and p.advisories == []
     assert (p.stars, p.pushed, p.provenance, p.releases_1y) == (
@@ -140,11 +140,11 @@ def test_big_never_goes_scientific():
     assert [_big(x) for x in (12, 999_600, 1_048_576, 1_500_000_000, None)] == ["12", "1M", "1.05M", "1.5B", "–"]
 
 
-def test_floor_is_72_hours_and_covers_unindexed_latest(fake_web, tmp_path, monkeypatch):
+def test_floor_is_hours_not_days_and_covers_unindexed_latest(fake_web, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     vs = pkg._get(f"{pkg.DEPS}/systems/pypi/packages/demo").json()["versions"]
-    hours_ago = (datetime.now(UTC) - timedelta(hours=60)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    vs[2]["publishedAt"] = hours_ago  # 2.0.0: 2.5 days, maybe on the cutoff's calendar day
+    inside = timedelta(days=pkg.FLOOR_DAYS) - timedelta(hours=6)  # maybe on the cutoff's calendar day
+    vs[2]["publishedAt"] = (datetime.now(UTC) - inside).strftime("%Y-%m-%dT%H:%M:%SZ")
     [p] = pkg.info("pypi:demo")
     assert p.floor_pick == "1.10.0"
 

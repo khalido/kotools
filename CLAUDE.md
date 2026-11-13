@@ -21,7 +21,7 @@ This file is a stub, not a manual — same rule as agent-browser/herdr: **the in
 | `llm "<prompt>"` | one-shot LLM; `-f` attaches anything, `-x` extracts code, `--schema` constrains JSON |
 | `decide "<question>"` (alias `judge`) | typed answer with probabilities (Jev): yes/no, `--choice`, `--score`, `--tags`; guide `ko prompt decide` |
 | `models [info <name>...]` | model strings usable with `-m`; `info` = newest matching gateway model: price, hosts' speed, top HN threads + best comment (no LLM); several names = one comparison table |
-| `pkg info <name>...` | npm/PyPI package: latest + date (and what the 3-day floor picks), version in this repo, advisories, stars, last push, release notes head (deps.dev + registry + GitHub, no key) |
+| `pkg info <name>...` | npm/PyPI package: latest + date (and what the release-age floor picks), version in this repo, advisories, stars, last push, release notes head (deps.dev + registry + GitHub, no key) |
 | `doc <file>` | PDF/Office/image → text (liteparse); pages with no text layer OCR'd via `ocr` (DeepSeek on the gateway; stops first over 50 pages or $0.25; `-e vision` free on a Mac) |
 | `ocr serve` | liteparse OCR server on 127.0.0.1:8828 for other projects (`--ocr-server-url`) |
 | `pdf <file.md>` (`md-to-pdf`) | markdown → print-ready PDF; styles + brand.yml |
