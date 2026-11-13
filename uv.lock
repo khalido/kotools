@@ -19,6 +19,15 @@ wheels = [
 ]
 
 [[package]]
+name = "airportsdata"
+version = "20261103"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/4d/ef/771e4981a1798b654a3b6daad6200b8381fe7f2a1e5de66404817f49cf8e/airportsdata-20261103.tar.gz", hash = "sha256:4453b8b89857a1d397ad3657b2ecc69de7f790a909560756a151acf228d613bb", size = 949035, upload-time = "2026-11-03T13:53:09.764Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/72/e0/b899b5b29e5206573052de801f182fd6ae397ec332887a634d2cc62db515/airportsdata-20261103-py3-none-any.whl", hash = "sha256:a55a2a33785d722d57c67010e055f3c229e1281a5326b9d4810863f4ee2367d2", size = 937330, upload-time = "2026-11-03T13:53:07.37Z" },
+]
+
+[[package]]
 name = "annotated-doc"
 version = "0.0.6"
 source = { registry = "https://pypi.org/simple" }
@@ -895,6 +904,7 @@ name = "kotools"
 version = "2026.11.7"
 source = { editable = "." }
 dependencies = [
+    { name = "airportsdata" },
     { name = "arxiv" },
     { name = "arxiv2markdown" },
     { name = "exa-py" },
@@ -933,6 +943,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "airportsdata", specifier = ">=20261103" },
     { name = "arxiv", specifier = ">=4.0.0" },
     { name = "arxiv2markdown", specifier = ">=0.1.0" },
     { name = "exa-py", specifier = ">=2.16.2" },

@@ -29,6 +29,7 @@ from ._cli_shared import (
 arxiv_mod = lazy("arxiv")
 doc_mod = lazy("doc")
 exa_mod = lazy("exa")
+flight_mod = lazy("flight")
 fetch_mod = lazy("fetch")
 hf_mod = lazy("hf")
 hn_mod = lazy("hn")
@@ -1140,6 +1141,83 @@ def tv(
             f"{t.title} ({t.year or '—'}, {t.kind}) ★{t.rating:.1f}" for t in rest[:n]
         )
         typer.echo(f"\nOther matches: {others}")
+
+
+# --- flight command (root-level) ---
+
+
+def _flight_time(iso: str | None, day: str) -> str:
+    """'2026-11-14T05:45:00+05:00' -> '05:45 +05:00', with '+1' when it lands on a later local day."""
+    if not iso:
+        return "—"
+    from datetime import date as _date
+    from datetime import datetime
+
+    t = datetime.fromisoformat(iso)
+    shift = (t.date() - _date.fromisoformat(day)).days if day else 0
+    return f"{t:%H:%M} {t:%:z}" + (f" {shift:+d}d" if shift else "")
+
+
+def _flight_card(f) -> list[str]:
+    from datetime import date as _date
+
+    status = f.status.replace("_", " ").capitalize()
+    # lateness the card leads with: arrival's once known, else departure's
+    late = next((s.delay_min for s in (f.arrival, f.departure) if s.delay_min is not None), None)
+    if late and late > 0 and f.status != "cancelled":
+        status += f" · {late}m late"
+    day = _date.fromisoformat(f.date).strftime("%a %d %b") if f.date else ""
+    head = "  ".join(x for x in (f.flight, f.airline.name or "", day, status) if x)
+    places = " → ".join(f"{a.iata} {a.city or ''}".strip() for a in [f.legs[0].departure.airport] + [leg.arrival.airport for leg in f.legs])
+    dur = f"{f.duration_min // 60}h {f.duration_min % 60:02d}m" if f.duration_min else ""
+    route = "  ".join(x for x in (places, dur, f.aircraft or "") if x)
+    lines = [head, route]
+    if f.operated_by:
+        lines.append(f"operated by {f.operated_by}")
+    if f.diverted_to:
+        lines.append(f"diverted to {f.diverted_to}")
+    rows = [["", "", "sched", "est/actual", "term", "gate"]]
+    for leg in f.legs:
+        for label, s in (("Depart", leg.departure), ("Arrive", leg.arrival)):
+            now = _flight_time(s.actual, f.date) + " actual" if s.actual else _flight_time(s.estimated, f.date)
+            rows.append([label, s.airport.iata, _flight_time(s.scheduled, f.date), now, s.terminal or "—", s.gate or "—"])
+    lines += _table(rows)
+    if f.arrival.baggage:
+        lines.append(f"baggage belt {f.arrival.baggage}")
+    return lines
+
+
+@app.command("flight")
+def flight(
+    args: list[str] = typer.Argument(..., metavar="CODE [DATE]", help="flight number (EK604, UAE604) and optional departure date: YYYY-MM-DD, today, tomorrow, yesterday"),
+    as_json: bool = typer.Option(False, "--json", help="one JSON object (`[]` when there's no such flight)"),
+) -> None:
+    """Flight status card: airports, scheduled/estimated/actual times in local time, terminal, gate (OAG).
+
+    No date = the flight in progress or next to leave. e.g. `ko flight EK604 2026-11-20`
+    """
+    from datetime import datetime
+
+    if len(args) >= 2 and args[1].isdigit():  # `ko flight EK 604`
+        args = [args[0] + args[1], *args[2:]]
+    if len(args) > 2:
+        _die(f"too many arguments: {' '.join(args[2:])}", as_json=as_json, code="usage")
+    try:
+        flight_mod.parse_code(args[0])
+        on = flight_mod.parse_date(args[1], datetime.now().date()) if len(args) == 2 else None
+    except ValueError as e:
+        _die(str(e), as_json=as_json, code="usage")
+    try:
+        f = flight_mod.lookup(args[0], on)
+    except Exception as e:
+        _die_from(e, as_json=as_json)
+    if f is None:
+        when = f"on {on}" if on else "between yesterday and tomorrow"
+        _no_results(f"No {args[0].upper()} {when} (OAG).", as_json)
+    if as_json:
+        _emit_json(f)
+        return
+    typer.echo("\n".join(_flight_card(f)))
 
 
 # --- yt command (root-level) ---
