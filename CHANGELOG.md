@@ -13,21 +13,24 @@ Cut a release with the repo's `/release` skill.
 
 ## [Unreleased]
 
+## [2026.11.13] - 2026-11-13
+
+A flight lookup, inline images in Gmail drafts, a faster start, and clearer errors.
+
+### Added
+- `ko flight EK604 [date]`: a flight status card from OAG (airports, scheduled and estimated/actual times in each airport's local time, terminal, gate, codeshares and multi-leg flights). No date = the flight in progress or next to leave; `--json` for scripts. Needs `OAG_FLIGHT_INFO_KEY`, which `ko doctor` checks.
+- `ko gmail draft --md` embeds local images (`![alt](shot.png)`, path relative to the .md file) inline in the mail; png, jpeg, gif and webp only, http(s) images stay remote.
+
 ### Changed
-- Dependencies upgraded, including pydantic-ai 2.67 (2.66's security fixes are now the minimum) and typer 0.29. The release-age guard drops from 3 days to 1 (`exclude-newer`, `.npmrc`), and `ko pkg info` reports the 1-day floor.
-- `ko gmail draft --md` embeds local images (`![alt](shot.png)`) inline in the mail body; http(s) image URLs stay remote.
-- Every command starts ~80 ms faster: HTTP clients, Google sign-in and the arxiv SDK load on first use.
-- `ko pdf`, `ko publish` and `ko prompt` read front matter with one YAML parser, keeping values exactly as written. Front matter that doesn't parse (an unquoted `: ` or ` #`) is skipped with a note naming the file and line, and the content still comes back: quote the value to keep it (`title: "Phase 2: costs"`). Windows line endings, a byte-order mark and list `tags:` now work.
+- Commands start about 80 ms faster (~212 → ~135 ms): HTTP clients, Google sign-in and the arxiv SDK load on first use.
+- `ko pdf`, `ko publish` and `ko prompt` share one front-matter parser that keeps values exactly as written. A block that doesn't parse (an unquoted `: ` or ` #`, or a nested value) is skipped with a note naming the file and line, and the content still comes back. Windows line endings, a byte-order mark and list `tags:` now work.
+- Packages only install once they're a day old (was 3 days); `ko pkg info` reports that floor. pydantic-ai is now at least 2.66, for its security fixes.
 
 ### Fixed
-- Front matter with a `|` or `>` value containing ` #` no longer drops the whole block. A nested value (e.g. `author:` with `name:` under it) skips the block with a note instead of reaching the PDF as `{'name': 'Ko'}`. A broken prompt file warns only when it's the brief in use.
-- `ko gmail draft --md` judges a `.png` symlink by the file it points at, embeds raw `<img>` tags whatever their attribute order, and leaves `//host/x.png` links remote.
-- `ko doctor --json` no longer makes the account lookups, refs walk and credit calls that only the human report shows.
-- `ko cal` and the `ko gmail` thread lists print a note on stderr when `--json` returns `[]`, like every other command. `ko gdocs get -o` creates missing folders. An unset key that reaches the top level exits with one line, not a traceback.
-- A missing key or bad config now exits as `code: "config"` and a Google sign-in problem as `code: "auth"` with its `fix`, instead of a plain `error`. A bug in ko itself crashes with a traceback rather than passing as a one-line error.
+- A missing key or bad config exits as `code: "config"`, and a Google sign-in problem as `code: "auth"` with its `fix`, instead of a plain `error`; one that reaches the top level is one line, not a traceback. A bug in ko itself now shows a traceback.
 - A Google command whose cached token won't do says the real reason (unreadable, read-only grant, no refresh token, refresh refused), not always "expired".
-- `ko gmail` replies use the right account's address under `-a`. Sending a draft is refused outside the CLI too unless `allow_send` is on.
-- `ko x` says when X bills its minimum of 10 posts (5 for a user timeline) for a smaller `-n`. Several `--json` outputs no longer crash on a date or path.
+- `ko gmail` replies use the right account's address under `-a`, and sending a draft is refused outside the CLI too unless `allow_send` is on.
+- Smaller fixes: `ko cal` and gmail thread lists note an empty `--json` result on stderr; `ko gdocs get -o` creates missing folders; `ko doctor --json` skips the live calls only the human report uses; `ko x` says when X bills more posts than the `-n` you asked for (minimum 10, or 5 for a user timeline); several `--json` outputs no longer crash on a date or path.
 
 ## [2026.11.7] - 2026-11-07
 
@@ -235,7 +238,8 @@ things, `--json` where structure matters.
 - **Agent contract** (AGENTS.md): stdout=data / stderr=notes, exit 0/1/2,
   `--json` errors as `{error, code}`, bare-arg shortcuts.
 
-[Unreleased]: https://github.com/khalido/kotools/compare/v2026.11.7...HEAD
+[Unreleased]: https://github.com/khalido/kotools/compare/v2026.11.13...HEAD
+[2026.11.13]: https://github.com/khalido/kotools/compare/v2026.11.7...v2026.11.13
 [2026.11.7]: https://github.com/khalido/kotools/compare/v2026.7.27...v2026.11.7
 [2026.7.27]: https://github.com/khalido/kotools/compare/v2026.7.14...v2026.7.27
 [2026.7.14]: https://github.com/khalido/kotools/compare/v2026.7.9...v2026.7.14

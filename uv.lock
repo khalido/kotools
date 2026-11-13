@@ -901,7 +901,7 @@ wheels = [
 
 [[package]]
 name = "kotools"
-version = "2026.11.7"
+version = "2026.11.13"
 source = { editable = "." }
 dependencies = [
     { name = "airportsdata" },
