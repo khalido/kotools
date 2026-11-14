@@ -946,7 +946,7 @@ requires-dist = [
     { name = "airportsdata", specifier = ">=20261103" },
     { name = "arxiv", specifier = ">=4.0.0" },
     { name = "arxiv2markdown", specifier = ">=0.1.0" },
-    { name = "exa-py", specifier = ">=2.16.2" },
+    { name = "exa-py", specifier = ">=2.26.0" },
     { name = "google-api-python-client", specifier = ">=2.198.0" },
     { name = "google-auth", specifier = ">=2.56.2" },
     { name = "google-auth-oauthlib", specifier = ">=1.4.0" },

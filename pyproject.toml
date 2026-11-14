@@ -20,7 +20,7 @@ dependencies = [
     "airportsdata>=20261103",  # ko flight: IATA -> airport name, city, IANA zone (offline)
     "arxiv>=4.0.0",
     "arxiv2markdown>=0.1.0",
-    "exa-py>=2.16.2",  # search(contents=…) API; 2.14/2.15 lack it
+    "exa-py>=2.26.0",  # search(objective=…, type="lite"): objective from 2.24, lite from 2.26
     "google-api-python-client>=2.198.0",
     "google-auth>=2.56.2",
     "google-auth-oauthlib>=1.4.0",
