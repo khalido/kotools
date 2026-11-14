@@ -46,7 +46,7 @@ app.add_typer(arxiv_app, name="arxiv")
 
 exa_app = typer.Typer(
     help="exa semantic web search + URL → markdown (EXA_API_KEY required). "
-    "`search` --highlights/--long/--type/--category/--max-age-hours; `ko prompt exa` for the guide.",
+    "`search` --summary/--long/--type/--category/--max-age-hours; `ko prompt exa` for the guide.",
     no_args_is_help=True,
 )
 app.add_typer(exa_app, name="exa")
@@ -206,8 +206,8 @@ def exa_search(
         None,
         "--type",
         "-t",
-        help="search algorithm: auto (default), instant, fast, deep-lite, deep, "
-        "deep-reasoning, neural. 'auto' picks the best approach.",
+        help="search algorithm: auto (default), lite (cheapest, cached pages), deep-lite, deep, "
+        "deep-reasoning; legacy: fast, instant, neural.",
     ),
     category: str = typer.Option(
         None,
@@ -221,20 +221,18 @@ def exa_search(
         help="freshness of cached content: 0 = always live-crawl, -1 = cached only, "
         "omitted = live-crawl only as a fallback.",
     ),
-    highlights: bool = typer.Option(
-        False,
-        "--highlights",
-        help="show the most-relevant sentences per result instead of a summary "
-        "(Exa's agent default; ~10x fewer tokens than full text)",
+    summary: bool = typer.Option(
+        False, "--summary", help="a short blurb per result instead of highlights (one LLM call each, ~70% dearer)"
     ),
+    _highlights: bool = typer.Option(False, "--highlights", hidden=True),  # the default now; kept for old scripts
     no_text: bool = typer.Option(
         False, "--no-text", help="skip content entirely (fastest; title + url + date only)"
     ),
-    long: bool = typer.Option(False, "--long", "-l", help="fetch the full page text excerpt, not just the summary"),
+    long: bool = typer.Option(False, "--long", "-l", help="fetch the full page text excerpt, not just highlights"),
     as_json: bool = typer.Option(False, "--json", help="emit JSON instead of text"),
 ) -> None:
-    """Semantic web search; each hit shows a query-relevant summary by default (--highlights
-    for key sentences, --long for full text). Alias: `ko exa search`."""
+    """Semantic web search; each hit shows its query-relevant passages (--summary for a blurb,
+    --long for full text). Alias: `ko exa search`."""
     if search_type is not None and search_type not in exa_mod.SEARCH_TYPES:
         _die(
             f"invalid --type {search_type!r}; choose one of: {', '.join(exa_mod.SEARCH_TYPES)}",
@@ -266,11 +264,13 @@ def exa_search(
             category=category,
             max_age_hours=max_age_hours,
             with_text=long,
-            with_highlights=highlights,
-            with_summary=not no_text and not highlights,
+            with_highlights=not (no_text or summary or long),
+            with_summary=summary and not no_text,
         )
     except Exception as e:
         _die_from(e, as_json=as_json)
+    if note := exa_mod.cost_note():
+        typer.echo(note, err=True)
     if not results:
         _no_results(f"No results for '{query}'.", as_json)
     if as_json:
@@ -281,7 +281,7 @@ def exa_search(
         title = " ".join((r.title or r.url).split())  # collapse stray newlines in the title
         typer.echo(f"{title}{'  ·  ' + day if day else ''}")
         typer.echo(f"  {r.url}")
-        if highlights and r.highlights:  # render each highlight sentence on its own line
+        if r.highlights:  # render each highlight passage on its own line
             for h in r.highlights:
                 typer.echo(f"  • {' '.join(h.split())}")
             typer.echo("")
@@ -308,6 +308,8 @@ def exa_get(
         result = exa_mod.get_contents(urls)
     except Exception as e:
         _die_from(e)
+    if note := exa_mod.cost_note():
+        typer.echo(note, err=True)
     # A URL can come back present-but-empty (Exa returns HTTP 200 with a per-URL status even
     # on failure); treat both "absent" and "empty text" as failed so agents see a partial run.
     got = {u: t for u, t in result.texts.items() if t}

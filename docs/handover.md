@@ -60,7 +60,7 @@ Next on this thread, in order: (1) `model_info` tool returns clipped comments + 
 
 ## Next, in order
 
-0. **Reddit in `ko fetch` is down** (2026-10-28): safereddit.com serves a browser challenge, reddit.synth.download 502s. Mirror churn keeps recurring; the durable fix is Reddit's OAuth API (app "kotools" already registered, see the comment in `fetch.py`). Small adds: exa-py `lite` search type (`exa.py:33`), pydantic-ai `Caching` for `ko ai`.
+0. **Reddit in `ko fetch` is down** (2026-10-28): safereddit.com serves a browser challenge, reddit.synth.download 502s. Mirror churn keeps recurring; the durable fix is Reddit's OAuth API (app "kotools" already registered, see the comment in `fetch.py`). Small add: pydantic-ai `Caching` for `ko ai`.
 1. KO: `ko google auth kd` and `ko google auth sfl` to add the YouTube scope (`ko google accounts` shows `missing: youtube` until then). Still open: `ko google auth ne`, and whether the OAuth app is in Testing (7-day tokens): https://console.cloud.google.com/auth/audience?project=kotools-500611
 2. Ideas from Spawn's fleet post (https://x.com/jsnnsa/status/2115623382721126826, 2026-10-30), not started. KO wants (a) first; sketch the design before building:
    - (a) `ko decided "<question>"` + agent tool: a Jev judge over WORKLOG, the CLAUDE.md files, memory feedback files and `docs/`, answering "decided (file:line)", "wrong question" or "hold for KO", so agents check before asking. Spawn's judges: 11,000 verdicts in 8 days, 27 needed the founder.

@@ -37,7 +37,7 @@ class FakeClient:
             summary="a blurb",
             highlights=["sentence one.", "sentence two."],
         )
-        return SimpleNamespace(results=[item])
+        return SimpleNamespace(results=[item], cost_dollars=SimpleNamespace(total=0.007))
 
     def get_contents(self, urls, **kwargs):
         self.contents_kwargs = {"urls": urls, **kwargs}
@@ -75,30 +75,29 @@ def test_missing_api_key_raises(monkeypatch):
 def test_search_passes_type_category_maxage(fake_client):
     results = search(
         "q",
-        type="fast",
+        type="lite",
         category="research paper",
         max_age_hours=0,
-        with_highlights=True,
-        with_summary=False,
+        objective="prefer official pages",
     )
     kw = fake_client.search_kwargs
-    assert kw["type"] == "fast"
+    assert kw["type"] == "lite" and "lite" in exa.SEARCH_TYPES
     assert kw["category"] == "research paper"
+    assert kw["objective"] == "prefer official pages"
     assert kw["num_results"] == exa.DEFAULT_MAX_RESULTS
     # highlights + max_age_hours ride inside the contents dict, not top-level
-    assert kw["contents"]["highlights"]["query"] == "q"  # bounded + query-biased, not True
-    assert kw["contents"]["highlights"]["max_characters"] == exa.DEFAULT_HIGHLIGHT_CHARS
+    assert kw["contents"]["highlights"] is True  # Exa sizes them by relevance: no cap (2026-11-15)
     assert kw["contents"]["max_age_hours"] == 0
     assert "summary" not in kw["contents"]
     assert results[0].highlights == ["sentence one.", "sentence two."]
 
 
 def test_search_omits_unset_options(fake_client):
-    search("q")  # defaults: summary only, no type/category/max_age
+    search("q")  # defaults: highlights only, no type/category/objective/max_age
     kw = fake_client.search_kwargs
-    assert "type" not in kw
+    assert "type" not in kw and "objective" not in kw
     assert "category" not in kw
-    assert "summary" in kw["contents"]
+    assert kw["contents"] == {"highlights": True}
     assert "max_age_hours" not in kw["contents"]
 
 
@@ -210,3 +209,32 @@ def test_search_returns_results():
     assert len(results) > 0
     assert all(r.url for r in results)
     assert any(r.title for r in results)  # a title-less result is legal; all-empty means parsing broke
+
+
+def test_search_records_its_cost_for_the_stderr_note(fake_client):
+    search("q")
+    assert exa.last_cost == 0.007 and exa.cost_note() == "[exa · $0.007]"
+
+
+def test_cli_default_is_highlights_and_long_shows_text(monkeypatch):
+    from typer.testing import CliRunner
+
+    from ko.cli import app
+
+    seen = {}
+
+    def fake_search(query, **kw):
+        seen.clear()
+        seen.update(kw)
+        return [exa.ExaResult(url="https://a.com", title="A", score=0.0, published_date=None,
+                              text="the full page" if kw["with_text"] else None,
+                              highlights=["a passage"] if kw["with_highlights"] else None)]
+
+    monkeypatch.setattr(exa, "search", fake_search)
+    r = CliRunner().invoke(app, ["exa", "search", "q"])
+    assert r.exit_code == 0 and "• a passage" in r.stdout
+    assert seen["with_highlights"] and not seen["with_summary"]
+    r = CliRunner().invoke(app, ["exa", "search", "q", "--long"])
+    assert "the full page" in r.stdout and not seen["with_highlights"]
+    r = CliRunner().invoke(app, ["exa", "search", "q", "--highlights"])  # old flag, now a no-op
+    assert r.exit_code == 0

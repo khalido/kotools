@@ -24,13 +24,12 @@ if TYPE_CHECKING:
 
 DEFAULT_MAX_RESULTS = 10
 DEFAULT_MAX_CHARS = 3000
-DEFAULT_HIGHLIGHT_CHARS = 1000  # bound highlights — unbounded, Exa returns near-full-page text
 
 # Mirror the installed SDK's SearchType / Category literals (exa_py.api). Kept here so the
-# CLI can validate a flag before spending a request. 'auto' is Exa's recommended default;
-# 'neural' is the legacy embedding search. NOTE: the papers index category is "research
-# paper" (there is no "publication" category in the SDK, despite older docs).
-SEARCH_TYPES = ("auto", "instant", "fast", "deep-lite", "deep", "deep-reasoning", "neural")
+# CLI can validate a flag before spending a request. Exa recommends 'lite', 'auto' and
+# 'deep'; 'fast', 'instant' and 'neural' are legacy. NOTE: the papers index category is
+# "research paper" (there is no "publication" category in the SDK, despite older docs).
+SEARCH_TYPES = ("auto", "lite", "deep-lite", "deep", "deep-reasoning", "fast", "instant", "neural")
 
 # A Literal so agent tools can type the param (pydantic-ai renders it as an enum in the
 # tool schema, so a model can't invent a category); CATEGORIES stays the tuple the CLI
@@ -79,6 +78,20 @@ class Contents:
     statuses: list[UrlStatus] = field(default_factory=list)
 
 
+last_cost: float | None = None  # dollars Exa charged for the last search/get_contents
+
+
+def cost_note() -> str | None:
+    """`[exa · $0.007]` for the last request, for stderr — like every LLM call's cost note."""
+    return f"[exa · ${last_cost:.3f}]" if last_cost is not None else None
+
+
+def _record_cost(response) -> None:
+    global last_cost
+    cost = getattr(response, "cost_dollars", None)
+    last_cost = getattr(cost, "total", None)
+
+
 def _client() -> Exa:
     from exa_py import Exa  # ~0.35 s — only when a search actually runs
 
@@ -113,13 +126,14 @@ def search(
     type: str | None = None,
     category: Category | None = None,
     max_age_hours: int | None = None,
+    objective: str | None = None,
     with_text: bool = False,
-    with_highlights: bool = False,
-    with_summary: bool = True,
+    with_highlights: bool = True,
+    with_summary: bool = False,
     max_chars: int = DEFAULT_MAX_CHARS,
 ) -> list[ExaResult]:
-    """Semantic web search via Exa. Returns results with an optional query-relevant summary
-    (default), highlight sentences (`with_highlights`), and/or the full page text (`with_text`).
+    """Semantic web search via Exa. Returns results with query-relevant highlights (default),
+    a summary (`with_summary`), and/or the full page text (`with_text`).
 
     Param names mirror Exa's SDK so agent-written code composes with upstream docs.
     - `type`: search algorithm — one of SEARCH_TYPES (default None → Exa's 'auto').
@@ -130,6 +144,8 @@ def search(
     - `since_months`: ergonomic shortcut for "last N months" — sets `start_published_date`
       if one isn't given.
     - `include_domains`/`exclude_domains`: mutually exclusive (Exa's API rejects both).
+    - `objective`: the goal the search serves (which pages should rank first, what to pull
+      from them), apart from the query; Exa's advice for searches an agent makes.
 
     Page text is capped at `max_chars` and marked when cut — see `_cap`.
     """
@@ -148,6 +164,8 @@ def search(
         kwargs["type"] = type
     if category:
         kwargs["category"] = category
+    if objective:
+        kwargs["objective"] = objective
     if start_published_date is None and since_months is not None:
         start = datetime.now(UTC) - timedelta(days=30 * since_months)
         start_published_date = start.strftime("%Y-%m-%d")
@@ -155,9 +173,9 @@ def search(
         kwargs["start_published_date"] = start_published_date
     if end_published_date:
         kwargs["end_published_date"] = end_published_date
-    # Summary = short query-relevant blurb (cheap, useful in a list); highlights = the most
-    # relevant sentences (Exa's recommended agent default, ~10x fewer tokens than full text);
-    # text = the full page. exa-py 2.16 folded search_and_contents() into search(contents=...).
+    # Highlights = the passages most relevant to the query, sized by Exa to each page's
+    # relevance (~2,500 chars a result on average; their recommended default, so no cap).
+    # Summary = a short blurb, one extra LLM call per result (~70% dearer). Text = the page.
     # contents=False keeps the no-content path lean.
     contents: dict = {}
     if with_text:
@@ -165,14 +183,13 @@ def search(
         # more to give — that's how _cap knows to mark the excerpt as truncated.
         contents["text"] = {"max_characters": max_chars + 1}
     if with_highlights:
-        # Bias highlights to the query and bound them — highlights=True returns near-full-page
-        # text, defeating the ~10x token saving that makes highlights worthwhile.
-        contents["highlights"] = {"query": query, "max_characters": DEFAULT_HIGHLIGHT_CHARS}
+        contents["highlights"] = True
     if with_summary:
         contents["summary"] = {"query": query}
     if max_age_hours is not None:
         contents["max_age_hours"] = max_age_hours
     response = client.search(query, contents=contents or False, **kwargs)
+    _record_cost(response)
 
     return [
         ExaResult(
@@ -198,6 +215,7 @@ def get_contents(urls: list[str], max_chars: int | None = None) -> Contents:
     client = _client()
     text_arg: bool | dict = True if max_chars is None else {"max_characters": max_chars + 1}
     response = client.get_contents(urls=urls, text=text_arg)
+    _record_cost(response)
     texts = {
         item.url: (_cap(item.text, max_chars) if max_chars is not None else item.text) or ""
         for item in response.results

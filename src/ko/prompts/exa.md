@@ -15,12 +15,13 @@ return clean page content in the same call. Reach for it when you want *pages ab
   Exa's `--category 'research paper'` is the web-flavoured alternative.
 
 ## Agent defaults (what to actually type)
-- Default is a query-relevant **summary** per hit — good for scanning. For an agent budget,
-  add **`--highlights`**: the most-relevant sentences, bounded (~10x fewer tokens than full text).
+- Default is each hit's **highlights**: the passages most relevant to the query, sized by Exa
+  (~2,500 chars a hit). `--summary` gives a short blurb instead (an LLM call per hit, ~70% dearer).
 - **`--long`** pulls a full-text excerpt when you need to read, not just triage.
-- **`--type`**: `auto` (default, let Exa pick) is right almost always. `neural` if you want the
-  legacy embedding search (it's the only type that returns a real relevance `score`); `fast`/`instant`
-  for latency; `deep`/`deep-reasoning` for hard multi-hop research (slower, pricier).
+- **`--type`**: `auto` (default, let Exa pick) is right almost always. `lite` costs about half
+  and serves cached pages only, fine for triage when freshness doesn't matter; `deep`/`deep-reasoning`
+  for hard multi-hop research (slower, pricier). `fast`/`instant`/`neural` are legacy.
+- Each search prints its cost on stderr (`[exa · $0.007]`).
 - **`--category`**: focus the index — `'research paper'`, `news`, `company`, `pdf`, `'personal site'`,
   `'financial report'`, `people`. `--category 'research paper'` upgrades the old `--domains .edu` trick.
 - **`--domains .edu`** / `--domains <uni>` still works for labs/faculty/admissions pages.

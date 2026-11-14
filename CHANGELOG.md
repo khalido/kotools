@@ -13,6 +13,9 @@ Cut a release with the repo's `/release` skill.
 
 ## [Unreleased]
 
+### Changed
+- `ko exa search` shows each hit's highlights by default, sized by Exa with no cap (`--summary` for a blurb, which costs ~70% more); `--type lite` costs about half; each search and `ko exa get` prints its cost on stderr. The agents' `exa_search` asks for an `objective`, as Exa recommends.
+
 ## [2026.11.13] - 2026-11-13
 
 A flight lookup, inline images in Gmail drafts, a faster start, and clearer errors.

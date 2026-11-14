@@ -44,7 +44,7 @@ against this with evidence.
 2. **Read ko's actual implementation** before claiming an upstream equivalent is better.
    Several were built deliberately: `_files.py` resolves symlinks *before* containment
    checks (a TOCTTOU ordering choice), `_memory.py` has a pin marker protecting
-   foundations from truncation, `exa_search` returns bounded highlights only
+   foundations from truncation, `exa_search` returns highlights only
    (`with_text=False`) as a measured token decision. If upstream drops a property ko
    chose on purpose, that's a finding, not a detail.
 3. **Cite file:line** on both sides of every comparison.

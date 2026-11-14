@@ -52,8 +52,8 @@ def _try(label: str, fn, *args, **kwargs):
 
 # --- web ---
 web = FunctionToolset(
-    instructions="Web: exa_search finds sources and returns only bounded, query-relevant "
-    "highlight sentences per hit — enough to judge relevance, never the whole page. Search "
+    instructions="Web: exa_search finds sources and returns the query-relevant passages of "
+    "each hit — enough to judge relevance and pull facts, never the whole page. Search "
     "wide, then read narrow: pass the 1-3 URLs that actually matter to exa_get (several at "
     "once, clean markdown) or fetch_url (any URL, incl. PDFs/arxiv/Wayback). Quote from a "
     "page you read in full, not from a highlight fragment."
@@ -63,6 +63,7 @@ web = FunctionToolset(
 @web.tool_plain
 def exa_search(
     query: str,
+    objective: str,
     n: int = 5,
     category: ExaCategory | None = None,
     include_domains: list[str] | None = None,
@@ -71,25 +72,29 @@ def exa_search(
     start_published_date: str | None = None,
     end_published_date: str | None = None,
 ) -> list[ExaResult]:
-    """Semantic web search. Returns title, URL, date, and `highlights` — the handful of
-    sentences most relevant to the query, bounded to ~1000 chars per result (roughly 10x
-    cheaper than page text). Highlights are for TRIAGE: to actually read a page, pass its
-    URL to exa_get or fetch_url. `text` and `summary` come back null here by design.
+    """Semantic web search. Returns title, URL, date, and `highlights` — the passages most
+    relevant to the query, sized by relevance (~2,500 chars a result on average). Highlights
+    are for TRIAGE and facts: to read a page in full, pass its URL to exa_get or fetch_url.
+    `text` and `summary` come back null here by design. Results cover all time and all
+    categories unless you narrow them.
 
-    Params (all optional):
-    - category: focus Exa's index. Exactly one of 'research paper' (the scholarly index —
-      the .edu-domains trick, done properly), 'news', 'company', 'pdf', 'personal site',
-      'financial report', 'people'. Note it is 'research paper', NOT 'publication'.
-    - include_domains / exclude_domains: e.g. ['.edu'] or ['reddit.com'] — mutually
-      exclusive, passing both is an error.
-    - since_months: restrict to the last N months (ergonomic shortcut for start_published_date)
-    - start_published_date / end_published_date: YYYY-MM-DD date bounds (override since_months if both set)
-    Results cover all time and all categories by default."""
+    Args:
+        query: what to retrieve; describe the pages you want, not a bag of keywords.
+        objective: Goal for this search turn; say which documents should rank first, which should be excluded, and what specific facts or figures to pull from them.
+        n: how many results (default 5).
+        category: focus Exa's index; 'research paper' is the scholarly index.
+        include_domains: only these domains, e.g. ['.edu'] or ['reddit.com']; not with exclude_domains.
+        exclude_domains: never these domains; not with include_domains (passing both is an error).
+        since_months: only pages published in the last N months (shortcut for start_published_date).
+        start_published_date: earliest publish date, YYYY-MM-DD; overrides since_months.
+        end_published_date: latest publish date, YYYY-MM-DD.
+    """
     return _try(
         "exa_search",
         exa_mod.search,
         query,
         n=n,
+        objective=objective,
         category=category,
         include_domains=include_domains,
         exclude_domains=exclude_domains,

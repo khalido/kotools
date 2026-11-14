@@ -23,8 +23,7 @@ guessing flags. `ko doctor` tells you what's configured and what isn't.
 
 ## What's in the box
 
-**Web + reading** — `ko exa search "<idea>"` (semantic search; `--highlights` for cheap
-triage, `--category 'research paper'` for scholarly), `ko fetch <url>` (any URL → markdown;
+**Web + reading** — `ko exa search "<idea>"` (semantic search; each hit's relevant passages, `--category 'research paper'` for scholarly), `ko fetch <url>` (any URL → markdown;
 handles arxiv, PDFs, YouTube, paywalls, dead links via Wayback), `ko doc <file>` (PDF/Office/
 image → text, local), `ko yt <url>` (YouTube transcript). Shortcuts: `ko <url>` and `ko <file>`.
 
@@ -58,7 +57,7 @@ Task notes are markdown and render in the app.
   `ko gsheets get <id> | cut -f 3`, `ko papers search "..." --json | jq`. Commands that
   write a file print its path, so they chain:
   `ko gmail draft new --to x@y.com -s "Status" --body-file note.txt -a "$(ko pdf status.md)"`.
-- **Search wide, read narrow.** `ko exa search --highlights` to find candidates, then
+- **Search wide, read narrow.** `ko exa search` to find candidates, then
   `ko fetch <url>` on the two that matter. Don't pull full text for ten results.
 - **Reach for the specific tool.** `ko papers` beats `ko exa` for literature; `ko yt` beats
   `ko fetch` for a video you want transcribed.

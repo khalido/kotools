@@ -49,7 +49,7 @@ def test_missing_key_propagates_out_of_the_tool(monkeypatch):
     """End-to-end on the real tool function: no EXA_API_KEY → the error reaches the caller."""
     monkeypatch.delenv("EXA_API_KEY", raising=False)
     with pytest.raises(MissingKeyError, match="EXA_API_KEY"):
-        _toolsets.exa_search("anything")
+        _toolsets.exa_search("anything", "any goal")
 
 
 def test_missing_key_is_a_runtime_error():
@@ -60,9 +60,9 @@ def test_missing_key_is_a_runtime_error():
 # --- exa_search: the content mode the agent actually gets ----------------------
 
 
-def test_exa_search_asks_for_bounded_highlights(monkeypatch):
-    """Agent search = highlights only. Full text/summary are the escalation path
-    (exa_get/fetch_url), not the default — ~10x fewer tokens per hit."""
+def test_exa_search_asks_for_highlights_and_passes_the_objective(monkeypatch):
+    """Agent search = highlights only, plus the objective Exa asks agents to send. Full
+    text/summary are the escalation path (exa_get/fetch_url), not the default."""
     seen = {}
 
     def fake_search(query, **kwargs):
@@ -70,7 +70,8 @@ def test_exa_search_asks_for_bounded_highlights(monkeypatch):
         return []
 
     monkeypatch.setattr(exa_mod, "search", fake_search)
-    _toolsets.exa_search("pydantic-ai releases", n=3, category="research paper")
+    _toolsets.exa_search("pydantic-ai releases", "find the latest version", n=3, category="research paper")
+    assert seen["objective"] == "find the latest version"
     assert seen["with_highlights"] is True
     assert seen["with_text"] is False
     assert seen["with_summary"] is False
