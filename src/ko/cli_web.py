@@ -46,7 +46,7 @@ app.add_typer(arxiv_app, name="arxiv")
 
 exa_app = typer.Typer(
     help="exa semantic web search + URL → markdown (EXA_API_KEY required). "
-    "`search` --summary/--long/--type/--category/--max-age-hours; `ko prompt exa` for the guide.",
+    "`search` --reviews/--summary/--long/--type/--category/--max-age-hours; `ko prompt exa` for the guide.",
     no_args_is_help=True,
 )
 app.add_typer(exa_app, name="exa")
@@ -224,6 +224,9 @@ def exa_search(
     summary: bool = typer.Option(
         False, "--summary", help="a short blurb per result instead of highlights (an LLM call each: ~$0.001 a result extra)"
     ),
+    reviews: bool = typer.Option(
+        False, "--reviews", help="book reviews: QUERY is a title, e.g. `ko exa search 'The Wager' --reviews`"
+    ),
     _highlights: bool = typer.Option(False, "--highlights", hidden=True),  # the default now; kept for old scripts
     no_text: bool = typer.Option(
         False, "--no-text", help="skip content entirely (fastest; title + url + date only)"
@@ -251,10 +254,14 @@ def exa_search(
             as_json=as_json,
             code="usage",
         )
+    objective = None
+    if reviews:
+        query, objective = exa_mod.reviews_query(query), exa_mod.REVIEWS_OBJECTIVE
     try:
         results = exa_mod.search(
             query,
             n=n,
+            objective=objective,
             include_domains=_parse_domains(domains),
             exclude_domains=_parse_domains(exclude),
             since_months=since,

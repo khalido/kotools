@@ -79,7 +79,7 @@ def exa_search(
     categories unless you narrow them.
 
     Args:
-        query: what to retrieve; describe the pages you want, not a bag of keywords.
+        query: what to retrieve; describe the pages you want, not a bag of keywords, and name the kind of page in it (e.g. 'The Wager book reviews'): that steers results more than the objective does.
         objective: Goal for this search turn; say which documents should rank first, which should be excluded, and what specific facts or figures to pull from them.
         n: how many results (default 5).
         category: focus Exa's index; 'research paper' is the scholarly index.

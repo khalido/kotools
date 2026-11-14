@@ -78,6 +78,24 @@ class Contents:
     statuses: list[UrlStatus] = field(default_factory=list)
 
 
+# Book reviews, measured 2026-11-15 (WORKLOG): on `auto` the query wording does the work
+# ("…book reviews": 6 of 6 results were reviews); the objective alone changed nothing there,
+# but it steers deep types and costs nothing to send.
+REVIEWS_OBJECTIVE = (
+    "Find substantive critical reviews of this book. Rank first: reviews in established "
+    "publications (newspapers, literary magazines, review journals like Kirkus or Publishers "
+    "Weekly) and long-form reviews by serious critics or readers. Exclude retailer and publisher "
+    "pages, Google Books, Wikipedia, plot-summary or study-guide sites, and author interviews. "
+    "Pull the reviewer's overall verdict, the main praise, the main criticism, and the "
+    "publication and date."
+)
+
+
+def reviews_query(title: str) -> str:
+    """`"The Wager"` -> `"The Wager book reviews"`; left alone if it already asks for reviews."""
+    return title if "review" in title.lower() else f"{title} book reviews"
+
+
 last_cost: float | None = None  # dollars Exa charged for the last search/get_contents
 
 
