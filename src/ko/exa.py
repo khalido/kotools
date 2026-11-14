@@ -175,7 +175,7 @@ def search(
         kwargs["end_published_date"] = end_published_date
     # Highlights = the passages most relevant to the query, sized by Exa to each page's
     # relevance (~2,500 chars a result on average; their recommended default, so no cap).
-    # Summary = a short blurb, one extra LLM call per result (~70% dearer). Text = the page.
+    # Summary = a short blurb, one extra LLM call per result (~$0.001 each). Text = the page.
     # contents=False keeps the no-content path lean.
     contents: dict = {}
     if with_text:

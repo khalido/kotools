@@ -222,7 +222,7 @@ def exa_search(
         "omitted = live-crawl only as a fallback.",
     ),
     summary: bool = typer.Option(
-        False, "--summary", help="a short blurb per result instead of highlights (one LLM call each, ~70% dearer)"
+        False, "--summary", help="a short blurb per result instead of highlights (an LLM call each: ~$0.001 a result extra)"
     ),
     _highlights: bool = typer.Option(False, "--highlights", hidden=True),  # the default now; kept for old scripts
     no_text: bool = typer.Option(

@@ -16,7 +16,7 @@ return clean page content in the same call. Reach for it when you want *pages ab
 
 ## Agent defaults (what to actually type)
 - Default is each hit's **highlights**: the passages most relevant to the query, sized by Exa
-  (~2,500 chars a hit). `--summary` gives a short blurb instead (an LLM call per hit, ~70% dearer).
+  (~2,500 chars a hit). `--summary` gives a short blurb instead (an LLM call per hit, ~$0.001 each: doubles a 10-hit search).
 - **`--long`** pulls a full-text excerpt when you need to read, not just triage.
 - **`--type`**: `auto` (default, let Exa pick) is right almost always. `lite` costs about half
   and serves cached pages only, fine for triage when freshness doesn't matter; `deep`/`deep-reasoning`
