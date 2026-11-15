@@ -17,9 +17,13 @@ Cut a release with the repo's `/release` skill.
 - `ko book "<title>"`: which book it is (Open Library) and its critical reviews (Exa); `ko tv "<title>" -r` adds critics' reviews to the movie/TV card, using TMDB's exact title and year.
 - `ko movie <title>`: `ko tv` limited to films; `ko movie --now` lists what's in Australian cinemas. The TMDB token is also read from `TMDB_TOKEN`.
 - `ko tv` / `ko movie` cards add the Australian classification, runtime, genres, director or creators, top cast, Australian cinema and digital release dates (or series status, seasons and next episode), and the official trailer. `[tmdb] my_providers` in config.toml lists your services first, marked ✓.
+- `ko decide --each`: a piped JSON array is judged one row at a time, in parallel; a row that fails gets an error and the rest carry on. Over 200 rows asks for `--yes`. A piped array without the flag is judged whole, with a note.
+- `ko gmail draft delete <id>`: shows the draft and confirms (`--yes` when not on a terminal); it skips Trash.
 - `ko book` shows the book's description and subjects from Open Library. `ko ai` and `ko agent tv` gain critics' reviews, what's in cinemas, and books.
 
 ### Changed
+- `ko gmail draft update` keeps the draft's attachments (it used to refuse, or drop them with `--force`); `--attach` adds files, `--drop-attachments` removes the old ones. Images shown inline by the old body are dropped and listed.
+- `ko decide -f` reads `.json` files.
 - `ko exa search` shows each hit's highlights by default, sized by Exa with no cap (`--summary` for a blurb, about $0.001 a result extra); `--type lite` costs about half; each search and `ko exa get` prints its cost on stderr. The agents' `exa_search` asks for an `objective`, as Exa recommends.
 
 ## [2026.11.13] - 2026-11-13

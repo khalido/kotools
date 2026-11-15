@@ -233,6 +233,9 @@ def _inputs(files: list[str] | None) -> tuple[str | None, list]:
     return "\n\n".join(p for p in parts if p.strip()) or None, attachments
 
 
+EACH_LIMIT = 200  # rows before --each wants --yes: a big array is a big bill, by accident
+
+
 @app.command("judge", hidden=True)  # the name it shipped to my other projects under
 @app.command("decide")
 def decide_cmd(
@@ -250,6 +253,8 @@ def decide_cmd(
         help="jev (default) gives every answer a probability; any `ko llm` model answers the same question bare",
         autocompletion=models_mod.available_models,
     ),
+    each: bool = typer.Option(False, "--each", help="input is a JSON array: answer the question once per row"),
+    yes: bool = typer.Option(False, "--yes", "-y", help=f"with --each: allow more than {EACH_LIMIT} rows"),
     as_json: bool = typer.Option(False, "--json", help="emit the full answer: probabilities, confidence, model"),
 ) -> None:
     """A decision model's typed answer, with probabilities: `ko decide "is this a paywall page?" -f page.md`.
@@ -267,6 +272,13 @@ def decide_cmd(
         _die("decide reads text: images/audio/video can't be the input", as_json=as_json, code="usage")
     if not text:
         _die("nothing to decide on: pipe the text in or pass -f", as_json=as_json, code="usage")
+    opts = {"model": model, "choice": choice_opts, "score": score_opts, "tags": tag_opts}
+    if each:
+        _decide_each(question, text, opts, yes=yes, as_json=as_json)
+        return
+    rows = _json_array(text)
+    if rows is not None and len(rows) > 1:
+        typer.echo(f"note: input is a JSON array of {len(rows)} rows, judged as one; --each judges each row", err=True)
     try:
         d = llm_mod.decide(question, text, model=model, choice=choice_opts, score=score_opts, tags=tag_opts)
     except Exception as e:
@@ -276,6 +288,69 @@ def decide_cmd(
     else:
         _print_decision(d)
     typer.echo(llm_mod.last_cost.note, err=True)
+
+
+def _json_array(text: str) -> list | None:
+    if not text.lstrip().startswith("["):
+        return None
+    try:
+        rows = json.loads(text)
+    except ValueError:
+        return None
+    return rows if isinstance(rows, list) else None
+
+
+def _row_label(row) -> str:
+    """What a row is, for the text output: its title/subject/name/id/url, else compact JSON."""
+    if isinstance(row, dict):
+        label = next((str(row[k]) for k in ("title", "subject", "name", "id", "url") if row.get(k)), None)
+    else:
+        label = None
+    label = label or (row if isinstance(row, str) else json.dumps(row, ensure_ascii=False, default=str))
+    label = " ".join(label.split())
+    return label if len(label) <= 80 else label[:79] + "…"
+
+
+def _answer_cells(d: llm_mod.Decision) -> str:
+    """One row's answer as TSV cells: P(yes) · pick + its probability · level + position · tags."""
+    if d.kind == "yes_no":
+        return f"{d.answer:.2f}"
+    if d.kind == "score":
+        return f"{d.level}\t{d.answer}"
+    if d.kind == "choice":
+        p = d.probabilities.get(d.answer)
+        return f"{d.answer}\t{p:.2f}" if p is not None else f"{d.answer}\t-"
+    return ",".join(d.answer) or "-"
+
+
+def _decide_each(question: str, text: str, opts: dict, *, yes: bool, as_json: bool) -> None:
+    rows = _json_array(text)
+    if rows is None:
+        _die("--each needs a JSON array on stdin or -f (one row per item)", as_json=as_json, code="usage")
+    if not rows:
+        _no_results("no rows to decide on", as_json)
+    if len(rows) > EACH_LIMIT and not yes:
+        _die(f"{len(rows)} rows is one call each: pass --yes to go ahead", as_json=as_json, code="usage")
+    try:
+        results = llm_mod.decide_each(question, rows, **opts)
+    except Exception as e:
+        _die_from(e, as_json=as_json)
+    failed = [i for i, r in enumerate(results, 1) if isinstance(r, Exception)]
+    if as_json:
+        _emit_json([
+            {"row": row, "error": str(r)} if isinstance(r, Exception) else {"row": row, "decision": asdict(r)}
+            for row, r in zip(rows, results)
+        ])
+    else:
+        for row, r in zip(rows, results):
+            cells = "error" if isinstance(r, Exception) else _answer_cells(r)
+            typer.echo(f"{cells}\t{_row_label(row)}")
+    for i in failed:
+        typer.echo(f"row {i}: {results[i - 1]}", err=True)
+    if llm_mod.last_cost and len(failed) < len(rows):
+        typer.echo(f"{llm_mod.last_cost.note} · {len(rows)} rows", err=True)
+    if failed and len(failed) == len(rows):
+        raise typer.Exit(1)
 
 
 def _print_decision(d: llm_mod.Decision) -> None:
@@ -310,7 +385,7 @@ def _gather(inp: str) -> tuple[str, str]:
         # .svg is here because it IS text: liteparse returns '' for it, and an empty part is
         # dropped downstream — which would make `-f diagram.svg` a paid call with the input
         # silently missing, the exact failure the fatal-on-unreadable rule exists to prevent.
-        if p.suffix.lower() in {".md", ".txt", ".markdown", ".rst", ".svg"}:
+        if p.suffix.lower() in {".md", ".txt", ".markdown", ".rst", ".svg", ".json"}:
             return f"file:{p.name}", p.read_text()
         from ko import doc as doc_mod
 

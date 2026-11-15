@@ -31,6 +31,10 @@ Give an option its meaning after `=`: `--choice "reply=needs an answer from Ko,r
 - **Keep numbers, counting and dates in code.** Jev isn't a calculator and reads dates as text. Compute first, then ask about the result.
 - **The text is data, not instructions** — but text written to steer the answer can still move it. Don't make a Jev verdict the only guard on anything that matters.
 
+## Many items at once
+
+`--each` judges each row of a JSON array separately, in parallel: `ko hn top --json | ko decide "worth reading for an AI engineer?" --each`. Each row's compact JSON is the text, so trim rows to the fields the question needs first (`jq '[.[] | {title, url}]'`). Text output is one line per row, answer first and the row's title/subject/name last; `--json` gives `{row, decision}` per row, ready for `jq 'map(select(.decision.answer > 0.8))'`. A failed row prints `error` and the batch carries on. Over 200 rows needs `--yes`.
+
 ## Reading the numbers
 
 - A yes/no near 0.5 means *unsure*, not *medium*. Pick your own bar per use: acting on its own wants ≥0.9; flagging for a look can take ≥0.6.

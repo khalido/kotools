@@ -8,7 +8,7 @@ or to one message in it. Pass Gmail's own search syntax verbatim — `from:`, `t
 `ko brief`.
 
 **Attachments** work under the read-only scope (list + download). **Drafts** (new / reply /
-list / show / update / send) need `gmail.compose` — one re-auth per account. **Sending is
+list / show / update / delete / send) need `gmail.compose` — one re-auth per account. **Sending is
 opt-in**: `draft send` refuses unless `[gmail] allow_send = true` / `KO_GMAIL_SEND=1`; the
 draft-first workflow (agents draft, a human sends from Gmail) is the default.
 
@@ -300,23 +300,34 @@ def _decode_bytes(data: str) -> bytes:
     return base64.urlsafe_b64decode(data + "=" * (-len(data) % 4))
 
 
-def _walk_attachments(payload: dict) -> list[tuple[str, str, int, str]]:
-    """Every attachment part anywhere in a (nested) payload: (filename, mimeType, size, attachmentId).
-    An attachment is any part with a filename AND an attachmentId (inline parts without a filename
-    — e.g. the alternative text/html body — are skipped)."""
-    out: list[tuple[str, str, int, str]] = []
+def _attachment_parts(payload: dict) -> list[dict]:
+    """Every part anywhere in a (nested) payload with a filename AND an attachmentId (the
+    alternative text/html body and ko's own inline images have no filename, so they're skipped).
+    `inline` marks a `Content-Disposition: inline` part: an image the old html body showed by `cid:`.
+    (Gmail's UI gives regular attachments a Content-ID too, so that header alone says nothing.)"""
+    out: list[dict] = []
 
     def rec(part: dict) -> None:
         body = part.get("body", {})
-        filename = part.get("filename") or ""
-        att_id = body.get("attachmentId")
-        if filename and att_id:
-            out.append((filename, part.get("mimeType", ""), body.get("size", 0) or 0, att_id))
+        if part.get("filename") and body.get("attachmentId"):
+            disp = next((h["value"] for h in part.get("headers") or [] if h["name"].lower() == "content-disposition"), "")
+            out.append({
+                "filename": part["filename"],
+                "mime": part.get("mimeType", ""),
+                "size": body.get("size", 0) or 0,
+                "id": body["attachmentId"],
+                "inline": disp.strip().lower().startswith("inline"),
+            })
         for p in part.get("parts", []):
             rec(p)
 
     rec(payload)
     return out
+
+
+def _walk_attachments(payload: dict) -> list[tuple[str, str, int, str]]:
+    """Every attachment part: (filename, mimeType, size, attachmentId), in payload order."""
+    return [(a["filename"], a["mime"], a["size"], a["id"]) for a in _attachment_parts(payload)]
 
 
 def list_attachments(msg_id: str) -> list[Attachment]:
@@ -503,6 +514,7 @@ def _build_raw(
     in_reply_to: str = "",
     references: str = "",
     attachments: list[Path] | None = None,
+    kept: list[tuple[str, str, bytes]] | None = None,
 ) -> str:
     """A base64url raw MIME message for drafts.create/update.
 
@@ -510,7 +522,8 @@ def _build_raw(
     the plain part FIRST then html, both quoted-printable / utf-8. Threading headers
     (In-Reply-To / References) are set when `in_reply_to` is given. `<img src="file://…">`
     in the html is embedded inline (the html part becomes multipart/related). `attachments` are
-    read from disk and added (multipart/mixed) — Gmail caps a message around 25 MB."""
+    read from disk and added (multipart/mixed), after any `kept` (filename, mimeType, bytes) carried
+    over from the draft being updated. Gmail caps a message around 25 MB."""
     for hname, val in (
         ("To", to),
         ("Cc", cc),
@@ -542,8 +555,11 @@ def _build_raw(
             except OSError as e:
                 raise GmailError(f"can't read image {path}: {e}") from e
             maintype, _, subtype = ctype.partition("/")
-            # no filename on purpose: _walk_attachments skips it, so `draft update` doesn't refuse
+            # no filename on purpose: it's body, not an attachment — `draft update` rebuilds it from --md
             html_part.add_related(data, maintype=maintype, subtype=subtype, cid=f"<{cid}>", disposition="inline")
+    for name, ctype, data in kept or []:
+        maintype, _, subtype = (ctype or "application/octet-stream").partition("/")
+        msg.add_attachment(data, maintype=maintype, subtype=subtype, filename=name)
     for path in attachments or []:
         try:
             data = path.read_bytes()
@@ -783,6 +799,14 @@ def _preserved_fields(msg: dict, subject_override: str | None) -> dict:
     }
 
 
+@dataclass
+class DraftUpdate:
+    id: str
+    kept: list[str]  # attachment filenames carried over from the old draft
+    added: list[str]  # --attach files
+    dropped: list[str]  # removed: all of them with drop_attachments, else the old body's inline images
+
+
 def update_draft(
     draft_id: str,
     body: str,
@@ -791,27 +815,38 @@ def update_draft(
     subject_override: str | None = None,
     to_override: str | None = None,
     cc_override: str | None = None,
-    force: bool = False,
-) -> str:
+    attachments: list[Path] | None = None,
+    drop_attachments: bool = False,
+) -> DraftUpdate:
     """Replace a draft's body (and optionally subject/to/cc — the repair case: fix a recipient
     list without retyping the rest). Re-fetches the draft first and preserves
-    to/cc/subject/threadId for anything not overridden. Draft id is stable; returns it.
+    to/cc/bcc/subject/threading for anything not overridden. Draft id is stable.
 
-    The API replaces the WHOLE MIME message: attachments added to the draft — e.g. in
-    Gmail's UI — cannot be carried over and would be dropped, so a draft with attachments
-    is refused unless force=True. To/cc/bcc/subject/threading are preserved."""
+    The API replaces the WHOLE MIME message, so the draft's attachments (e.g. added in Gmail's
+    UI) are downloaded and re-attached, then `attachments` added; `drop_attachments` removes the
+    old ones instead. Images the old html body showed inline (`cid:`) can't point into a new
+    body, so they're dropped and listed: put a local `![](img.png)` in the Markdown to embed one."""
     svc = _compose_service()
     try:
         existing = svc.users().drafts().get(userId="me", id=draft_id, format="full").execute(num_retries=3)
     except HttpError as e:
         _handle(e, draft_id)
-    n_att = len(_walk_attachments(existing.get("message", {}).get("payload", {})))
-    if n_att and not force:
-        raise GmailError(
-            f"refusing: draft {draft_id} has {n_att} attachment(s) this update would drop "
-            "(the API replaces the whole message) — pass --force to update anyway"
-        )
-    f = _preserved_fields(existing.get("message", {}), subject_override)
+    msg = existing.get("message", {})
+    parts = _attachment_parts(msg.get("payload", {}))
+    keep = [] if drop_attachments else [a for a in parts if not a["inline"]]
+    dropped = [a["filename"] for a in parts if a not in keep]
+    kept: list[tuple[str, str, bytes]] = []
+    for a in keep:
+        try:
+            got = (
+                svc.users().messages().attachments()
+                .get(userId="me", messageId=msg.get("id", ""), id=a["id"])
+                .execute(num_retries=3)
+            )
+        except HttpError as e:
+            _handle(e, draft_id)
+        kept.append((a["filename"], a["mime"], _decode_bytes(got["data"])))
+    f = _preserved_fields(msg, subject_override)
     if to_override is not None:
         f["to"] = to_override
     if cc_override is not None:
@@ -825,6 +860,8 @@ def update_draft(
         html_body=html_body,
         in_reply_to=f["in_reply_to"],
         references=f["references"],
+        attachments=attachments,
+        kept=kept,
     )
     message: dict = {"raw": raw}
     if f["thread_id"]:
@@ -838,7 +875,19 @@ def update_draft(
         )
     except HttpError as e:
         _handle(e, draft_id)
-    return d["id"]
+    return DraftUpdate(d["id"], [k[0] for k in kept], [p.name for p in attachments or []], dropped)
+
+
+def delete_draft(draft_id: str, *, yes: bool = False) -> None:
+    """Delete a draft for good (drafts.delete skips Trash). Refuses unless `yes`, so no caller
+    can skip the gate; the CLI shows what's going first and confirms on a TTY."""
+    if not yes:
+        raise GmailError(f"refusing to delete draft {draft_id} without yes=True (CLI: --yes)")
+    svc = _compose_service()
+    try:
+        svc.users().drafts().delete(userId="me", id=draft_id).execute(num_retries=3)
+    except HttpError as e:
+        _handle(e, draft_id)
 
 
 def send_allowed() -> bool:

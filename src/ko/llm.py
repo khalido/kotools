@@ -210,6 +210,20 @@ def decide(
     model every option comes back with its probability; any other model answers the same type
     without them."""
     global last_cost
+    agent, kind = _decision_agent(question, model=model, choice=choice, score=score, tags=tags)
+    d, last_cost = _read_decision(agent.run_sync(text), kind, score, model)
+    return d
+
+
+def _decision_agent(
+    question: str,
+    *,
+    model: str | None,
+    choice: list[tuple[str, str]] | None,
+    score: list[tuple[str, str]] | None,
+    tags: list[tuple[str, str]] | None,
+):
+    """The question as an Agent whose output type is the answer's type, plus that kind."""
     from typing import Annotated
 
     from pydantic import Field
@@ -236,8 +250,11 @@ def decide(
     else:
         kind, instructions = "yes_no", question
         output = Annotated[float, Field(ge=0, le=1, description="probability that the answer is yes")]
-    result = Agent(resolve(model or default_model()), output_type=output, instructions=instructions).run_sync(text)
-    last_cost = run_cost(result.all_messages())
+    return Agent(resolve(model or default_model()), output_type=output, instructions=instructions), kind
+
+
+def _read_decision(result, kind: str, score: list[tuple[str, str]] | None, model: str | None) -> tuple[Decision, RunCost]:
+    cost = run_cost(result.all_messages())
     details = result.response.provider_details or {}
     field = {"score": "level", "tags": "tags"}.get(kind, "response")
     probs = (details.get("probabilities") or {}).get(field, {})
@@ -246,10 +263,64 @@ def decide(
     if kind == "score":
         position = (details.get("scores") or {}).get("level", result.output["level"])
         nearest = score[result.output["level"]][0]  # pydantic-ai's rounding of the position, not ours
-        return Decision(kind, round(float(position), 2), probs, confidence, nearest, name)
+        return Decision(kind, round(float(position), 2), probs, confidence, nearest, name), cost
     if kind == "tags":
-        return Decision(kind, result.output["tags"], probs, confidence, None, name)
-    return Decision(kind, result.output, probs, confidence, None, name)
+        return Decision(kind, result.output["tags"], probs, confidence, None, name), cost
+    return Decision(kind, result.output, probs, confidence, None, name), cost
+
+
+EACH_CONCURRENCY = 8  # calls in flight for decide_each; Jev answers in ~100 ms, the round trip dominates
+
+
+def decide_each(
+    question: str,
+    rows: list,
+    *,
+    model: str | None = None,
+    choice: list[tuple[str, str]] | None = None,
+    score: list[tuple[str, str]] | None = None,
+    tags: list[tuple[str, str]] | None = None,
+) -> list[Decision | Exception]:
+    """`decide` once per row (its compact JSON is the text), concurrently on one event loop
+    (threads broke the gateway's loop-bound client), results in row order. A row that fails
+    comes back as its exception, so one bad call never sinks the batch; a bad model, missing
+    key or bad config raises, since every row would fail the same way. `last_cost` is the
+    batch total."""
+    global last_cost
+    import asyncio
+
+    from pydantic_ai.models import infer_model
+
+    agent, kind = _decision_agent(question, model=model, choice=choice, score=score, tags=tags)
+    infer_model(agent.model)  # a bad model name fails once, not once per row
+
+    async def one(row, gate: asyncio.Semaphore) -> tuple[Decision | Exception, RunCost | None]:
+        text = row if isinstance(row, str) else json.dumps(row, ensure_ascii=False, default=str)
+        try:
+            async with gate:
+                result = await agent.run(text)
+            return _read_decision(result, kind, score, model)
+        except (config.MissingKeyError, config.ConfigError, TypeError, AttributeError, NameError, ImportError):
+            raise
+        except Exception as e:
+            return e, None
+
+    async def all_rows():
+        gate = asyncio.Semaphore(EACH_CONCURRENCY)
+        return await asyncio.gather(*(one(r, gate) for r in rows))
+
+    done = asyncio.run(all_rows())
+    costs = [c for _, c in done if c]
+    if costs:
+        usd = [c.usd for c in costs]
+        last_cost = RunCost(
+            model=costs[0].model,
+            input_tokens=sum(c.input_tokens for c in costs),
+            output_tokens=sum(c.output_tokens for c in costs),
+            usd=None if None in usd else sum(usd),
+            source=costs[0].source,
+        )
+    return [d for d, _ in done]
 
 
 def default_model() -> str:

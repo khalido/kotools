@@ -26,13 +26,13 @@ Output: a short ranked list of what to change and why, shown to KO as a diagram 
 
 **2026-11-12: startup perf pass** (WORKLOG): heavy imports load on first use, ~212 → ~135 ms per command; a test guards it.
 
-**2026-11-12: `ko gmail draft --md` embeds local images inline** (WORKLOG). Test draft `r-39674769328854445` ("ko inline image test (delete me)", account kd) is waiting for KO to open in Gmail and delete. Still open from everx's request: `draft update` keeping attachments, and `draft delete`; everx left drafts titled "OLD, delete: …" to clear by hand.
+**2026-11-12: `ko gmail draft --md` embeds local images inline** (WORKLOG). Test draft `r-39674769328854445` ("ko inline image test (delete me)", account kd) is waiting for KO to open in Gmail and delete. everx's requests are built (2026-11-15): `draft update` keeps attachments, `draft delete --yes` removes a draft, so the test draft and everx's "OLD, delete: …" drafts can go that way.
 
 **2026-11-10: front matter skips, never stops.** One parser, `frontmatter.split`, for `ko pdf`, `ko publish` and `ko prompt`. A block that doesn't parse is dropped with a stderr note naming the file and line, and the content still comes back (KO: an opinionated tool should get the job done). The short-lived `--skip-bad-front-matter` flag is gone. Candidate: `fetch._text_title` could now use `split(..., warn=False)` too.
 
 **2026-11-09: code-smell pass, on main** (WORKLOG has what was fixed, what was left and why). New shared helpers: `_die_from`, `_emit_json`, `dirs.write_atomic`; CLAUDE.md's "Adding a subcommand" says when to use them. Left for a later pass: ~15 Google `except` blocks made redundant by `_GoogleTyper`.
 
-**2026-11-07: v2026.11.7 is the first PyPI release since July.** `ko judge` is now `ko decide` (alias kept). Chota replaces yaad, and `ko` stays the toolbox. Next: install on the Pi5 (needs `uv`), then Chota swaps `fetchPage` for `ko fetch` on X links. Then `ko decide --each` (`docs/ideas.md`, "More use of Jev"). OpenRouter serves `ko decide` and is nearly empty ($0.03); pydantic-ai can't reach Jev on the gateway, so moving it waits on them. The re-check and the one-provider gaps are in `docs/ideas.md`.
+**2026-11-07: v2026.11.7 is the first PyPI release since July.** `ko judge` is now `ko decide` (alias kept). Chota replaces yaad, and `ko` stays the toolbox. Next: install on the Pi5 (needs `uv`), then Chota swaps `fetchPage` for `ko fetch` on X links. `ko decide --each` shipped 2026-11-15. OpenRouter serves `ko decide` and is nearly empty ($0.03); pydantic-ai can't reach Jev on the gateway, so moving it waits on them. The re-check and the one-provider gaps are in `docs/ideas.md`.
 
 **2026-11-06: `ko publish` fix pass, on main** (WORKLOG). `ko-test`, `kotools` and `robot-arm` are redeployed. Still local: the PIN patch in `ops/proposals/uts-tmos-robot-arm/src/index.ts` is uncommitted in ops, and `labs/claude-code-workshop` is patched but has no live Worker. `docs/ideas.md` keeps `worker_exists` for `wrangler login` users. Not built, KO's call: `--ttl`, encrypted share links, `Accept: text/markdown`, signed PIN cookies.
 

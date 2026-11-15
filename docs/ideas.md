@@ -110,7 +110,7 @@ The sweep that filled refs/CLAUDE.md (19 missing + 2 stub entries) doubled as an
 
 ## More use of Jev (KO, 2026-11-07, not built)
 
-- **`ko decide` per row.** `ko hn top --json | ko decide "worth reading?" --each`. Keep the flag explicit rather than detecting a JSON array: a question can be about the whole blob, and rows cost N calls and change the output's shape. A piped array without the flag can note on stderr that it was judged whole.
+- [x] **`ko decide` per row** (built 2026-11-15 as `--each`). `ko hn top --json | ko decide "worth reading?" --each`. Keep the flag explicit rather than detecting a JSON array: a question can be about the whole blob, and rows cost N calls and change the output's shape. A piped array without the flag can note on stderr that it was judged whole.
 - **`ko brief` email triage.** P(needs action) per email, sorted in code. KO is thinking about it.
 - **"Has KO decided this?"** Over WORKLOG, CLAUDE.md files, dotfiles and ops. More an agent search than a decision model: find the passages, then maybe one decision over them. Later.
 - **`ko ai` tier per step** (`SelectModel`). Left out for now to keep things simple.

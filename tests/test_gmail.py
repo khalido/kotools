@@ -256,46 +256,109 @@ def test_merge_cc_dedupes_against_to_and_cc():
     assert gmail._merge_cc("a@x.com", "b@x.com", "") == "b@x.com"
 
 
-def test_update_draft_refuses_to_drop_attachments(monkeypatch):
-    """drafts.update replaces the whole MIME message — a draft holding attachments (e.g. added
-    in Gmail's UI) must not be silently stripped by a body polish. force=True proceeds."""
-    existing = {
+class _DraftSvc:
+    """drafts.get returns `existing`; attachments.get serves `files` by id; update/delete record."""
+
+    def __init__(self, existing, files=None):
+        self.existing, self.files, self.calls = existing, files or {}, []
+
+    def users(self):
+        return self
+
+    drafts = messages = attachments = users
+
+    def get(self, userId, id, format=None, messageId=None):
+        self.calls.append(("get", messageId, id))
+        self._next = {"data": base64.urlsafe_b64encode(self.files[id]).decode()} if messageId else self.existing
+        return self
+
+    def update(self, userId, id, body):
+        self.updated = body
+        self._next = {"id": id}
+        return self
+
+    def delete(self, userId, id):
+        self.calls.append(("delete", id))
+        self._next = {}
+        return self
+
+    def execute(self, num_retries=0):
+        return self._next
+
+
+def _draft_with_files():
+    return {
         "message": {
+            "id": "m1",
+            "threadId": "t1",
             "payload": {
+                "headers": [{"name": "To", "value": "a@x.com"}, {"name": "Subject", "value": "Contract"}],
                 "parts": [
                     {"mimeType": "text/plain", "body": {"data": ""}},
-                    {
-                        "filename": "contract.pdf",
-                        "mimeType": "application/pdf",
-                        "body": {"attachmentId": "att1", "size": 100},
-                    },
-                ]
+                    {"filename": "contract.pdf", "mimeType": "application/pdf",  # as Gmail's UI attaches
+                     "headers": [{"name": "Content-Disposition", "value": 'attachment; filename="contract.pdf"'},
+                                 {"name": "Content-ID", "value": "<f_abc>"}],
+                     "body": {"attachmentId": "att1", "size": 9}},
+                    {"filename": "logo.png", "mimeType": "image/png",  # Gmail-UI inline image
+                     "headers": [{"name": "Content-Disposition", "value": 'inline; filename="logo.png"'},
+                                 {"name": "Content-ID", "value": "<ii_1>"}],
+                     "body": {"attachmentId": "att2", "size": 4}},
+                ],
             },
-            "threadId": "t1",
         }
     }
 
-    class _Svc:
-        def users(self):
-            return self
 
-        def drafts(self):
-            return self
+def _sent_parts(svc):
+    msg = message_from_bytes(base64.urlsafe_b64decode(svc.updated["message"]["raw"]))
+    return {p.get_filename(): p.get_payload(decode=True) for p in msg.walk() if p.get_filename()}
 
-        def get(self, userId, id, format):
-            return self
 
-        def update(self, userId, id, body):
-            self.updated = body
-            return self
+def test_update_draft_keeps_attachments_and_adds(monkeypatch, tmp_path):
+    """drafts.update replaces the whole MIME message: a body polish must re-attach what was there
+    (e.g. added in Gmail's UI), and --attach adds. The old body's cid: image can't carry over."""
+    svc = _DraftSvc(_draft_with_files(), {"att1": b"%PDF-fake"})
+    monkeypatch.setattr(gmail, "_compose_service", lambda: svc)
+    extra = tmp_path / "notes.txt"
+    extra.write_text("hi")
+    u = gmail.update_draft("d1", "new body", attachments=[extra])
+    assert (u.kept, u.added, u.dropped) == (["contract.pdf"], ["notes.txt"], ["logo.png"])
+    assert _sent_parts(svc) == {"contract.pdf": b"%PDF-fake", "notes.txt": b"hi"}
+    assert ("get", "m1", "att1") in svc.calls  # fetched from the draft's own message
+    assert svc.updated["message"]["threadId"] == "t1"
 
-        def execute(self, num_retries=0):
-            return existing if not hasattr(self, "updated") else {"id": "d1"}
 
-    monkeypatch.setattr(gmail, "_compose_service", lambda: _Svc())
-    with pytest.raises(gmail.GmailError, match="attachment"):
-        gmail.update_draft("d1", "new body")
-    assert gmail.update_draft("d1", "new body", force=True) == "d1"
+def test_update_draft_drop_attachments(monkeypatch):
+    svc = _DraftSvc(_draft_with_files())
+    monkeypatch.setattr(gmail, "_compose_service", lambda: svc)
+    u = gmail.update_draft("d1", "new body", drop_attachments=True)
+    assert u.kept == [] and u.dropped == ["contract.pdf", "logo.png"]
+    assert _sent_parts(svc) == {}
+    assert not any(c[0] == "get" and c[1] for c in svc.calls)  # nothing downloaded
+
+
+def test_delete_draft_gate_lives_in_the_module(monkeypatch):
+    svc = _DraftSvc({})
+    monkeypatch.setattr(gmail, "_compose_service", lambda: svc)
+    with pytest.raises(gmail.GmailError, match="refusing"):
+        gmail.delete_draft("d1")
+    assert svc.calls == []
+    gmail.delete_draft("d1", yes=True)
+    assert svc.calls == [("delete", "d1")]
+
+
+def test_cli_draft_delete_refuses_without_tty(monkeypatch):
+    from typer.testing import CliRunner
+
+    from ko.cli import app
+
+    monkeypatch.setattr(gmail, "draft_summary", lambda d: {"to": "a@x.com", "subject": "Hi", "attachments": 1})
+    called = []
+    monkeypatch.setattr(gmail, "delete_draft", lambda d, yes=False: called.append(d))
+    r = CliRunner().invoke(app, ["gmail", "draft", "delete", "d1"])
+    assert r.exit_code == 2 and "--yes" in r.stderr and not called
+    r = CliRunner().invoke(app, ["gmail", "draft", "delete", "d1", "--yes"])
+    assert r.exit_code == 0 and called == ["d1"] and "'Hi'" in r.stderr
 
 
 # --- MIME building -----------------------------------------------------------------------

@@ -577,3 +577,69 @@ def test_model_info_survives_hn_failure(monkeypatch):
     monkeypatch.setattr(models, "_hn_stories", down)
     i = models.info("y 1")
     assert i.id == "x/y" and i.threads == [] and i.unavailable == ["HN: algolia down"]
+
+
+def test_decide_each_keeps_row_order_isolates_failures_and_sums_cost(monkeypatch):
+    import pydantic_ai
+
+    seen = []
+
+    async def fake_run(self, text):
+        seen.append(text)
+        if "bad" in text:
+            raise RuntimeError("Service temporarily unavailable")
+        return _FakeResult(0.9, {})
+
+    monkeypatch.setattr(pydantic_ai.Agent, "run", fake_run)
+    monkeypatch.setattr(llm, "resolve", lambda m: "test")
+    monkeypatch.setattr(llm, "run_cost", lambda msgs: llm.RunCost("jev-test", 10, 2, 0.001, "actual"))
+    rows = [{"title": "a"}, {"title": "bad"}, "plain text row"]
+    out = llm.decide_each("q?", rows, model="jev")
+    assert [type(r).__name__ for r in out] == ["Decision", "RuntimeError", "Decision"]
+    assert '{"title": "a"}' in seen and "plain text row" in seen  # dicts as JSON, strings as is
+    assert (llm.last_cost.input_tokens, llm.last_cost.usd) == (20, 0.002)
+
+
+def test_decide_each_raises_a_missing_key_once(monkeypatch):
+    import pydantic_ai
+
+    from ko.config import MissingKeyError
+
+    async def fake_run(self, text):
+        raise MissingKeyError("OPENROUTER_API_KEY", "set it")
+
+    monkeypatch.setattr(pydantic_ai.Agent, "run", fake_run)
+    monkeypatch.setattr(llm, "resolve", lambda m: "test")
+    with pytest.raises(MissingKeyError):
+        llm.decide_each("q?", [1, 2], model="jev")
+
+
+def test_cli_decide_each(monkeypatch):
+    d = llm.Decision("choice", "read", {"read": 0.88, "archive": 0.12}, 0.77, None, "jev-test")
+    monkeypatch.setattr(llm, "decide_each", lambda q, rows, **k: [d, RuntimeError("down")])
+    monkeypatch.setattr(llm, "last_cost", llm.RunCost("jev-test", 1, 1))
+    rows = '[{"title": "First post"}, {"id": 7}]'
+    r = runner.invoke(app, ["decide", "q", "--choice", "read,archive", "--each"], input=rows)
+    assert r.exit_code == 0
+    assert r.stdout.splitlines() == ["read\t0.88\tFirst post", "error\t7"]
+    assert "row 2: down" in r.stderr
+    r = runner.invoke(app, ["decide", "q", "--choice", "read,archive", "--each", "--json"], input=rows)
+    out = json.loads(r.stdout)
+    assert out[0]["decision"]["probabilities"]["read"] == 0.88 and out[1] == {"row": {"id": 7}, "error": "down"}
+
+
+def test_cli_decide_each_refuses_non_arrays_and_big_batches(monkeypatch):
+    called = []
+    monkeypatch.setattr(llm, "decide_each", lambda *a, **k: called.append(1) or [])
+    r = runner.invoke(app, ["decide", "q", "--each"], input='{"a": 1}')
+    assert r.exit_code == 2 and "JSON array" in r.stderr
+    r = runner.invoke(app, ["decide", "q", "--each"], input=json.dumps(list(range(201))))
+    assert r.exit_code == 2 and "--yes" in r.stderr and not called
+
+
+def test_cli_decide_notes_a_piped_array_judged_whole(monkeypatch):
+    d = llm.Decision("yes_no", 0.5, {}, None, None, "jev-test")
+    monkeypatch.setattr(llm, "decide", lambda *a, **k: d)
+    monkeypatch.setattr(llm, "last_cost", llm.RunCost("jev-test", 1, 1))
+    r = runner.invoke(app, ["decide", "q"], input="[1, 2, 3]")
+    assert r.exit_code == 0 and "--each judges each row" in r.stderr

@@ -128,7 +128,7 @@ app.add_typer(gmail_app, name="gmail")
 
 gmail_draft_app = _GoogleTyper(
     help=(
-        "Compose Gmail drafts: new / reply / list / show / update / send. Drafts are the default workflow; "
+        "Compose Gmail drafts: new / reply / list / show / update / delete / send. Drafts are the default workflow; "
         "`draft send` is opt-in (`\\[gmail] allow_send = true` / KO_GMAIL_SEND=1). "
         "Write bodies in Markdown via `--md <file>`: headings, **bold**/*italic*, bulleted + "
         "numbered lists, [links](url), GFM tables, ~~strikethrough~~, `code` all render as "
@@ -1651,24 +1651,50 @@ def gmail_draft_update(
     cc: str = typer.Option(
         None, "--cc", help="new Cc list, comma-separated — replaces the existing ('' clears it)"
     ),
-    force: bool = typer.Option(
-        False, "--force", help="update even if the draft has attachments (they WILL be dropped)"
+    attach: list[Path] = typer.Option(
+        None, "--attach", "-a", exists=True, dir_okay=False, help="add a file (repeatable); existing ones stay"
     ),
+    drop: bool = typer.Option(False, "--drop-attachments", help="remove the draft's existing attachments"),
+    force: bool = typer.Option(False, "--force", hidden=True),  # old name for --drop-attachments
 ) -> None:
-    """Replace a draft's body (and optionally subject). To/cc/subject/threadId are preserved for
-    anything you don't override (the API replaces the whole message). Refuses if the draft has
-    attachments — an update drops them — unless --force. Draft id is unchanged."""
+    """Replace a draft's body; to/cc/subject/threading and attachments stay unless you change them.
+    Draft id is unchanged."""
     text, html_body = _resolve_body(body, body_file, md)
-    gmail_mod.update_draft(
+    u = gmail_mod.update_draft(
         draft_id,
         text,
         html_body=html_body,
         subject_override=subject,
         to_override=to,
         cc_override=cc,
-        force=force,
+        attachments=attach or None,
+        drop_attachments=drop or force,
     )
     typer.echo(f"updated draft {draft_id}", err=True)
+    for label, names in (("kept", u.kept), ("added", u.added), ("dropped", u.dropped)):
+        if names:
+            typer.echo(f"{label}: {', '.join(names)}", err=True)
+
+
+@gmail_draft_app.command("delete")
+def gmail_draft_delete(
+    draft_id: str = typer.Argument(..., help="draft id (from `ko gmail draft list`)"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="skip the confirm (required when not a TTY)"),
+) -> None:
+    """Delete a draft for good (it skips Trash). Shows to/subject/attachments and confirms first."""
+    info = gmail_mod.draft_summary(draft_id)
+    if not yes:
+        prompt = (
+            f"delete draft to {info['to'] or '(no one)'} — {info['subject']!r} "
+            f"({info['attachments']} attachment(s))? It skips Trash"
+        )
+        if sys.stdin.isatty():
+            typer.confirm(prompt, abort=True)
+        else:
+            typer.echo(f"{prompt}: refusing without a TTY — pass --yes", err=True)
+            raise typer.Exit(2)
+    gmail_mod.delete_draft(draft_id, yes=True)
+    typer.echo(f"deleted draft {draft_id}: {info['subject']!r}", err=True)
 
 
 @gmail_draft_app.command("send")
