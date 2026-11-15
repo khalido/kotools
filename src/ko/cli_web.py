@@ -256,7 +256,7 @@ def exa_search(
     as_json: bool = typer.Option(False, "--json", help="emit JSON instead of text"),
 ) -> None:
     """Semantic web search; each hit shows its query-relevant passages (--summary for a blurb,
-    --long for full text). Alias: `ko exa search`."""
+    --long for full text, --no-text for none). Alias: `ko websearch`."""
     if search_type is not None and search_type not in exa_mod.SEARCH_TYPES:
         _die(
             f"invalid --type {search_type!r}; choose one of: {', '.join(exa_mod.SEARCH_TYPES)}",
@@ -269,6 +269,8 @@ def exa_search(
             as_json=as_json,
             code="usage",
         )
+    if sum((no_text, summary, long)) > 1:  # each picks what a hit carries; refuse before spending a call
+        _die("--no-text, --summary and --long each pick what a hit shows; use one", as_json=as_json, code="usage")
     if domains and exclude:  # Exa's API rejects both; catch it here so it's a usage error (2)
         _die(
             "--domains and --exclude are mutually exclusive — Exa's API rejects both at once",

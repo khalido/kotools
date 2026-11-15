@@ -239,3 +239,14 @@ def test_cli_default_is_highlights_and_long_shows_text(monkeypatch):
     r = CliRunner().invoke(app, ["exa", "search", "q", "--highlights"])  # old flag, now a no-op
     assert r.exit_code == 0
 
+
+
+def test_cli_refuses_conflicting_content_flags_before_spending(monkeypatch):
+    from typer.testing import CliRunner
+
+    from ko.cli import app
+
+    called = []
+    monkeypatch.setattr(exa, "search", lambda q, **kw: called.append(q) or [])
+    r = CliRunner().invoke(app, ["exa", "search", "x", "--no-text", "--long", "--json"])
+    assert r.exit_code == 2 and '"code": "usage"' in r.stderr and not called
