@@ -43,13 +43,14 @@ def test_providers_dedupe_keeps_best_offer(monkeypatch):
 
 def test_headers_require_token(monkeypatch):
     monkeypatch.delenv("TMDB_READ_ACCESS_TOKEN", raising=False)
+    monkeypatch.delenv("TMDB_TOKEN", raising=False)  # the same token under chota's name
     with pytest.raises(RuntimeError, match="TMDB_READ_ACCESS_TOKEN"):
         tmdb._headers()
 
 
 @pytest.mark.skipif(
-    not os.environ.get("TMDB_READ_ACCESS_TOKEN"),
-    reason="TMDB_READ_ACCESS_TOKEN not set; skipping live TMDB test",
+    not (os.environ.get("TMDB_READ_ACCESS_TOKEN") or os.environ.get("TMDB_TOKEN")),
+    reason="no TMDB token set; skipping live TMDB test",
 )
 def test_search_returns_titles():
     results = tmdb.search("the matrix")
