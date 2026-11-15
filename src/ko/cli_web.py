@@ -1101,6 +1101,40 @@ def fetch_cmd(
 # --- tv command (root-level) ---
 
 
+def _nice_date(iso: str) -> str:
+    from datetime import date
+
+    return f"{date.fromisoformat(iso):%-d %b %Y}" if iso else "—"
+
+
+def _title_card(t, country: str) -> list[str]:
+    """The `ko tv` / `ko movie` card: headline, people, overview, release or series status,
+    where to watch (your own services first, marked ✓), trailer."""
+    facts = [f"★{t.rating:.1f}", t.kind, t.certification, f"{t.runtime} min" if t.runtime else "", ", ".join(t.genres[:3])]
+    out = [f"{t.title} ({t.year or '—'})  " + " · ".join(f for f in facts if f)]
+    who = ("Dir. " if t.kind == "movie" else "Created by ") + ", ".join(t.people) if t.people else ""
+    if who or t.cast:
+        out.append("  " + " · ".join(x for x in (who, ", ".join(t.cast[:3])) if x))
+    if t.overview:
+        out.append(f"  {t.overview[:300]}{'…' if len(t.overview) > 300 else ''}")
+    if t.kind == "movie" and (t.cinema_date or t.digital_date):
+        out.append(f"  {country}: cinemas {_nice_date(t.cinema_date)} · digital {_nice_date(t.digital_date)}")
+    if t.kind == "tv" and t.status:
+        seasons = f"{t.seasons} season{'s' if t.seasons != 1 else ''}" if t.seasons else ""
+        out.append("  " + " · ".join(x for x in (t.status, seasons, f"next {t.next_episode}" if t.next_episode else "") if x))
+    yours = set(tmdb_mod.mine(t))
+    if t.providers:
+        out.append("  " + " · ".join(
+            f"{tmdb_mod.OFFER_LABELS[o]}: " + ", ".join(f"{n} ✓" if n in yours else n for n in names)
+            for o, names in t.providers.items()
+        ))
+    else:
+        out.append(f"  not streaming in {country}")
+    if t.trailer:
+        out.append(f"  trailer: {t.trailer}")
+    return out
+
+
 @app.command("tv")
 def tv(
     query: str = typer.Argument(..., help="movie or TV title to look up"),
@@ -1142,18 +1176,8 @@ def tv(
             out["reviews"] = [asdict(r) for r in critics]
         _emit_json(out)
         return
-    year_s = top.year or "—"
-    typer.echo(f"{top.title} ({year_s})  ★{top.rating:.1f}  {top.kind}")
-    if top.overview:
-        typer.echo(f"  {top.overview[:300]}{'…' if len(top.overview) > 300 else ''}")
-    if top.providers:
-        offers = " · ".join(
-            f"{tmdb_mod.OFFER_LABELS[o]}: {', '.join(names)}"
-            for o, names in top.providers.items()
-        )
-        typer.echo(f"  {offers}")
-    else:
-        typer.echo(f"  not streaming in {country}")
+    for line in _title_card(top, country):
+        typer.echo(line)
     typer.echo(f"  {top.watch_link or top.url}")
     if rest[:n]:
         others = " · ".join(
@@ -1170,15 +1194,33 @@ def tv(
 
 @app.command("movie", hidden=True)
 def movie(
-    query: str = typer.Argument(..., help="movie title to look up"),
+    query: str = typer.Argument(None, help="movie title to look up"),
+    now: bool = typer.Option(False, "--now", help="films in AU cinemas now (TMDB's now-playing list), not a title"),
     year: int = typer.Option(None, "--year", "-y", help="release year filter"),
     country: str = typer.Option(tmdb_mod.DEFAULT_COUNTRY, "--country", "-c", help="watch-provider region"),
-    n: int = typer.Option(3, "--n", "-n", help="how many runner-up matches to list"),
+    n: int = typer.Option(None, "--n", "-n", help="how many: runner-up matches (3), or films with --now (20)"),
     reviews: bool = typer.Option(False, "--reviews", "-r", help="add critics' reviews (Exa, ~$0.007)"),
     as_json: bool = typer.Option(False, "--json", help="emit JSON instead of text"),
 ) -> None:
-    """`ko tv --movie`: a film's rating, overview and where to watch; `-r` adds critics' reviews."""
-    tv(query, tv=False, movie=True, year=year, country=country, n=n, reviews=reviews, as_json=as_json)
+    """`ko tv --movie`: a film's card and where to watch; `-r` adds critics' reviews; `--now` lists what's in cinemas."""
+    if now:
+        if query or reviews:
+            _die("--now lists what's in cinemas: no title and no -r with it", as_json=as_json, code="usage")
+        try:
+            films = tmdb_mod.now_playing(country, n=n or 20)
+        except Exception as e:
+            _die_from(e, as_json=as_json)
+        if not films:
+            _no_results(f"nothing listed as now playing in {country}", as_json)
+        if as_json:
+            _emit_json(films)
+            return
+        for f in films:
+            typer.echo(f"{f.title} ({f.year or '—'})  ★{f.rating:.1f}\t{f.url}")
+        return
+    if not query:
+        _die("give a title, or --now for what's in cinemas", as_json=as_json, code="usage")
+    tv(query, tv=False, movie=True, year=year, country=country, n=3 if n is None else n, reviews=reviews, as_json=as_json)
 
 
 # --- book command (root-level) ---
@@ -1196,13 +1238,23 @@ def book(
     except Exception as e:
         if isinstance(e, _BUGS):
             raise
-        found = None
-        typer.echo(f"[Open Library lookup failed ({e}); searching reviews for the title as typed]", err=True)
+        found, failed = None, e
     else:
-        if found is None:
-            typer.echo(f"[no Open Library match for {query!r}; searching reviews for the title as typed]", err=True)
-        elif not book_mod.matches(query, found):
-            typer.echo(f"[Open Library's best match is {found.title!r}, not obviously this book; searching the title as typed]", err=True)
+        failed = None
+    as_typed = "searching reviews for the title as typed"
+    if failed:
+        typer.echo(f"[Open Library lookup failed ({failed}); {as_typed}]", err=True)
+    elif found is None:
+        typer.echo(f"[no Open Library match for {query!r}; {as_typed}]", err=True)
+    elif not book_mod.matches(query, found):
+        typer.echo(f"[Open Library's best match is {found.title!r}, not obviously this book; {as_typed}]", err=True)
+    if found:
+        try:
+            book_mod.details(found)
+        except Exception as e:  # the description is a nicety: keep the match and its author
+            if isinstance(e, _BUGS):
+                raise
+            typer.echo(f"[Open Library description unavailable ({e})]", err=True)
     try:
         hits = book_mod.reviews(query, found, n=n)
     except Exception as e:
@@ -1214,7 +1266,13 @@ def book(
         return
     if found:
         by = ", ".join(found.authors) or "unknown author"
-        typer.echo(f"{found.title} by {by} ({found.year or '—'})  {found.url}\n")
+        typer.echo(f"{found.title} by {by} ({found.year or '—'})  {found.url}")
+        if found.description:
+            text = " ".join(found.description.split())
+            typer.echo(f"  {text[:300]}{'…' if len(text) > 300 else ''}")
+        if found.subjects:
+            typer.echo(f"  {' · '.join(found.subjects)}")
+        typer.echo("")
     if not hits:
         typer.echo("No reviews found.", err=True)
         return

@@ -1,4 +1,4 @@
-"""TMDB — movie/TV lookup + where-to-watch. Needs TMDB_READ_ACCESS_TOKEN.
+"""TMDB — movie/TV lookup, details + where-to-watch. Needs TMDB_READ_ACCESS_TOKEN (or TMDB_TOKEN).
 
 The quick "is it any good and where can I stream it" check. Watch-provider
 data is supplied to TMDB by JustWatch, so regional availability (default AU)
@@ -20,6 +20,7 @@ BASE = "https://api.themoviedb.org/3"
 DEFAULT_COUNTRY = "AU"
 # offer types in display priority — a title on flatrate doesn't need its rent listing
 OFFER_TYPES = ("flatrate", "free", "ads", "rent", "buy")
+SUBSCRIPTION_OFFERS = ("flatrate", "free", "ads")  # what a subscription covers; rent/buy cost extra
 OFFER_LABELS = {
     "flatrate": "stream",
     "free": "free",
@@ -38,9 +39,22 @@ class Title:
     rating: float  # vote_average, 0-10
     overview: str
     popularity: float
-    # filled by providers lookup
+    # filled by providers() / details()
     providers: dict[str, list[str]] = field(default_factory=dict)  # offer type -> names
     watch_link: str = ""
+    # filled by details()
+    runtime: int | None = None  # minutes (a typical episode for TV)
+    genres: list[str] = field(default_factory=list)
+    certification: str = ""  # the country's rating, e.g. "M", "MA 15+"
+    people: list[str] = field(default_factory=list)  # director(s), or a series' creators
+    cast: list[str] = field(default_factory=list)  # top billed
+    imdb_id: str = ""
+    trailer: str = ""  # YouTube URL of the official trailer
+    cinema_date: str = ""  # YYYY-MM-DD, the country's cinema release (movies)
+    digital_date: str = ""  # YYYY-MM-DD, the country's digital release (movies)
+    status: str = ""  # TV: "Returning Series", "Ended"…
+    seasons: int | None = None
+    next_episode: str = ""  # TV: "S3E1 2026-01-16"
 
     @property
     def url(self) -> str:
@@ -97,7 +111,10 @@ def search(query: str, kind: str | None = None, year: int | None = None) -> list
 def providers(title: Title, country: str = DEFAULT_COUNTRY) -> Title:
     """Fill `title.providers` with regional offers, deduped (best offer per provider wins)."""
     data = _get(f"/{title.kind}/{title.id}/watch/providers")
-    region = (data.get("results") or {}).get(country)
+    return _fill_providers(title, (data.get("results") or {}).get(country))
+
+
+def _fill_providers(title: Title, region: dict | None) -> Title:
     if not region:
         return title
     seen: set[str] = set()
@@ -108,9 +125,91 @@ def providers(title: Title, country: str = DEFAULT_COUNTRY) -> Title:
             if name not in seen:
                 seen.add(name)
                 grouped.setdefault(offer, []).append(name)
-    title.providers = grouped
+    title.providers = {o: _mine_first(names) if o in SUBSCRIPTION_OFFERS else names for o, names in grouped.items()}
     title.watch_link = region.get("link") or ""
     return title
+
+
+def _norm(name: str) -> str:
+    return "".join(ch for ch in name.lower().replace("+", "plus") if ch.isalnum())
+
+
+def my_providers() -> list[str]:
+    """KO's own services, from `[tmdb] my_providers` in config.toml (e.g. ["Netflix", "Stan"])."""
+    return list(config.get("tmdb", "my_providers", []) or [])
+
+
+def mine(title: Title) -> list[str]:
+    """My services this title is on, subscription offers only (renting costs extra anyway)."""
+    return [n for o in SUBSCRIPTION_OFFERS for n in title.providers.get(o, []) if is_mine(n)]
+
+
+def is_mine(name: str) -> bool:
+    """Is this provider one of mine? Loose on spelling: "Disney+" matches "Disney Plus"."""
+    mine = {_norm(m) for m in my_providers()}
+    return any(_norm(name).startswith(m) for m in mine) if mine else False
+
+
+def _mine_first(names: list[str]) -> list[str]:
+    return sorted(names, key=lambda n: not is_mine(n))  # stable: TMDB's order otherwise
+
+
+def _date(iso: str | None) -> str:
+    return (iso or "")[:10]
+
+
+def details(title: Title, country: str = DEFAULT_COUNTRY) -> Title:
+    """Fill providers plus runtime, genres, the country's rating, director or creators, top
+    cast, IMDb id, official trailer, and (movies) the country's cinema and digital release
+    dates or (TV) status, seasons and next episode. One request: TMDB's append_to_response."""
+    extra = "release_dates" if title.kind == "movie" else "content_ratings"
+    d = _get(
+        f"/{title.kind}/{title.id}",
+        {"language": "en-AU", "append_to_response": f"{extra},credits,external_ids,videos,watch/providers",
+         "include_video_language": "en,null"},
+    )
+    _fill_providers(title, ((d.get("watch/providers") or {}).get("results") or {}).get(country))
+    title.genres = [g["name"] for g in d.get("genres") or []]
+    credits = d.get("credits") or {}
+    title.cast = [c["name"] for c in (credits.get("cast") or [])[:4]]
+    title.imdb_id = (d.get("external_ids") or {}).get("imdb_id") or d.get("imdb_id") or ""
+    videos = [v for v in (d.get("videos") or {}).get("results") or [] if v.get("site") == "YouTube" and v.get("type") == "Trailer"]
+    videos.sort(key=lambda v: not v.get("official"))
+    title.trailer = f"https://www.youtube.com/watch?v={videos[0]['key']}" if videos else ""
+    if title.kind == "movie":
+        title.runtime = d.get("runtime") or None
+        title.people = [c["name"] for c in credits.get("crew") or [] if c.get("job") == "Director"]
+        here = next((r["release_dates"] for r in (d.get("release_dates") or {}).get("results") or []
+                     if r.get("iso_3166_1") == country), [])
+        title.certification = next((r["certification"] for r in here if r.get("certification")), "")
+        title.cinema_date = min((_date(r["release_date"]) for r in here if r.get("type") in (2, 3)), default="")
+        title.digital_date = min((_date(r["release_date"]) for r in here if r.get("type") == 4), default="")
+    else:
+        runs = d.get("episode_run_time") or []  # TMDB mostly stopped filling this; fall back
+        title.runtime = runs[0] if runs else (d.get("last_episode_to_air") or {}).get("runtime") or None
+        title.people = [c["name"] for c in d.get("created_by") or []]
+        title.certification = next((r["rating"] for r in (d.get("content_ratings") or {}).get("results") or []
+                                    if r.get("iso_3166_1") == country), "")
+        title.status = d.get("status") or ""
+        title.seasons = d.get("number_of_seasons")
+        nxt = d.get("next_episode_to_air") or {}
+        if nxt:
+            title.next_episode = f"S{nxt.get('season_number')}E{nxt.get('episode_number')} {nxt.get('air_date') or ''}".strip()
+    return title
+
+
+def now_playing(country: str = DEFAULT_COUNTRY, n: int = 20) -> list[Title]:
+    """Films TMDB lists as now playing in the country's cinemas, most popular first. A
+    release-date window, not a screenings list: treat it as "probably still showing"."""
+    out: list[Title] = []
+    page = 1
+    while len(out) < n:
+        data = _get("/movie/now_playing", {"region": country, "language": "en-AU", "page": page})
+        out.extend(_title(r, "movie") for r in data.get("results") or [])
+        if page >= (data.get("total_pages") or 1):
+            break
+        page += 1
+    return sorted(out, key=lambda t: t.popularity, reverse=True)[:n]
 
 
 def lookup(
@@ -119,12 +218,12 @@ def lookup(
     year: int | None = None,
     country: str = DEFAULT_COUNTRY,
 ) -> tuple[Title | None, list[Title]]:
-    """The quick check: top match (most popular across movies+TV) with regional
-    providers filled, plus the runner-up matches. Returns (None, []) on no hits."""
+    """The quick check: top match (most popular across movies+TV) with its details and
+    regional providers filled, plus the runner-up matches. Returns (None, []) on no hits."""
     results = search(query, kind=kind, year=year)
     if not results:
         return None, []
-    return providers(results[0], country), results[1:]
+    return details(results[0], country), results[1:]
 
 
 DEFAULT_REVIEWS = 5

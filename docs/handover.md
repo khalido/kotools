@@ -18,6 +18,8 @@ Output: a short ranked list of what to change and why, shown to KO as a diagram 
 
 **2026-11-13: `ko flight` (OAG only)** for jaldi's flight card (`docs/flight.md`, WORKLOG). Next: a fallback once KO signs up for AeroDataBox (RapidAPI free Basic → `AERODATABOX_API_KEY`); the field mapping is already in `docs/flight.md`. Live test is opt-in (`KO_LIVE_TESTS=1`) to spare the 1,000-call quota.
 
+**2026-11-15: media + Exa work since the release** (WORKLOG, CHANGELOG [Unreleased]): Exa defaults (uncapped highlights, `lite`, cost note, agent `objective`), `ko book`, `ko tv -r`, `ko movie` (+ `--now`), richer TMDB cards, `[tmdb] my_providers`. Next for KO: OMDb scores (needs a free `OMDB_API_KEY`), and set `my_providers` in config.toml. Sydney session times are parked (WORKLOG).
+
 **2026-11-13: v2026.11.13 released** (GitHub + PyPI, checked with `uvx --isolated`): `ko flight` (OAG; the AeroDataBox fallback is designed in `docs/flight.md`, not built, waiting on a key), inline Gmail images, faster start, review fixes. The 1-day release-age floor is also committed in thinker and koevguide (main, unpushed) and everx (branch `deps/release-age-1-day`, unmerged).
 
 **2026-11-13: cleanup pass** from Gemini's list (WORKLOG). `ko doctor` now lives in `cli_doctor.py` (cli.py 807 → ~437 lines), output unchanged.

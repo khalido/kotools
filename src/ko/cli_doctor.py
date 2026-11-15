@@ -138,7 +138,7 @@ def _tool_rows() -> list[tuple[str, str, str, Status]]:
 
 def _settings() -> list[tuple[str, str, str]]:
     """Effective non-secret settings: (name, value, where it resolves from)."""
-    from . import gcal, llm, models, ocr, publish
+    from . import gcal, llm, models, ocr, publish, tmdb
     from .google_auth import active_account
     from .x import _default_handle
 
@@ -156,6 +156,7 @@ def _settings() -> list[tuple[str, str, str]]:
         ("x handle", _default_handle(), src("KO_X_HANDLE", "x", "handle")),
         ("google account", active_account(), src("KO_GOOGLE_ACCOUNT", "google", "account")),
         ("publish domain", publish.publish_domain() or "(workers.dev)", "config" if config.get("publish", "domain") else "default"),
+        ("my streaming", ", ".join(tmdb.my_providers()) or "(none)", "config" if tmdb.my_providers() else "default"),
     ]
 
 

@@ -33,6 +33,8 @@ class Book:
     authors: list[str] = field(default_factory=list)
     year: int | None = None
     key: str = ""  # Open Library work key, e.g. /works/OL28738217W
+    description: str = ""  # filled by details()
+    subjects: list[str] = field(default_factory=list)  # filled by details()
 
     @property
     def url(self) -> str:
@@ -55,6 +57,22 @@ def find(query: str) -> Book | None:
         return None
     d = docs[0]
     return Book(d.get("title") or query, d.get("author_name") or [], d.get("first_publish_year"), d.get("key") or "")
+
+
+def details(book: Book) -> Book:
+    """Fill the description and subjects from Open Library's work record (free, no key).
+    Machine tags like `nyt:combined-print…=2023-05-07` are left out of subjects."""
+    import httpx2 as httpx
+
+    if not book.key:
+        return book
+    resp = httpx.get(f"{OPEN_LIBRARY}{book.key}.json", timeout=15, follow_redirects=True)
+    resp.raise_for_status()
+    d = resp.json()
+    desc = d.get("description")
+    book.description = (desc.get("value") if isinstance(desc, dict) else desc) or ""
+    book.subjects = [s for s in d.get("subjects") or [] if ":" not in s][:5]
+    return book
 
 
 def _core(title: str) -> str:

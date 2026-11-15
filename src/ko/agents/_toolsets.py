@@ -14,6 +14,7 @@ from __future__ import annotations
 from pydantic_ai.toolsets import FunctionToolset
 
 from ko import arxiv as arxiv_mod
+from ko import book as book_mod
 from ko import doc as doc_mod
 from ko import exa as exa_mod
 from ko import fetch as fetch_mod
@@ -372,36 +373,102 @@ def pkg_info(name: str) -> list[dict]:
     return _try("pkg_info", lambda: [asdict(p) for p in pkg_mod.info(name)])
 
 
-# --- tmdb (movies / TV) ---
+# --- tmdb (movies / TV) + books ---
 tmdb = FunctionToolset(
-    instructions="Movies/TV: tv_lookup gives rating, overview, and where to stream in Australia."
+    instructions="Movies/TV/books: tv_lookup gives a title's card (rating, Australian classification, "
+    "cast, Australian cinema dates or series status, trailer) and where to stream in Australia, "
+    "KO's own services marked; tv_reviews and book_lookup bring critics' reviews; "
+    "now_in_cinemas lists what's showing in Australia."
 )
+
+
+def _card(t) -> dict:
+    return {
+        "title": t.title, "year": t.year, "kind": t.kind, "rating": t.rating,
+        "certification_au": t.certification, "runtime_min": t.runtime, "genres": t.genres,
+        "director_or_creators": t.people, "cast": t.cast, "overview": t.overview,
+        "au_cinema_release": t.cinema_date, "au_digital_release": t.digital_date,
+        "series_status": t.status, "seasons": t.seasons, "next_episode": t.next_episode,
+        "providers_au": t.providers, "kos_services": tmdb_mod.mine(t),
+        "trailer": t.trailer, "imdb_id": t.imdb_id, "url": t.url, "watch_link": t.watch_link,
+    }
 
 
 @tmdb.tool_plain
 def tv_lookup(title: str, kind: str | None = None, year: int | None = None) -> dict:
-    """Look up a movie or TV show: rating, overview, and Australian watch providers.
+    """Look up a movie or TV show: its card and Australian watch providers. The top match
+    (most popular across movies and TV) gets the full card; others are listed by name.
 
-    kind: 'movie' or 'tv' to disambiguate; year to pin a specific release.
+    Args:
+        title: the movie or show's title.
+        kind: 'movie' or 'tv' to disambiguate.
+        year: release year, to pin one of several with the same name.
     """
 
     def _do():
         top, others = tmdb_mod.lookup(title, kind=kind, year=year)
         if not top:
             return {"found": False, "query": title}
-        return {
-            "found": True,
-            "title": top.title,
-            "year": top.year,
-            "kind": top.kind,
-            "rating": top.rating,
-            "overview": top.overview,
-            "url": top.url,
-            "providers_au": top.providers,
-            "watch_link": top.watch_link,
-            "other_matches": [
-                {"title": t.title, "year": t.year, "kind": t.kind} for t in others[:5]
-            ],
-        }
+        return {"found": True, **_card(top),
+                "other_matches": [{"title": t.title, "year": t.year, "kind": t.kind} for t in others[:5]]}
 
     return _try("tv_lookup", _do)
+
+
+@tmdb.tool_plain
+def tv_reviews(title: str, kind: str | None = None, year: int | None = None, n: int = 5) -> dict:
+    """Critics' reviews of a movie or TV show: finds the title on TMDB, then searches the web
+    for reviews of that exact title and year. Each review comes with its relevant passages.
+
+    Args:
+        title: the movie or show's title.
+        kind: 'movie' or 'tv' to disambiguate.
+        year: release year, to pin one of several with the same name.
+        n: how many reviews (default 5).
+    """
+
+    def _do():
+        top, _ = tmdb_mod.lookup(title, kind=kind, year=year)
+        if not top:
+            return {"found": False, "query": title}
+        return {"found": True, "title": top.title, "year": top.year, "kind": top.kind,
+                "reviews": tmdb_mod.reviews(top, n=n)}
+
+    return _try("tv_reviews", _do)
+
+
+@tmdb.tool_plain
+def now_in_cinemas() -> list[dict]:
+    """Films TMDB lists as now playing in Australian cinemas, most popular first (20). It's a
+    release-date window, not a screenings list: say "probably still showing", not "showing"."""
+
+    def _do():
+        return [{"title": t.title, "year": t.year, "rating": t.rating, "url": t.url}
+                for t in tmdb_mod.now_playing()]
+
+    return _try("now_in_cinemas", _do)
+
+
+@tmdb.tool_plain
+def book_lookup(title: str, n: int = 5) -> dict:
+    """A book: which one it is (Open Library: authors, year, description, subjects) and its
+    critical reviews from the web, each with its relevant passages.
+
+    Args:
+        title: the book's title, optionally with the author.
+        n: how many reviews (default 5).
+    """
+
+    from dataclasses import asdict
+
+    def _do():
+        found = book_mod.find(title)
+        book = None
+        if found:
+            details = _try("book_details", book_mod.details, found)  # a failure keeps the match
+            book = {**asdict(found), "url": found.url}
+            if isinstance(details, str):
+                book["details_note"] = details
+        return {"book": book, "reviews": book_mod.reviews(title, found, n=n)}
+
+    return _try("book_lookup", _do)

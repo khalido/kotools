@@ -15,7 +15,9 @@ Cut a release with the repo's `/release` skill.
 
 ### Added
 - `ko book "<title>"`: which book it is (Open Library) and its critical reviews (Exa); `ko tv "<title>" -r` adds critics' reviews to the movie/TV card, using TMDB's exact title and year.
-- `ko movie <title>`: `ko tv` limited to films. The TMDB token is also read from `TMDB_TOKEN`.
+- `ko movie <title>`: `ko tv` limited to films; `ko movie --now` lists what's in Australian cinemas. The TMDB token is also read from `TMDB_TOKEN`.
+- `ko tv` / `ko movie` cards add the Australian classification, runtime, genres, director or creators, top cast, Australian cinema and digital release dates (or series status, seasons and next episode), and the official trailer. `[tmdb] my_providers` in config.toml lists your services first, marked ✓.
+- `ko book` shows the book's description and subjects from Open Library. `ko ai` and `ko agent tv` gain critics' reviews, what's in cinemas, and books.
 
 ### Changed
 - `ko exa search` shows each hit's highlights by default, sized by Exa with no cap (`--summary` for a blurb, about $0.001 a result extra); `--type lite` costs about half; each search and `ko exa get` prints its cost on stderr. The agents' `exa_search` asks for an `objective`, as Exa recommends.

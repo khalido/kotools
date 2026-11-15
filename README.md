@@ -23,7 +23,8 @@ Full docs: **[kotools.khalido.dev](https://kotools.khalido.dev/)**.
 | `ko doc` | PDF / Office / image → text, page-marked for citing; pages with no text layer are OCR'd (DeepSeek on the gateway, ~$0.001 a page; stops and asks over 50 pages or $0.25; `-e vision` for free Apple OCR); `--deep` for multi-column layouts | `ko report.pdf` |
 | `ko ocr serve` | liteparse's OCR server API on 127.0.0.1:8828, for any project running liteparse | `lit parse scan.pdf --ocr-server-url http://127.0.0.1:8828/ocr` |
 | `ko yt` | YouTube transcript (free, cached); `-s` has Gemini 3.8 Flash watch the video and write up every point (~10–15c, cached; prompt: `ko prompt yt-condense`); `info` and `channel` for metadata | what a 40-minute talk actually says, captions or not |
-| `ko tv` | movie/TV rating + where to stream ([TMDB](https://developer.themoviedb.org), AU) | worth watching, and where |
+| `ko tv` / `ko movie` | movie/TV card (rating, AU classification, cast, AU cinema dates, trailer) + where to stream ([TMDB](https://developer.themoviedb.org), AU); `-r` critics' reviews; `ko movie --now` what's in cinemas | worth watching, and where |
+| `ko book` | which book ([Open Library](https://openlibrary.org/developers/api)) + critical reviews (Exa) | worth reading |
 | `ko tt` | TickTick lists and tasks, read and write (Open API v1) | `ko tt` lists my lists; `ko tt add "…" --due tomorrow` |
 | `ko pkg info` | npm/PyPI package: latest version, release date, advisories, stars, last push, release notes (no key) | before adopting or upgrading a dependency |
 
@@ -104,7 +105,7 @@ Model calls use two providers, because pydantic-ai can't reach decision models o
 | `GEMINI_API_KEY` | `ko doc --deep --describe`, `-m google:…` | 💰 | Direct Gemini on a paid project, so Google doesn't train on what's sent. |
 | `GEMINI_FREE_API_KEY` | `ko yt -s` (optional) | free | A key from an AI Studio project without billing. When set, `-s` tries Google's free tier first and falls back to the gateway on 503/429. Free-tier content may be used by Google, so ko sends it public video only. Never name it `GEMINI_API_KEY`: Google's SDK reads that automatically. |
 | `GOOGLE_CLOUD_API_KEY` | `ko yt info`, `ko yt channel` | free | One Cloud API key for public Google data (YouTube Data API). |
-| `TMDB_READ_ACCESS_TOKEN` | `ko tv` | free | v4 read access token from [TMDB settings](https://www.themoviedb.org/settings/api). |
+| `TMDB_READ_ACCESS_TOKEN` (or `TMDB_TOKEN`) | `ko tv`, `ko movie` | free | v4 read access token from [TMDB settings](https://www.themoviedb.org/settings/api). Your own services go first, marked ✓, with `[tmdb] my_providers = ["Netflix", "Stan"]` in config.toml. |
 | `TICKTICK_API_KEY` | `ko tt` | (TickTick sub) | TickTick → avatar → Settings → Account → API Token. Also works for TickTick's hosted MCP and CLI. |
 | `S2_API_KEY` | `ko papers` (optional) | free | [Semantic Scholar](https://www.semanticscholar.org/product/api): adds `tldr` and `similar`. |
 | `REDDIT_CLIENT_ID` + `REDDIT_CLIENT_SECRET` | `ko fetch` Reddit (planned) | free (100 req/min) | Script app **"kotools"** at [developers.reddit.com/apps](https://developers.reddit.com/apps), app-only read token. Not Devvit: Devvit tokens only work inside Reddit's platform. |
