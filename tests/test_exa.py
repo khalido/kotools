@@ -239,15 +239,3 @@ def test_cli_default_is_highlights_and_long_shows_text(monkeypatch):
     r = CliRunner().invoke(app, ["exa", "search", "q", "--highlights"])  # old flag, now a no-op
     assert r.exit_code == 0
 
-
-def test_reviews_query_and_cli_flag(monkeypatch):
-    from typer.testing import CliRunner
-
-    from ko.cli import app
-
-    assert exa.reviews_query("The Wager") == "The Wager book reviews"
-    assert exa.reviews_query("The Wager reviews") == "The Wager reviews"  # already asks
-    seen = {}
-    monkeypatch.setattr(exa, "search", lambda q, **kw: seen.update(q=q, **kw) or [])
-    CliRunner().invoke(app, ["exa", "search", "The Wager", "--reviews"])
-    assert seen["q"] == "The Wager book reviews" and seen["objective"] == exa.REVIEWS_OBJECTIVE

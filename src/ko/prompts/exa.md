@@ -22,9 +22,9 @@ return clean page content in the same call. Reach for it when you want *pages ab
   and serves cached pages only, fine for triage when freshness doesn't matter; `deep`/`deep-reasoning`
   for hard multi-hop research (slower, pricier). `fast`/`instant`/`neural` are legacy.
 - Each search prints its cost on stderr (`[exa · $0.007]`).
-- **`--reviews`**: book reviews for a title (`ko exa search "The Wager" --reviews`). It adds
-  "book reviews" to the query and sends a reviews objective; on `auto` the query wording does
-  the work. Thin results? Add `-t deep-lite`, where the objective counts too (~$0.012).
+- **Name the kind of page in the query** ("The Wager review", "H100 pricing page"): on `auto`
+  that steers results far more than anything else. Reviews of a book or film have their own
+  commands with the recipe baked in: `ko book "<title>"` and `ko tv "<title>" -r`.
 - **`--category`**: focus the index — `'research paper'`, `news`, `company`, `pdf`, `'personal site'`,
   `'financial report'`, `people`. `--category 'research paper'` upgrades the old `--domains .edu` trick.
 - **`--domains .edu`** / `--domains <uni>` still works for labs/faculty/admissions pages.

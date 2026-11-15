@@ -35,7 +35,8 @@ This file is a stub, not a manual — same rule as agent-browser/herdr: **the in
 | `hn` / `hf` / `papers` | HN · HF papers · OpenAlex literature scouting |
 | `x search\|list\|user\|lists` | X search/lists/timelines (pay-per-read) |
 | `tt ...` (`todo`) | TickTick read+write |
-| `tv <title>` | movie/TV + AU watch providers |
+| `tv <title>` | movie/TV + AU watch providers; `-r` adds critics' reviews (Exa) |
+| `book <title>` | which book (Open Library) + critical reviews (Exa) |
 | `flight <code> [date]` | flight status card: airports, local sched/est/actual times, terminal, gate (OAG free tier, cached 5 min) |
 | `brief [--raw]` | morning brief: gather + one cheap-model synthesis |
 | `publish ...` | folder → Cloudflare Worker (`new`/`preview`/`rm`/`list`) |

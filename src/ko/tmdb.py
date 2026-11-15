@@ -9,8 +9,12 @@ legacy v3 key isn't needed. Ported from my chota-bot TypeScript tool.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from . import config
+
+if TYPE_CHECKING:
+    from .exa import ExaResult
 
 BASE = "https://api.themoviedb.org/3"
 DEFAULT_COUNTRY = "AU"
@@ -118,3 +122,30 @@ def lookup(
     if not results:
         return None, []
     return providers(results[0], country), results[1:]
+
+
+DEFAULT_REVIEWS = 5
+
+# Same recipe as book.py (WORKLOG 2026-11-15): the query names the kind of page; the
+# objective steers deep types and costs nothing on `auto`.
+REVIEWS_OBJECTIVE = (
+    "Find critics' reviews of this film or TV series. Rank first: reviews in established "
+    "publications (newspapers, film and TV magazines, trade press like Variety or The Hollywood "
+    "Reporter) and long-form reviews by serious critics. Exclude streaming and retailer pages, "
+    "plot summaries, trailers, cast lists and fan wikis. Pull the critic's overall verdict, the "
+    "main praise, the main criticism, and the publication and date."
+)
+
+
+def reviews_query(title: Title) -> str:
+    """`Dune: Part Two` (2024, movie) -> `Dune: Part Two 2024 film review`: TMDB's exact title
+    and year pick out the right one of several films or shows with the same name."""
+    kind = "film" if title.kind == "movie" else "TV series"
+    return " ".join(str(x) for x in (title.title, title.year, kind, "review") if x)
+
+
+def reviews(title: Title, n: int = DEFAULT_REVIEWS) -> list[ExaResult]:
+    """Critics' reviews of a TMDB title via Exa: highlights per review."""
+    from . import exa
+
+    return exa.search(reviews_query(title), n=n, objective=REVIEWS_OBJECTIVE)

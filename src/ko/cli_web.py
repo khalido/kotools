@@ -36,6 +36,7 @@ hn_mod = lazy("hn")
 papers_mod = lazy("papers")
 pkg_mod = lazy("pkg")
 tmdb_mod = lazy("tmdb")
+book_mod = lazy("book")
 x_mod = lazy("x")
 yt_mod = lazy("yt")
 
@@ -46,7 +47,7 @@ app.add_typer(arxiv_app, name="arxiv")
 
 exa_app = typer.Typer(
     help="exa semantic web search + URL → markdown (EXA_API_KEY required). "
-    "`search` --reviews/--summary/--long/--type/--category/--max-age-hours; `ko prompt exa` for the guide.",
+    "`search` --summary/--long/--type/--category/--max-age-hours; `ko prompt exa` for the guide.",
     no_args_is_help=True,
 )
 app.add_typer(exa_app, name="exa")
@@ -172,6 +173,29 @@ def _parse_domains(value: str | None) -> list[str] | None:
 # --- exa commands ---
 
 
+def _print_hits(results: list, long: bool = False) -> None:
+    """Exa hits as text: title · date, URL, then each highlight passage (or the summary /
+    `long` text excerpt). Shared by `ko exa search`, `ko book` and `ko tv --reviews`."""
+    for r in results:
+        day = _fmt_day(r.published_date)
+        title = " ".join((r.title or r.url).split())  # collapse stray newlines in the title
+        typer.echo(f"{title}{'  ·  ' + day if day else ''}")
+        typer.echo(f"  {r.url}")
+        if r.highlights:  # render each highlight passage on its own line
+            for h in r.highlights:
+                typer.echo(f"  • {' '.join(h.split())}")
+            typer.echo("")
+            continue
+        blurb = (r.text if long else None) or r.summary
+        if blurb:
+            excerpt = " ".join(blurb.split())
+            if excerpt.startswith("Summary:"):  # Exa sometimes prefixes its summary
+                excerpt = excerpt[len("Summary:") :].lstrip(" -")
+            cap = 500 if long else 240
+            typer.echo(f"  {excerpt[:cap]}{'…' if len(excerpt) > cap else ''}")
+        typer.echo("")
+
+
 @exa_app.command("search")
 # Top-level alias under the name the whole ecosystem uses for this capability (Claude Code's
 # WebSearch, the Anthropic API's web_search, every MCP server's web_search). `exa` names the
@@ -224,9 +248,6 @@ def exa_search(
     summary: bool = typer.Option(
         False, "--summary", help="a short blurb per result instead of highlights (an LLM call each: ~$0.001 a result extra)"
     ),
-    reviews: bool = typer.Option(
-        False, "--reviews", help="book reviews: QUERY is a title, e.g. `ko exa search 'The Wager' --reviews`"
-    ),
     _highlights: bool = typer.Option(False, "--highlights", hidden=True),  # the default now; kept for old scripts
     no_text: bool = typer.Option(
         False, "--no-text", help="skip content entirely (fastest; title + url + date only)"
@@ -254,14 +275,10 @@ def exa_search(
             as_json=as_json,
             code="usage",
         )
-    objective = None
-    if reviews:
-        query, objective = exa_mod.reviews_query(query), exa_mod.REVIEWS_OBJECTIVE
     try:
         results = exa_mod.search(
             query,
             n=n,
-            objective=objective,
             include_domains=_parse_domains(domains),
             exclude_domains=_parse_domains(exclude),
             since_months=since,
@@ -283,24 +300,7 @@ def exa_search(
     if as_json:
         _emit_json(results)
         return
-    for r in results:
-        day = _fmt_day(r.published_date)
-        title = " ".join((r.title or r.url).split())  # collapse stray newlines in the title
-        typer.echo(f"{title}{'  ·  ' + day if day else ''}")
-        typer.echo(f"  {r.url}")
-        if r.highlights:  # render each highlight passage on its own line
-            for h in r.highlights:
-                typer.echo(f"  • {' '.join(h.split())}")
-            typer.echo("")
-            continue
-        blurb = (r.text if long else None) or r.summary
-        if blurb:
-            excerpt = " ".join(blurb.split())
-            if excerpt.startswith("Summary:"):  # Exa sometimes prefixes its summary
-                excerpt = excerpt[len("Summary:") :].lstrip(" -")
-            cap = 500 if long else 240
-            typer.echo(f"  {excerpt[:cap]}{'…' if len(excerpt) > cap else ''}")
-        typer.echo("")
+    _print_hits(results, long=long)
 
 
 @exa_app.command("get")
@@ -1111,9 +1111,10 @@ def tv(
         tmdb_mod.DEFAULT_COUNTRY, "--country", "-c", help="watch-provider region"
     ),
     n: int = typer.Option(3, "--n", "-n", help="how many runner-up matches to list"),
+    reviews: bool = typer.Option(False, "--reviews", "-r", help="add critics' reviews (Exa, ~$0.007)"),
     as_json: bool = typer.Option(False, "--json", help="emit JSON instead of text"),
 ) -> None:
-    """Movie/TV quick check: rating, overview, and where to watch (AU by default)."""
+    """Movie/TV quick check: rating, overview, and where to watch (AU by default); `-r` adds critics' reviews."""
     if tv and movie:
         # via _die so --json gets the {error, code} object AGENTS.md promises
         _die("--tv and --movie are mutually exclusive", as_json=as_json, code="usage")
@@ -1124,13 +1125,22 @@ def tv(
         _die_from(e, as_json=as_json)
     if top is None:
         if as_json:  # keep the {top, matches} shape valid for a downstream parser
-            typer.echo(json.dumps({"top": None, "matches": []}))
+            typer.echo(json.dumps({"top": None, "matches": []} | ({"reviews": []} if reviews else {})))
         typer.echo(f"No matches for '{query}'.", err=True)
         raise typer.Exit(0)
+    critics = []
+    if reviews:
+        try:
+            critics = tmdb_mod.reviews(top)
+        except Exception as e:
+            _die_from(e, as_json=as_json)
+        if note := exa_mod.cost_note():
+            typer.echo(note, err=True)
     if as_json:
-        typer.echo(
-            json.dumps({"top": asdict(top), "matches": [asdict(t) for t in rest[:n]]})
-        )
+        out = {"top": asdict(top), "matches": [asdict(t) for t in rest[:n]]}
+        if reviews:
+            out["reviews"] = [asdict(r) for r in critics]
+        _emit_json(out)
         return
     year_s = top.year or "—"
     typer.echo(f"{top.title} ({year_s})  ★{top.rating:.1f}  {top.kind}")
@@ -1150,6 +1160,52 @@ def tv(
             f"{t.title} ({t.year or '—'}, {t.kind}) ★{t.rating:.1f}" for t in rest[:n]
         )
         typer.echo(f"\nOther matches: {others}")
+    if reviews:
+        if critics:
+            typer.echo(f"\nReviews ({tmdb_mod.reviews_query(top)}):\n")
+            _print_hits(critics)
+        else:
+            typer.echo("No reviews found.", err=True)
+
+
+# --- book command (root-level) ---
+
+
+@app.command("book")
+def book(
+    query: str = typer.Argument(..., help="book title, optionally with the author"),
+    n: int = typer.Option(book_mod.DEFAULT_REVIEWS, "--n", "-n", help="how many reviews"),
+    as_json: bool = typer.Option(False, "--json", help="emit JSON instead of text"),
+) -> None:
+    """Critical reviews of a book: which book (Open Library), then reviews via Exa (~$0.007)."""
+    try:
+        found = book_mod.find(query)
+    except Exception as e:
+        if isinstance(e, _BUGS):
+            raise
+        found = None
+        typer.echo(f"[Open Library lookup failed ({e}); searching reviews for the title as typed]", err=True)
+    else:
+        if found is None:
+            typer.echo(f"[no Open Library match for {query!r}; searching reviews for the title as typed]", err=True)
+        elif not book_mod.matches(query, found):
+            typer.echo(f"[Open Library's best match is {found.title!r}, not obviously this book; searching the title as typed]", err=True)
+    try:
+        hits = book_mod.reviews(query, found, n=n)
+    except Exception as e:
+        _die_from(e, as_json=as_json)
+    if note := exa_mod.cost_note():
+        typer.echo(note, err=True)
+    if as_json:
+        _emit_json({"book": {**asdict(found), "url": found.url} if found else None, "reviews": [asdict(r) for r in hits]})
+        return
+    if found:
+        by = ", ".join(found.authors) or "unknown author"
+        typer.echo(f"{found.title} by {by} ({found.year or '—'})  {found.url}\n")
+    if not hits:
+        typer.echo("No reviews found.", err=True)
+        return
+    _print_hits(hits)
 
 
 # --- flight command (root-level) ---
