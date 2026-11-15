@@ -125,7 +125,7 @@ def _tool_rows() -> list[tuple[str, str, str, Status]]:
         ("tt", "TickTick tasks (read+write via Open API v1) — Settings → Account → API Token", "TICKTICK_API_KEY", _key_status("TICKTICK_API_KEY")),
         ("publish", "deploy a folder to Cloudflare (static)", "wrangler + KO_CLOUDFLARE_API_TOKEN/ACCOUNT_ID", _publish_status()),
         ("agent", "research agent (web search via exa)", "VERCEL_AI_GATEWAY_API_KEY + EXA_API_KEY", _key_status("VERCEL_AI_GATEWAY_API_KEY")),
-        ("tv", "movie/TV info + where to stream — themoviedb.org API settings", "TMDB_READ_ACCESS_TOKEN", _key_status("TMDB_READ_ACCESS_TOKEN")),
+        ("tv", "movie/TV info + where to stream — themoviedb.org API settings", "TMDB_READ_ACCESS_TOKEN (or TMDB_TOKEN)", _key_status("TMDB_READ_ACCESS_TOKEN") if config.key_source("TMDB_READ_ACCESS_TOKEN") else _key_status("TMDB_TOKEN")),
         ("flight", "flight status card (OAG, free 1,000 calls/mo) — developers.oag.com", "OAG_FLIGHT_INFO_KEY", _key_status("OAG_FLIGHT_INFO_KEY")),
         ("flight names", "airline names for `ko flight` (OAG Master Data)", "OAG_MASTER_DATA_KEY (optional)", _key_status("OAG_MASTER_DATA_KEY") if config.key_source("OAG_MASTER_DATA_KEY") else ("– optional", "yellow")),
         ("gsheets", "read & write Google Sheets", "OAuth client + token", google),

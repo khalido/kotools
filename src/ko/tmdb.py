@@ -48,10 +48,13 @@ class Title:
 
 
 def _headers() -> dict[str, str]:
-    token = config.require_key(
+    import os
+
+    # TMDB_TOKEN is the same v4 token under chota's name (KO's ~/.zshrc.local, 2026-11-15)
+    token = os.environ.get("TMDB_READ_ACCESS_TOKEN") or os.environ.get("TMDB_TOKEN") or config.require_key(
         "TMDB_READ_ACCESS_TOKEN",
         "Grab the v4 Read Access Token from https://www.themoviedb.org/settings/api "
-        "and export it.",
+        "and export it (TMDB_TOKEN works too).",
     )
     return {"accept": "application/json", "authorization": f"Bearer {token}"}
 

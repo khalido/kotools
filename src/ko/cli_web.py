@@ -1114,7 +1114,7 @@ def tv(
     reviews: bool = typer.Option(False, "--reviews", "-r", help="add critics' reviews (Exa, ~$0.007)"),
     as_json: bool = typer.Option(False, "--json", help="emit JSON instead of text"),
 ) -> None:
-    """Movie/TV quick check: rating, overview, and where to watch (AU by default); `-r` adds critics' reviews."""
+    """Movie/TV quick check: rating, overview, and where to watch (AU by default); `-r` adds critics' reviews. Alias: `ko movie` (= --movie)."""
     if tv and movie:
         # via _die so --json gets the {error, code} object AGENTS.md promises
         _die("--tv and --movie are mutually exclusive", as_json=as_json, code="usage")
@@ -1166,6 +1166,19 @@ def tv(
             _print_hits(critics)
         else:
             typer.echo("No reviews found.", err=True)
+
+
+@app.command("movie", hidden=True)
+def movie(
+    query: str = typer.Argument(..., help="movie title to look up"),
+    year: int = typer.Option(None, "--year", "-y", help="release year filter"),
+    country: str = typer.Option(tmdb_mod.DEFAULT_COUNTRY, "--country", "-c", help="watch-provider region"),
+    n: int = typer.Option(3, "--n", "-n", help="how many runner-up matches to list"),
+    reviews: bool = typer.Option(False, "--reviews", "-r", help="add critics' reviews (Exa, ~$0.007)"),
+    as_json: bool = typer.Option(False, "--json", help="emit JSON instead of text"),
+) -> None:
+    """`ko tv --movie`: a film's rating, overview and where to watch; `-r` adds critics' reviews."""
+    tv(query, tv=False, movie=True, year=year, country=country, n=n, reviews=reviews, as_json=as_json)
 
 
 # --- book command (root-level) ---

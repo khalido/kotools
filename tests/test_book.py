@@ -75,3 +75,18 @@ def test_ko_book_when_open_library_fails_says_so_once(monkeypatch):
     monkeypatch.setattr(exa, "search", lambda q, **kw: [_hit("https://x.com/r")])
     r = CliRunner().invoke(app, ["book", "The Wager"])
     assert r.exit_code == 0 and "lookup failed (503)" in r.stderr and "no Open Library match" not in r.stderr
+
+
+def test_ko_movie_is_tv_with_movie_only(monkeypatch):
+    seen = {}
+    film = tmdb.Title("movie", 1, "Dune: Part Two", 2024, 8.1, "", 1.0)
+    monkeypatch.setattr(tmdb, "lookup", lambda q, **k: seen.update(q=q, **k) or (film, []))
+    r = CliRunner().invoke(app, ["movie", "Dune Part Two", "--json"])
+    assert r.exit_code == 0, r.output
+    assert seen["kind"] == "movie" and json.loads(r.stdout)["top"]["title"] == "Dune: Part Two"
+
+
+def test_tmdb_reads_chotas_token_name_too(monkeypatch):
+    monkeypatch.delenv("TMDB_READ_ACCESS_TOKEN", raising=False)
+    monkeypatch.setenv("TMDB_TOKEN", "eyJ-test")
+    assert tmdb._headers()["authorization"] == "Bearer eyJ-test"
