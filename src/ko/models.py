@@ -18,7 +18,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from ko import config
+from ko import config, telemetry
 from ko.dirs import write_atomic
 
 if TYPE_CHECKING:
@@ -89,7 +89,9 @@ def resolve(model: str | Model, fresh: bool = False) -> str | Model:
     """A model string → what Agent.run takes. A tier name (basic/medium/smart) is its model; `vercel:` gets its ModelSpec (host order,
     settings) and the key check; `jev` / `typesafe:` get their provider; anything else (or a
     Model) passes through. `fresh`: a gateway model with its own HTTP client, not the cached
-    one — the client is tied to the event loop that first used it (ocr.Model)."""
+    one — the client is tied to the event loop that first used it (ocr.Model).
+    Also the telemetry hook: every model call passes here, so opt-in tracing starts here."""
+    telemetry.setup()
     if not isinstance(model, str):
         return model
     if model in TIERS:  # `-m basic|medium|smart`

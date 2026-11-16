@@ -44,11 +44,10 @@ def _startup(
         None, "--version", "-V", callback=_version_callback, is_eager=True, help="show version and exit"
     ),
 ) -> None:
-    """Runs before every command: make config.toml [keys] available as env vars,
-    and instrument LLM telemetry if opted in ([telemetry] enabled — off by default)."""
+    """Runs before every command: make config.toml [keys] available as env vars."""
     import os
 
-    from . import config, telemetry
+    from . import config
 
     # pydantic-ai ≥2.51 prints an ASCII-art Logfire ad before the first agent run; stderr is
     # for notes an agent can act on, so ko opts out (a real env var still wins).
@@ -59,7 +58,6 @@ def _startup(
 
     logging.getLogger("google_genai.models").setLevel(logging.ERROR)
     config.load_keys_into_env()
-    telemetry.setup()
 
 
 # --- refs: reference-repo folder manager ---

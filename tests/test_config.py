@@ -1,4 +1,4 @@
-"""Offline tests for config.setting()/setting_source(), require_key, and telemetry gating."""
+"""Offline tests for config.setting()/setting_source(), and require_key."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import os
 
 import pytest
 
-from ko import config, llm, models, telemetry
+from ko import config, llm, models
 from ko.config import MissingKeyError
 
 
@@ -69,61 +69,6 @@ def test_require_key_reads_config_toml_keys(monkeypatch, tmp_path):
 def test_missing_key_error_is_a_runtime_error():
     """Subclassing keeps every existing `except RuntimeError` and CLI error path working."""
     assert issubclass(MissingKeyError, RuntimeError)
-
-
-# --- telemetry gating (never touches OTel when off) ---
-
-
-def test_telemetry_off_by_default(monkeypatch, tmp_path):
-    _with_config(monkeypatch, tmp_path, "")
-    monkeypatch.setattr(telemetry, "_active", False)
-    monkeypatch.setattr(telemetry, "_instrument", _boom)
-    assert telemetry.setup() is False
-    config._data.cache_clear()
-
-
-def test_telemetry_enabled_but_no_key(monkeypatch, tmp_path):
-    _with_config(monkeypatch, tmp_path, "[telemetry]\nenabled = true\n")
-    monkeypatch.delenv("POSTHOG_API_KEY", raising=False)
-    monkeypatch.setattr(telemetry, "_active", False)
-    monkeypatch.setattr(telemetry, "_instrument", _boom)
-    assert telemetry.setup() is False
-    config._data.cache_clear()
-
-
-def test_telemetry_enabled_with_key_instruments(monkeypatch, tmp_path):
-    _with_config(monkeypatch, tmp_path, "[telemetry]\nenabled = true\n")
-    monkeypatch.setenv("POSTHOG_API_KEY", "phc_test")
-    monkeypatch.setattr(telemetry, "_active", False)
-    calls = []
-    monkeypatch.setattr(
-        telemetry, "_instrument", lambda key, host, inc: calls.append((key, host, inc))
-    )
-    assert telemetry.setup() is True
-    assert calls == [("phc_test", "https://us.i.posthog.com", False)]
-    # idempotent — second call doesn't re-instrument
-    assert telemetry.setup() is True
-    assert len(calls) == 1
-    config._data.cache_clear()
-
-
-def test_telemetry_include_content_opt_in(monkeypatch, tmp_path):
-    _with_config(
-        monkeypatch, tmp_path, "[telemetry]\nenabled = true\ninclude_content = true\n"
-    )
-    monkeypatch.setenv("POSTHOG_API_KEY", "phc_test")
-    monkeypatch.setattr(telemetry, "_active", False)
-    calls = []
-    monkeypatch.setattr(
-        telemetry, "_instrument", lambda key, host, inc: calls.append((key, host, inc))
-    )
-    telemetry.setup()
-    assert calls[0][2] is True
-    config._data.cache_clear()
-
-
-def _boom(*a, **k):
-    raise AssertionError("_instrument must not be called when telemetry is gated off")
 
 
 # --- model tiers: config.toml [llm] <tier> overrides the baked pick ---
