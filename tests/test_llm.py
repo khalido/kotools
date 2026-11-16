@@ -577,3 +577,29 @@ def test_model_info_survives_hn_failure(monkeypatch):
     monkeypatch.setattr(models, "_hn_stories", down)
     i = models.info("y 1")
     assert i.id == "x/y" and i.threads == [] and i.unavailable == ["HN: algolia down"]
+
+
+def test_models_info_host_table_keeps_a_long_price_apart(monkeypatch):
+    # `0.035/0.14051.9 s`: a 12-char price used to run straight into the 1st-token column.
+    host = models.Host("tencent", 0.035, 0.1405, 1900.0, 180.0, None, 99.87)
+    info = models.ModelInfo("t/hy4", "Hy4", "2026-11-16", None, None, 0.035, 0.1405, None, [], "", "", [host], [], [])
+    monkeypatch.setattr(models, "info", lambda q, years=1: info)
+    r = runner.invoke(app, ["models", "info", "hy4"])
+    assert r.exit_code == 0
+    assert "0.035/0.1405  1.9 s" in r.stdout
+
+
+def test_models_info_empty_name_is_usage(monkeypatch):
+    monkeypatch.setattr(models, "info", lambda *a, **k: pytest.fail("looked up an empty name"))
+    r = runner.invoke(app, ["models", "info", "", "--json"])
+    assert r.exit_code == 2 and json.loads(r.stderr)["code"] == "usage"
+
+
+def test_models_info_compare_all_missed_errors_as_json(monkeypatch):
+    def miss(q, years=1, threads=3):
+        raise LookupError(f"no gateway model matches {q!r}")
+
+    monkeypatch.setattr(models, "_live_catalog", list)
+    monkeypatch.setattr(models, "info", miss)
+    r = runner.invoke(app, ["models", "info", "nope", "nada", "--json"])
+    assert r.exit_code == 1 and json.loads(r.stderr)["code"] == "not_found"

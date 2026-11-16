@@ -1513,6 +1513,9 @@ def pkg_info(
     """Latest version and date (and what the release-age floor picks), this repo's locked version, advisories, stars, last push, release notes."""
     from concurrent.futures import ThreadPoolExecutor
 
+    if not all(n.strip() for n in names):
+        _die("a package name can't be empty", as_json=as_json, code="usage")
+
     def one(q: str):
         try:
             return pkg_mod.info(q, notes=len(names) == 1)
@@ -1538,7 +1541,7 @@ def pkg_info(
         for line in lines:
             typer.echo(line)
     if not found:
-        _die(f"none of {len(names)} names is an npm or PyPI package", code="not_found")
+        _die(f"none of {len(names)} names is an npm or PyPI package", as_json=as_json, code="not_found")
 
 
 def _pkg_activity(p) -> str:

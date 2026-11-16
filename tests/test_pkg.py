@@ -151,3 +151,11 @@ def test_floor_is_hours_not_days_and_covers_unindexed_latest(fake_web, tmp_path,
     vs.pop(2)  # deps.dev hasn't indexed 2.0.0, and PyPI's JSON here carries no upload time
     [p] = pkg.info("pypi:demo")
     assert (p.released, p.floor_pick) == ("", "1.10.0")
+
+
+def test_cli_empty_name_is_usage_and_all_missed_errors_as_json(fake_web, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    r = runner.invoke(app, ["pkg", "info", "", "--json"])
+    assert r.exit_code == 2 and json.loads(r.stderr)["code"] == "usage"
+    r = runner.invoke(app, ["pkg", "info", "nope", "--json"])
+    assert r.exit_code == 1 and json.loads(r.stderr)["code"] == "not_found"
