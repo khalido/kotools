@@ -782,3 +782,27 @@ def test_public_only_saves_no_pdf(guarded, monkeypatch, tmp_path):
     monkeypatch.setattr(fetch, "_fetch", fake)
     fetch.fetch("https://a.example/report.pdf", save=True)
     assert seen["save"] is False
+
+
+def test_fetch_bare_host_goes_live_over_https(monkeypatch):
+    # `ko fetch example.com` used to fail live (no scheme) and come back as a Wayback snapshot.
+    seen = []
+
+    def fake_get(url, **kw):
+        seen.append(str(url))
+        if str(url).endswith(".md"):
+            return httpx.Response(404, request=httpx.Request("GET", url))
+        return httpx.Response(200, html=_page(""), request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(fetch.httpx, "get", fake_get)
+    monkeypatch.setattr(fetch, "_rescue", lambda *a, **k: pytest.fail("rescue ran for a live page"))
+    r = fetch.fetch("example.com/guide")
+    assert seen[0] == "https://example.com/guide" and r.source == "live"
+
+
+@pytest.mark.parametrize("url", ["notaurl", "ftp://example.com/x"])
+def test_fetch_non_web_url_is_usage_and_skips_paid_fallbacks(monkeypatch, url):
+    monkeypatch.setattr(fetch, "_rescue", lambda *a, **k: pytest.fail("sent a non-URL to archives/Exa"))
+    result = runner.invoke(app, ["fetch", url, "--json"])
+    assert result.exit_code == 2
+    assert json.loads(result.stdout)[0]["code"] == "usage"

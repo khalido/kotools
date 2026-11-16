@@ -116,6 +116,8 @@ _YT_RE = re.compile(
     r"(?:https?://)?(?:www\.)?"
     r"(?:youtube\.com/(?:watch|shorts|live|embed|v/)|youtu\.be/)"
 )
+# A schemeless web address (`example.com`, `news.ycombinator.com/item?id=1`): dotted host, letter TLD.
+_BARE_HOST_RE = re.compile(r"[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}(?::\d+)?(?:[/?#]|$)", re.IGNORECASE)
 # Reddit web hosts we rewrite to the mirror. NOT redd.it short links or /s/ share links:
 # both need a redirect resolve against reddit (which is exactly what fails), so they fall
 # through to the normal path instead.
@@ -760,6 +762,15 @@ def _fetch(
                 return Fetched(text=text, source="live", note=f"wikipedia extract ({lang})")
             # missing/empty extract (rare) — fall through, the generic path still works
 
+    # Only here, at the generic rung: schemeless YouTube links and DOIs with an OA copy route above.
+    if "://" not in url:  # as a person types it: `example.com/x`, or a DOI with no OA copy
+        if doi_m := _DOI_RE.match(url):
+            url = f"https://doi.org/{doi_m.group(1)}"
+        elif _BARE_HOST_RE.match(url):
+            url = f"https://{url}"
+    if httpx.URL(url).scheme not in ("http", "https"):
+        # Not a web address: no archive or paid fallback can find it either.
+        raise FetchError(f"{url}: not a web URL (want http(s)://… or a DOI)", "usage")
     try:
         # No `Accept: text/markdown` — we asked servers to content-negotiate markdown and
         # measured the result (2026-08-19): only 2 of 6 sites answer, and when they do it's

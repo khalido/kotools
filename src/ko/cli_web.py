@@ -1038,7 +1038,7 @@ def fetch_cmd(
     ),
     as_json: bool = typer.Option(
         False, "--json", help="array of {url, title, source, tokens, note, text}, or {url, error, code} per failed URL: "
-        "blocked, not_found, network, not_public, timeout or error"
+        "blocked, not_found, network, not_public, timeout, usage or error"
     ),
     fresh: bool = typer.Option(False, "--fresh", help="skip the local cache (default: reuse a fetch < 1 h old)"),
     public_only: bool = typer.Option(
