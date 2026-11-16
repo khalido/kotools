@@ -44,7 +44,7 @@ Output: a short ranked list of what to change and why, shown to KO as a diagram 
 
 **2026-10-28:** the six dogfood bugs are fixed (WORKLOG). `ko models info a b c` compares models in one table; new `ko pkg info <name>...` + `pkg_info` agent tool (WORKLOG 2026-10-28). Packages upgraded (pydantic-ai 2.61) and the ko tool env reinstalled.
 
-Next on this thread, in order: (1) `model_info` tool returns clipped comments + links; (2) `ko ai` instructions: Reddit via `exa_search(include_domains=['reddit.com'])`, reviews default to the last year; X search as a tool with a small limit; (3) code mode for `ko ai`/research, measured before and after; (4) per-model settings one at a time (terra reasoning effort, deepseek thinking off). Speed: `hn.top_comment` now walks Firebase (story → kids[0] → kids[0]) instead of Algolia's whole tree: the clear win is on big threads (1,134 comments: 1.97 → 1.29 s a call), and `ko models info opus` wall clock went ~3.0 → ~2.75 s (WORKLOG 2026-11-16).
+Next on this thread, in order: (1) `model_info` tool returns clipped comments + links; (2) `ko ai` instructions: Reddit via `exa_search(include_domains=['reddit.com'])`, reviews default to the last year; X search as a tool with a small limit; (3) code mode for `ko ai`/research, measured before and after; (4) per-model settings one at a time (terra reasoning effort, deepseek thinking off).
 
 ## Where things stand
 

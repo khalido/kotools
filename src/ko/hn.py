@@ -282,7 +282,8 @@ def _first_live(kids: list[int]) -> dict | None:
 
 def top_comment(story_id: str) -> tuple[Comment | None, Comment | None]:
     """HN's top-ranked comment on a story, and the top-ranked reply to it (either may be None).
-    Walks Firebase story → kids[0] → kids[0]: three small calls instead of Algolia's whole tree.
+    Walks Firebase story → first live kid → its first live kid: a few small calls (one more per
+    dead or deleted comment skipped) instead of Algolia's whole tree.
     If Firebase fails, Algolia's tree in oldest-first order, with a note on stderr."""
     import httpx2 as httpx
 
@@ -290,7 +291,7 @@ def top_comment(story_id: str) -> tuple[Comment | None, Comment | None]:
         story = _get(f"item/{story_id}.json", base=FIREBASE) or {}
         top = _first_live(story.get("kids") or [])
         reply = _first_live(top["kids"]) if top else None
-    except (RuntimeError, httpx.HTTPError) as e:
+    except (RuntimeError, httpx.HTTPError, ValueError, KeyError) as e:  # ValueError: a non-JSON body
         print(f"note: HN ranking unavailable ({e}); comments are oldest first", file=sys.stderr)
         top = next((c for c in _get(f"items/{story_id}").get("children") or [] if c.get("text")), None)
         reply = next((c for c in top.get("children") or [] if c.get("text")), None) if top else None

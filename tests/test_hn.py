@@ -260,3 +260,20 @@ def test_top_comment_falls_back_to_algolia_when_firebase_fails(monkeypatch, caps
     top, reply = hn.top_comment("1")
     assert (top.author, reply.author) == ("old", "r")
     assert "comments are oldest first" in capsys.readouterr().err
+
+
+def test_top_comment_falls_back_when_firebase_fails_partway(monkeypatch, capsys):
+    """The story call works, a later one returns junk (a proxy's HTML page): Algolia's answer, not a crash."""
+    tree = {"id": 1, "children": [{"id": 4, "author": "old", "text": "first", "children": []}]}
+
+    def fake_get(path, params=None, base=hn.ALGOLIA):
+        if base == hn.FIREBASE:
+            if path == "item/1.json":
+                return {"id": 1, "kids": [4]}
+            raise ValueError("Expecting value: line 1 column 1")
+        return tree
+
+    monkeypatch.setattr(hn, "_get", fake_get)
+    top, reply = hn.top_comment("1")
+    assert top.author == "old" and reply is None
+    assert "comments are oldest first" in capsys.readouterr().err
