@@ -16,6 +16,8 @@ Questions for the sweep:
 
 Output: a short ranked list of what to change and why, shown to KO as a diagram or HTML page before any big refactor. Then rewrite this handover clean around that plan (it has grown into a log; most dated entries below can go to WORKLOG).
 
+**2026-11-16: telemetry (issue #2) fails loud and hooks into `models.resolve()`** (branch `overnight/telemetry`, WORKLOG). Left for KO: set `POSTHOG_API_KEY`, `[telemetry] enabled = true`, run `ko llm "hi"` and `ko agent research`, and check the `$ai_generation` events and trace land in PostHog; then close #2.
+
 **2026-11-13: `ko flight` (OAG only)** for jaldi's flight card (`docs/flight.md`, WORKLOG). Next: a fallback once KO signs up for AeroDataBox (RapidAPI free Basic → `AERODATABOX_API_KEY`); the field mapping is already in `docs/flight.md`. Live test is opt-in (`KO_LIVE_TESTS=1`) to spare the 1,000-call quota.
 
 **2026-11-15: media + Exa work since the release** (WORKLOG, CHANGELOG [Unreleased]): Exa defaults (uncapped highlights, `lite`, cost note, agent `objective`), `ko book`, `ko tv -r`, `ko movie` (+ `--now`), richer TMDB cards, `[tmdb] my_providers`. Next for KO: OMDb scores (needs a free `OMDB_API_KEY`), and set `my_providers` in config.toml. Sydney session times are parked (WORKLOG).

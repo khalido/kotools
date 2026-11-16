@@ -20,6 +20,7 @@ Cut a release with the repo's `/release` skill.
 - `ko book` shows the book's description and subjects from Open Library. `ko ai` and `ko agent tv` gain critics' reviews, what's in cinemas, and books.
 
 ### Changed
+- Telemetry (`[telemetry] enabled = true`) fails loud: without `POSTHOG_API_KEY` the first LLM call stops with a clean error instead of skipping silently. Tracing now starts at the first model call, so commands that never call a model never load OpenTelemetry. `ko doctor` shows the key source and whether content is sent; image and video parts are never exported.
 - `ko exa search` shows each hit's highlights by default, sized by Exa with no cap (`--summary` for a blurb, about $0.001 a result extra); `--type lite` costs about half; each search and `ko exa get` prints its cost on stderr. The agents' `exa_search` asks for an `objective`, as Exa recommends.
 
 ## [2026.11.13] - 2026-11-13

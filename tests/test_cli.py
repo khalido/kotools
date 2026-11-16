@@ -347,7 +347,7 @@ def test_startup_skips_heavy_imports():
     import sys
 
     heavy = ["httpx2", "requests", "httplib2", "arxiv", "googleapiclient.discovery",
-             "google.auth.transport.requests", "google_auth_oauthlib", "pydantic_ai"]
+             "google.auth.transport.requests", "google_auth_oauthlib", "pydantic_ai", "opentelemetry"]
     code = f"import sys, ko.cli; print(' '.join(m for m in {heavy!r} if m in sys.modules))"
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
     assert out.stdout.strip() == ""

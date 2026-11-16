@@ -89,8 +89,9 @@ def _telemetry_status() -> Status:
 
     if not telemetry.enabled():
         return ("– off (default)", "yellow")
-    if config.key_source("POSTHOG_API_KEY"):
-        return ("✓ on", "green")
+    if source := config.key_source(telemetry.KEY):
+        content = "with content" if telemetry.include_content() else "metadata only"
+        return (f"✓ on, {content} (key: {source})", "green")
     return ("✗ enabled but no POSTHOG_API_KEY", "red")
 
 
