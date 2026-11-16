@@ -27,6 +27,12 @@ Cut a release with the repo's `/release` skill.
 - `ko llm` and `ko decide` say on stderr when stdin is an open pipe with nothing in it, instead of waiting silently.
 - `ko exa search` shows each hit's highlights by default, sized by Exa with no cap (`--summary` for a blurb, about $0.001 a result extra); `--type lite` costs about half; each search and `ko exa get` prints its cost on stderr. The agents' `exa_search` asks for an `objective`, as Exa recommends.
 
+### Fixed
+
+- `-m basic|medium|smart` works wherever `-m` does; it was passed through as a model name.
+- A closed stdout (`ko gmail … | head`) is no longer reported as a Google network error.
+- `ko models info` lists an HN outage under unavailable instead of crashing.
+
 ## [2026.11.13] - 2026-11-13
 
 A flight lookup, inline images in Gmail drafts, a faster start, and clearer errors.

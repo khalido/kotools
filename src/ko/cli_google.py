@@ -56,6 +56,8 @@ def _google_errors(as_json: bool = False):
         _die(str(e), as_json=as_json)
     except HttpError as e:
         _die(_http_error_msg(e), as_json=as_json)
+    except BrokenPipeError:  # stdout closed (`| head`): a ConnectionError, but not Google's
+        raise
     except google_auth.NETWORK_ERRORS as e:
         _die(f"network error talking to Google: {e}", as_json=as_json, code="network")
 

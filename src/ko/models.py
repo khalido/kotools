@@ -86,12 +86,14 @@ _OPENROUTER_SYSTEMONE = "https://openrouter.ai/api"  # OpenRouter's /v1/systemon
 
 
 def resolve(model: str | Model, fresh: bool = False) -> str | Model:
-    """A model string → what Agent.run takes. `vercel:` gets its ModelSpec (host order,
+    """A model string → what Agent.run takes. A tier name (basic/medium/smart) is its model; `vercel:` gets its ModelSpec (host order,
     settings) and the key check; `jev` / `typesafe:` get their provider; anything else (or a
     Model) passes through. `fresh`: a gateway model with its own HTTP client, not the cached
     one — the client is tied to the event loop that first used it (ocr.Model)."""
     if not isinstance(model, str):
         return model
+    if model in TIERS:  # `-m basic|medium|smart`
+        model = model_for(model)
     if model.startswith("vercel:"):
         build = _gateway_model.__wrapped__ if fresh else _gateway_model
         return build(model.removeprefix("vercel:"))
@@ -431,7 +433,7 @@ def info(query: str, years: int = 1, threads: int = 3) -> ModelInfo:
         try:
             found = stories.result()
             tops = list(pool.map(lambda s: hn.top_comment(s.id) if s.num_comments else (None, None), found))
-        except (httpx.HTTPError, KeyError, ValueError) as e:
+        except (httpx.HTTPError, KeyError, ValueError, RuntimeError) as e:  # hn._get: a status error is RuntimeError
             found, tops = [], []
             unavailable.append(f"HN: {e}")
         try:

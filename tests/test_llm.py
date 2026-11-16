@@ -731,3 +731,37 @@ def test_idle_stdin_pipe_gets_a_note_then_is_still_read(monkeypatch, capsys):
     cli_ai._note_if_stdin_idle(wait=0.1)
     assert "waiting for stdin" in capsys.readouterr().err
     assert cli_ai.sys.stdin.read() == "late text"  # a slow producer's text is never dropped
+
+
+def test_resolve_takes_a_tier_name(monkeypatch):
+    monkeypatch.setattr(models, "_gateway_model", lambda name: f"built:{name}")
+    monkeypatch.setattr(models, "model_for", lambda tier: f"vercel:x/{tier}-model")
+    assert models.resolve("smart") == "built:x/smart-model"
+    assert models.resolve("openai:gpt-x") == "openai:gpt-x"  # anything else passes through
+
+
+def test_models_info_survives_an_hn_status_error(monkeypatch):
+    """hn._get turns a 503 into RuntimeError: that's an `unavailable` note, not a crash."""
+    import httpx2 as httpx
+
+    from ko import hn
+
+    m = {"id": "x/y", "name": "Y 1", "released": 1, "type": "language", "pricing": {}}
+    monkeypatch.setattr(models, "_live_catalog", lambda: [m])
+
+    class R:
+        def raise_for_status(self):
+            return self
+
+        def json(self):
+            return {"data": {"endpoints": []}}
+
+    monkeypatch.setattr(httpx, "get", lambda *a, **k: R())
+    monkeypatch.setattr(models, "_hn_stories", lambda *a: [hn.Story("9", "t", None, 1, 3, None)])
+
+    def down(story_id):
+        raise RuntimeError("HN API error 503")
+
+    monkeypatch.setattr(hn, "top_comment", down)
+    i = models.info("y 1")
+    assert i.threads == [] and i.unavailable == ["HN: HN API error 503"]

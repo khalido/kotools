@@ -462,3 +462,11 @@ def test_json_errors_carry_the_fix(monkeypatch, tmp_path):
     }
     r = CliRunner().invoke(app, ["cal", "-a", "sfll"])  # text: the fix rides along in prose
     assert "— run `ko google auth sfll`" in r.stderr
+
+
+def test_google_error_net_lets_a_closed_stdout_through():
+    """`ko gmail … | head`: a BrokenPipeError is a ConnectionError, but not a Google network error."""
+    from ko.cli_google import _google_errors
+
+    with pytest.raises(BrokenPipeError), _google_errors():
+        raise BrokenPipeError(32, "Broken pipe")
