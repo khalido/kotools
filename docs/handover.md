@@ -28,9 +28,9 @@ Output: a short ranked list of what to change and why, shown to KO as a diagram 
 
 **2026-11-12: `ko gmail draft --md` embeds local images inline** (WORKLOG). Test draft `r-39674769328854445` ("ko inline image test (delete me)", account kd) is waiting for KO to open in Gmail and delete. everx's requests are built (2026-11-15): `draft update` keeps attachments, `draft delete --yes` removes a draft, so the test draft and everx's "OLD, delete: …" drafts can go that way.
 
-**2026-11-10: front matter skips, never stops.** One parser, `frontmatter.split`, for `ko pdf`, `ko publish` and `ko prompt`. A block that doesn't parse is dropped with a stderr note naming the file and line, and the content still comes back (KO: an opinionated tool should get the job done). The short-lived `--skip-bad-front-matter` flag is gone. Candidate: `fetch._text_title` could now use `split(..., warn=False)` too.
+**2026-11-10: front matter skips, never stops.** One parser, `frontmatter.split`, for `ko pdf`, `ko publish` and `ko prompt`. A block that doesn't parse is dropped with a stderr note naming the file and line, and the content still comes back (KO: an opinionated tool should get the job done). The short-lived `--skip-bad-front-matter` flag is gone. `fetch._text_title` stays on its own loose regex: `split` would lose titles from other people's messy front matter (WORKLOG 2026-11-16).
 
-**2026-11-09: code-smell pass, on main** (WORKLOG has what was fixed, what was left and why). New shared helpers: `_die_from`, `_emit_json`, `dirs.write_atomic`; CLAUDE.md's "Adding a subcommand" says when to use them. Left for a later pass: ~15 Google `except` blocks made redundant by `_GoogleTyper`.
+**2026-11-09: code-smell pass, on main** (WORKLOG has what was fixed, what was left and why). New shared helpers: `_die_from`, `_emit_json`, `dirs.write_atomic`; CLAUDE.md's "Adding a subcommand" says when to use them. The Google `except` blocks made redundant by `_GoogleTyper` went 2026-11-16 (WORKLOG); a Google command needs no `try` for Google errors.
 
 **2026-11-07: v2026.11.7 is the first PyPI release since July.** `ko judge` is now `ko decide` (alias kept). Chota replaces yaad, and `ko` stays the toolbox. Next: install on the Pi5 (needs `uv`), then Chota swaps `fetchPage` for `ko fetch` on X links. `ko decide --each` shipped 2026-11-15; yes/no on Jev batches 20 rows a request since 2026-11-16. OpenRouter serves `ko decide` and is nearly empty ($0.03); pydantic-ai can't reach Jev on the gateway, so moving it waits on them. The re-check and the one-provider gaps are in `docs/ideas.md`.
 
@@ -44,7 +44,7 @@ Output: a short ranked list of what to change and why, shown to KO as a diagram 
 
 **2026-10-28:** the six dogfood bugs are fixed (WORKLOG). `ko models info a b c` compares models in one table; new `ko pkg info <name>...` + `pkg_info` agent tool (WORKLOG 2026-10-28). Packages upgraded (pydantic-ai 2.61) and the ko tool env reinstalled.
 
-Next on this thread, in order: (1) `model_info` tool returns clipped comments + links; (2) `ko ai` instructions: Reddit via `exa_search(include_domains=['reddit.com'])`, reviews default to the last year; X search as a tool with a small limit; (3) code mode for `ko ai`/research, measured before and after; (4) per-model settings one at a time (terra reasoning effort, deepseek thinking off). Speed: `hn.top_comment` pulls the whole Algolia tree for one comment + reply; a Firebase chain (kids[0] → item → kids[0]) would be a few small calls, and is the slow part of `ko models info`.
+Next on this thread, in order: (1) `model_info` tool returns clipped comments + links; (2) `ko ai` instructions: Reddit via `exa_search(include_domains=['reddit.com'])`, reviews default to the last year; X search as a tool with a small limit; (3) code mode for `ko ai`/research, measured before and after; (4) per-model settings one at a time (terra reasoning effort, deepseek thinking off).
 
 ## Where things stand
 

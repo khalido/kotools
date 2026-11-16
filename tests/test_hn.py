@@ -217,3 +217,63 @@ def test_item_takes_a_pasted_url(monkeypatch):
     monkeypatch.setattr(hn, "_tree", fake_tree)
     hn.item("https://news.ycombinator.com/item?id=50195959")
     assert asked == ["50195959"]
+
+
+_FB = {
+    "1": {"id": 1, "kids": [10, 11, 12]},
+    "10": {"id": 10, "deleted": True},  # HN's top slot, deleted: skipped
+    "11": {"id": 11, "by": "dead1", "text": "flagged", "dead": True},  # Firebase keeps dead text
+    "12": {"id": 12, "by": "ann", "text": "top <i>one</i>", "kids": [20, 21]},
+    "20": {"id": 20, "by": "bob", "text": "reply"},
+}
+
+
+def _fb_get(path, params=None, base=hn.ALGOLIA):
+    assert base == hn.FIREBASE, "no Algolia call when Firebase answers"
+    return _FB.get(path.removeprefix("item/").removesuffix(".json"))
+
+
+def test_top_comment_walks_firebase_in_rank_order(monkeypatch):
+    monkeypatch.setattr(hn, "_get", _fb_get)
+    top, reply = hn.top_comment("1")
+    assert (top.author, top.text, top.depth, top.url) == ("ann", "top one", 0, "https://news.ycombinator.com/item?id=12")
+    assert (reply.author, reply.text, reply.depth, reply.id) == ("bob", "reply", 1, "20")
+
+
+def test_top_comment_none_when_no_live_comment(monkeypatch):
+    monkeypatch.setattr(hn, "_get", _fb_get)
+    assert hn.top_comment("10") == (None, None)  # no kids
+    monkeypatch.setitem(_FB, "2", {"id": 2, "kids": [10, 11]})
+    assert hn.top_comment("2") == (None, None)  # only deleted and dead ones
+
+
+def test_top_comment_falls_back_to_algolia_when_firebase_fails(monkeypatch, capsys):
+    tree = {"id": 1, "children": [{"id": 5}, {"id": 4, "author": "old", "text": "first",
+                                               "children": [{"id": 6, "author": "r", "text": "re"}]}]}
+
+    def fake_get(path, params=None, base=hn.ALGOLIA):
+        if base == hn.FIREBASE:
+            raise RuntimeError("HN API error 503")
+        return tree
+
+    monkeypatch.setattr(hn, "_get", fake_get)
+    top, reply = hn.top_comment("1")
+    assert (top.author, reply.author) == ("old", "r")
+    assert "comments are oldest first" in capsys.readouterr().err
+
+
+def test_top_comment_falls_back_when_firebase_fails_partway(monkeypatch, capsys):
+    """The story call works, a later one returns junk (a proxy's HTML page): Algolia's answer, not a crash."""
+    tree = {"id": 1, "children": [{"id": 4, "author": "old", "text": "first", "children": []}]}
+
+    def fake_get(path, params=None, base=hn.ALGOLIA):
+        if base == hn.FIREBASE:
+            if path == "item/1.json":
+                return {"id": 1, "kids": [4]}
+            raise ValueError("Expecting value: line 1 column 1")
+        return tree
+
+    monkeypatch.setattr(hn, "_get", fake_get)
+    top, reply = hn.top_comment("1")
+    assert top.author == "old" and reply is None
+    assert "comments are oldest first" in capsys.readouterr().err

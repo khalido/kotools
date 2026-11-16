@@ -10,7 +10,8 @@ Four primitives matching how I actually read HN:
 - `item` — one story + its comment tree as readable text
 
 Algolia beats RSS and Firebase here: points + comment counts + date filters + whole comment
-trees in one JSON call (Firebase is one request per item, and has no search).
+trees in one JSON call (Firebase is one request per item, and has no search). The exception is
+`top_comment`: one comment + one reply is three small Firebase calls, faster than a whole tree.
 """
 
 from __future__ import annotations
@@ -269,12 +270,33 @@ def _comment(d: dict, depth: int) -> Comment:
     )
 
 
+def _first_live(kids: list[int]) -> dict | None:
+    """The first Firebase reply in `kids` (HN's rank order) that still has text, in Algolia's
+    field names so `_comment` reads it. Dead and deleted comments are skipped."""
+    for k in kids:
+        d = _get(f"item/{k}.json", base=FIREBASE) or {}
+        if d.get("text") and not d.get("dead") and not d.get("deleted"):
+            return {"id": d["id"], "author": d.get("by"), "text": d["text"], "kids": d.get("kids") or []}
+    return None
+
+
 def top_comment(story_id: str) -> tuple[Comment | None, Comment | None]:
-    """HN's top-ranked comment on a story, and the top-ranked reply to it (either may be None)."""
-    top = next((c for c in _tree(story_id)["children"] if c.get("text")), None)
+    """HN's top-ranked comment on a story, and the top-ranked reply to it (either may be None).
+    Walks Firebase story → first live kid → its first live kid: a few small calls (one more per
+    dead or deleted comment skipped) instead of Algolia's whole tree.
+    If Firebase fails, Algolia's tree in oldest-first order, with a note on stderr."""
+    import httpx2 as httpx
+
+    try:
+        story = _get(f"item/{story_id}.json", base=FIREBASE) or {}
+        top = _first_live(story.get("kids") or [])
+        reply = _first_live(top["kids"]) if top else None
+    except (RuntimeError, httpx.HTTPError, ValueError, KeyError) as e:  # ValueError: a non-JSON body
+        print(f"note: HN ranking unavailable ({e}); comments are oldest first", file=sys.stderr)
+        top = next((c for c in _get(f"items/{story_id}").get("children") or [] if c.get("text")), None)
+        reply = next((c for c in top.get("children") or [] if c.get("text")), None) if top else None
     if top is None:
         return None, None
-    reply = next((c for c in _ranked(top.get("children") or [], _kids(top["id"])) if c.get("text")), None)
     return _comment(top, 0), _comment(reply, 1) if reply else None
 
 
