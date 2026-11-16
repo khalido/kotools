@@ -571,7 +571,7 @@ def _model_info_lines(i, years: int, *, links: bool) -> list[str]:
     if i.note:
         out.append(f"ko: {i.note}")
     prices = [_num(h.price_in) + "/" + _num(h.price_out) for h in i.hosts]
-    w = max([len("$in/$out"), *map(len, prices)]) + 2  # a long price never runs into the next column
+    w = max([12, *(len(p) + 2 for p in prices)])  # a long price never runs into the next column
     out += ["", f"{'host':<18}{'$in/$out':<{w}}{'1st token':<11}{'tok/s':<7}{'quant':<7}uptime 1d"]
     for h, price in zip(i.hosts, prices, strict=True):
         first = "–" if h.latency_ms is None else f"{h.latency_ms / 1000:.1f} s"

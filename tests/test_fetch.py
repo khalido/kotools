@@ -806,3 +806,18 @@ def test_fetch_non_web_url_is_usage_and_skips_paid_fallbacks(monkeypatch, url):
     result = runner.invoke(app, ["fetch", url, "--json"])
     assert result.exit_code == 2
     assert json.loads(result.stdout)[0]["code"] == "usage"
+
+
+def test_fetch_bare_doi_without_oa_copy_goes_to_doi_org(monkeypatch):
+    from ko import papers
+
+    seen = []
+
+    def fake_get(url, **kw):
+        seen.append(str(url))
+        return httpx.Response(200, html=_page(""), request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(papers, "oa_url", lambda doi: "")
+    monkeypatch.setattr(fetch.httpx, "get", fake_get)
+    fetch.fetch("10.1234/abc")
+    assert seen[0] == "https://doi.org/10.1234/abc"
