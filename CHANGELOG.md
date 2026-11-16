@@ -24,6 +24,7 @@ Cut a release with the repo's `/release` skill.
 ### Changed
 - `ko gmail draft update` keeps the draft's attachments (it used to refuse, or drop them with `--force`); `--attach` adds files, `--drop-attachments` removes the old ones. Images shown inline by the old body are dropped and listed.
 - `ko decide -f` reads `.json` files.
+- `ko llm` and `ko decide` say on stderr when stdin is an open pipe with nothing in it, instead of waiting silently.
 - `ko exa search` shows each hit's highlights by default, sized by Exa with no cap (`--summary` for a blurb, about $0.001 a result extra); `--type lite` costs about half; each search and `ko exa get` prints its cost on stderr. The agents' `exa_search` asks for an `objective`, as Exa recommends.
 
 ## [2026.11.13] - 2026-11-13

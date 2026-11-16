@@ -883,4 +883,17 @@ Checked against PostHog's logging best practices (https://posthog.com/docs/logs/
 - Live-checked on kd: a draft with a PDF, updated with `--md` and `--attach`, kept both; `draft delete` refused without a TTY, deleted with `--yes`.
 - **`draft delete`** skips Trash (drafts.delete). The gate is `yes=True` in `gmail.delete_draft`; the CLI shows to/subject/attachments, confirms on a TTY, needs `--yes` otherwise.
 - **`decide --each`**: explicit flag, not array detection (a question can be about the whole blob). One event loop, 8 calls in flight (asyncio.gather + Semaphore, `agent.run`). Threads came first and broke on gateway models: the cached gateway client's asyncio objects are bound to the loop that first used it (models.py), so 2 of 25 rows failed "bound to a different event loop"; Jev, on OpenRouter, hid it. Now 25 rows: Jev 2.6 s, gpt-6-luna 7 s, no errors. Each row is its compact JSON. A row that fails comes back as its error (Jev's ~1-in-3 "temporarily unavailable" days, per everx); a missing key or bad model raises once (`infer_model` up front — `-m basic` used to fail on every row). Text output is answer cells then a label (title/subject/name/id/url). `{row, decision}` JSON keeps one shape whether rows are objects or strings. 200-row `--yes` gate. `.json` joined the `-f` text suffixes; `ko decide -f rows.json` failed with "unsupported file format" before.
-- Seen while testing, not fixed: `_inputs` reads stdin whenever it isn't a TTY, so `ko llm/decide -f x` from a shell whose stdin is an open pipe with no writer waits forever. Agent shells hit it.
+
+## 2026-11-16 — Batching decide rows into one Jev request: works up to ~20 rows
+
+TypeSafe's API takes any number of named questions over one `state`, and pydantic-ai's DecisionModel makes each output field one question. So `{"items": rows}` as state with fields `row_i` = "About `items[i]`: <question>" judges every row in one request. Measured against `--each` (one call per row) on Jev 1.14, HN front-page titles:
+
+| Rows per request | Question | Rows | Flips on clear-cut rows (per-row p ≤ 0.3 or ≥ 0.7) | Input tokens, batch vs per-row |
+|---|---|---|---|---|
+| 60 | "about a security breach?" | 60 | 10 of 58: Uber breach 0.49, Coles incident 0.37, a rocket failure 0.55 | 5.5k vs 20.5k |
+| 20 | same | 3 × 20 | 0 of 58 | ~2.0k vs ~6.9k each |
+| 25 | "about software or AI?" (easy) | 25 | 0 of 25 | 1.5k vs 7.7k |
+
+Past ~20 rows the batched answers drift towards 0.5 and the clear-cut ones flip. At 20 they match per-row and cost about a quarter (Jev's ~300-token per-call overhead is paid once), in one round trip (0.6 s). "Would an AI engineer read this?" was mostly borderline both ways, so it told us little. Not built yet: `--each` still makes one call per row.
+
+`ko llm`/`ko decide` stdin: couldn't reproduce the 2026-11-15 hang in the agent shell (stdin there is /dev/null). It's real for a pipe that stays open with nothing in it (`sleep 30 | ko decide x -f f`). Skipping stdin would drop a slow producer's text, so after a second of nothing ko notes on stderr how to close it, then keeps waiting.

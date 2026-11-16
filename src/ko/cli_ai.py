@@ -229,8 +229,22 @@ def _inputs(files: list[str] | None) -> tuple[str | None, list]:
         typer.echo(f"[{label} · ~{len(text) // 4:,} tokens]", err=True)
         parts.append(text)
     if not sys.stdin.isatty():
+        _note_if_stdin_idle()
         parts.append(sys.stdin.read())
     return "\n\n".join(p for p in parts if p.strip()) or None, attachments
+
+
+def _note_if_stdin_idle(wait: float = 1.0) -> None:
+    """A pipe that stays open with nothing in it (some agent shells hand one over) would block
+    the read forever, silently. Skipping it would drop a slow producer's text, so say so instead."""
+    import select
+
+    try:
+        ready = select.select([sys.stdin], [], [], wait)[0]
+    except (OSError, ValueError):  # not selectable (e.g. a test's StringIO): just read
+        return
+    if not ready:
+        typer.echo("[waiting for stdin: pipe text in, or add </dev/null if there's none]", err=True)
 
 
 EACH_LIMIT = 200  # rows before --each wants --yes: a big array is a big bill, by accident

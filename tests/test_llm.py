@@ -643,3 +643,24 @@ def test_cli_decide_notes_a_piped_array_judged_whole(monkeypatch):
     monkeypatch.setattr(llm, "last_cost", llm.RunCost("jev-test", 1, 1))
     r = runner.invoke(app, ["decide", "q"], input="[1, 2, 3]")
     assert r.exit_code == 0 and "--each judges each row" in r.stderr
+
+
+def test_idle_stdin_pipe_gets_a_note_then_is_still_read(monkeypatch, capsys):
+    import os
+    import threading
+    import time
+
+    from ko import cli_ai
+
+    r, w = os.pipe()
+    monkeypatch.setattr(cli_ai.sys, "stdin", os.fdopen(r))
+
+    def late_writer():
+        time.sleep(0.3)
+        os.write(w, b"late text")
+        os.close(w)
+
+    threading.Thread(target=late_writer).start()
+    cli_ai._note_if_stdin_idle(wait=0.1)
+    assert "waiting for stdin" in capsys.readouterr().err
+    assert cli_ai.sys.stdin.read() == "late text"  # a slow producer's text is never dropped
