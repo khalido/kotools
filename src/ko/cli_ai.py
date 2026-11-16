@@ -549,6 +549,8 @@ def models_info(
     as_json: bool = typer.Option(False, "--json", help="one name: an object; several: an array, {query, error, code} for a miss"),
 ) -> None:
     """The newest gateway model matching a name: price, context, each host's speed, and the top HN threads with their best comment. No LLM, no key."""
+    if not all(q.strip() for q in queries):  # '' matches every model: the newest, whatever it is
+        _die("a model name can't be empty", as_json=as_json, code="usage")
     if len(queries) > 1:
         _models_compare(queries, years, as_json)
         return
@@ -601,7 +603,7 @@ def _models_compare(queries: list[str], years: int, as_json: bool) -> None:
         for line in _model_compare_lines(found, years, links=sys.stdout.isatty()):
             typer.echo(line)
     if not found:
-        _die(f"none of {len(queries)} names matched a gateway model", code="not_found")
+        _die(f"none of {len(queries)} names matched a gateway model", as_json=as_json, code="not_found")
 
 
 def _num(v, unit: str = "") -> str:
@@ -659,12 +661,14 @@ def _model_info_lines(i, years: int, *, links: bool) -> list[str]:
         out.append(", ".join(i.tags))
     if i.note:
         out.append(f"ko: {i.note}")
-    out += ["", f"{'host':<18}{'$in/$out':<12}{'1st token':<11}{'tok/s':<7}{'quant':<7}uptime 1d"]
-    for h in i.hosts:
+    prices = [_num(h.price_in) + "/" + _num(h.price_out) for h in i.hosts]
+    w = max([12, *(len(p) + 2 for p in prices)])  # a long price never runs into the next column
+    out += ["", f"{'host':<18}{'$in/$out':<{w}}{'1st token':<11}{'tok/s':<7}{'quant':<7}uptime 1d"]
+    for h, price in zip(i.hosts, prices, strict=True):
         first = "–" if h.latency_ms is None else f"{h.latency_ms / 1000:.1f} s"
         uptime = "–" if h.uptime_1d is None else f"{h.uptime_1d:.2f}%"
         out.append(
-            f"{h.name:<18}{_num(h.price_in) + '/' + _num(h.price_out):<12}{first:<11}"
+            f"{h.name:<18}{price:<{w}}{first:<11}"
             f"{_num(h.tok_s and round(h.tok_s)):<7}{h.quantization or '–':<7}{uptime}"
         )
     if i.others:
