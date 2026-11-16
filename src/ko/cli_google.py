@@ -307,15 +307,6 @@ def google_rename(
 _SHEET_HELP = "Google Sheet ID, URL, or a learned name (`ko gsheets alias` lists them)"
 
 
-def _resolve_sid(ref: str, as_json: bool = False) -> str:
-    """A sheet id / URL / learned name -> spreadsheet id, dying cleanly (not with a traceback) on
-    an unknown or ambiguous name."""
-    try:
-        return gsheets_mod.resolve_sheet(ref)
-    except gsheets_mod.SheetsError as e:
-        _die(str(e), as_json=as_json)
-
-
 def _emit_rows(rows: list[list], as_json: bool) -> None:
     if as_json:
         typer.echo(json.dumps(rows, default=str))
@@ -365,7 +356,7 @@ def gsheets_info(
     ),
 ) -> None:
     """Show a sheet's title and tab names."""
-    info = gsheets_mod.get_info(_resolve_sid(spreadsheet_id, as_json))
+    info = gsheets_mod.get_info(gsheets_mod.resolve_sheet(spreadsheet_id))
     if as_json:
         _emit_json(info)
         return
@@ -380,7 +371,7 @@ def gsheets_tabs(
     as_json: bool = typer.Option(False, "--json", help="emit a JSON array of tab names"),
 ) -> None:
     """List tab names, one per line (machine-friendly)."""
-    info = gsheets_mod.get_info(_resolve_sid(spreadsheet_id, as_json))
+    info = gsheets_mod.get_info(gsheets_mod.resolve_sheet(spreadsheet_id))
     if as_json:
         typer.echo(json.dumps(info.tabs))
         return
@@ -413,7 +404,7 @@ def gsheets_get(
         typer.echo("--raw and --formula are mutually exclusive", err=True)
         raise typer.Exit(2)
     render = "UNFORMATTED_VALUE" if raw else "FORMULA" if formula else "FORMATTED_VALUE"
-    sid = _resolve_sid(spreadsheet_id, as_json)
+    sid = gsheets_mod.resolve_sheet(spreadsheet_id)
     if range_name is None:  # no range -> the first tab's used range (one metadata call)
         api_range = gsheets_mod.quote_tab(gsheets_mod.first_tab(sid))
     elif "!" in range_name:  # a full 'Tab!A1:Z9' — the caller owns any quoting
@@ -442,16 +433,14 @@ def gsheets_set(
     anchor = range_name.split(":")[0]
     try:
         n = gsheets_mod.write_values(
-            _resolve_sid(spreadsheet_id),
+            gsheets_mod.resolve_sheet(spreadsheet_id),
             anchor,
             _parse_cells(text),
             raw=raw,
             overwrite=overwrite,
         )
-    except (gsheets_mod.SheetsError, ValueError, json.JSONDecodeError) as e:
+    except ValueError as e:  # incl. json.JSONDecodeError
         _die(str(e))
-    except HttpError as e:
-        _die(_http_error_msg(e))
     typer.echo(f"{n} cell(s) updated", err=True)
 
 
@@ -476,12 +465,10 @@ def gsheets_put(
             raise ValueError('`put` expects a JSON object: {"anchor": value, ...}')  # noqa: TRY004 — user input, caught with the JSON errors
         data = [(anchor, _norm_block(val)) for anchor, val in obj.items()]
         n = gsheets_mod.write_ranges(
-            _resolve_sid(spreadsheet_id), data, raw=raw, overwrite=overwrite
+            gsheets_mod.resolve_sheet(spreadsheet_id), data, raw=raw, overwrite=overwrite
         )
-    except (gsheets_mod.SheetsError, ValueError, json.JSONDecodeError) as e:
+    except ValueError as e:  # incl. json.JSONDecodeError
         _die(str(e))
-    except HttpError as e:
-        _die(_http_error_msg(e))
     typer.echo(f"{n} cell(s) updated", err=True)
 
 
@@ -496,14 +483,9 @@ def gsheets_find(
     as_json: bool = typer.Option(False, "--json", help="emit JSON array of {tab, ref, cell}"),
 ) -> None:
     """Search every cell of every tab. TSV: tab, A1 ref, cell."""
-    try:
-        hits = gsheets_mod.find_cells(
-            _resolve_sid(spreadsheet_id, as_json), text, formula=formula, tabs=tab or None
-        )
-    except gsheets_mod.SheetsError as e:
-        _die(str(e), as_json=as_json)
-    except HttpError as e:
-        _die(_http_error_msg(e), as_json=as_json)
+    hits = gsheets_mod.find_cells(
+        gsheets_mod.resolve_sheet(spreadsheet_id), text, formula=formula, tabs=tab or None
+    )
     if not hits:
         _no_results("no matches", as_json)
     if as_json:
@@ -566,16 +548,14 @@ def gsheets_header(
     """Format a row as a header: bold + fill, optionally frozen."""
     try:
         gsheets_mod.format_header(
-            _resolve_sid(spreadsheet_id),
+            gsheets_mod.resolve_sheet(spreadsheet_id),
             range_name,
             bold=not no_bold,
             bg=None if no_fill else gsheets_mod.DEFAULT_HEADER_BG,
             freeze=freeze,
         )
-    except (gsheets_mod.SheetsError, ValueError) as e:
+    except ValueError as e:
         _die(str(e))
-    except HttpError as e:
-        _die(_http_error_msg(e))
     typer.echo("header formatted", err=True)
 
 
@@ -585,12 +565,7 @@ def gsheets_add_tab(
     title: str = typer.Argument(..., help="new tab name"),
 ) -> None:
     """Add a tab; prints its sheetId (gid)."""
-    try:
-        gid = gsheets_mod.add_tab(_resolve_sid(spreadsheet_id), title)
-    except gsheets_mod.SheetsError as e:
-        _die(str(e))
-    except HttpError as e:
-        _die(_http_error_msg(e))
+    gid = gsheets_mod.add_tab(gsheets_mod.resolve_sheet(spreadsheet_id), title)
     typer.echo(str(gid))
 
 
@@ -605,12 +580,7 @@ def gsheets_dup_tab(
     """Duplicate a tab — formatting, formulas and all — right after the source; prints the new gid.
 
     The invoice move: dup last month's tab, then `set`/`replace` the values."""
-    try:
-        gid = gsheets_mod.duplicate_tab(_resolve_sid(spreadsheet_id), source, new_name)
-    except gsheets_mod.SheetsError as e:
-        _die(str(e))
-    except HttpError as e:
-        _die(_http_error_msg(e))
+    gid = gsheets_mod.duplicate_tab(gsheets_mod.resolve_sheet(spreadsheet_id), source, new_name)
     typer.echo(f"duplicated {source!r} -> {new_name or f'Copy of {source}'!r}", err=True)
     typer.echo(str(gid))
 
@@ -624,13 +594,8 @@ def gsheets_delete_tab(
     ),
 ) -> None:
     """Delete a tab by name. Destructive — checks the tab exists, then confirms first."""
-    sid = _resolve_sid(spreadsheet_id)
-    try:
-        info = gsheets_mod.get_info(sid)
-    except gsheets_mod.SheetsError as e:
-        _die(str(e))
-    except HttpError as e:
-        _die(_http_error_msg(e))
+    sid = gsheets_mod.resolve_sheet(spreadsheet_id)
+    info = gsheets_mod.get_info(sid)
     if title not in info.tabs:
         _die(f"no tab named {title!r} in {info.title!r} — tabs: {', '.join(info.tabs)}")
     if not yes:
@@ -639,12 +604,7 @@ def gsheets_delete_tab(
         else:
             typer.echo("refusing to delete without a TTY — pass --yes", err=True)
             raise typer.Exit(2)
-    try:
-        gsheets_mod.delete_tab(sid, title)
-    except gsheets_mod.SheetsError as e:
-        _die(str(e))
-    except HttpError as e:
-        _die(_http_error_msg(e))
+    gsheets_mod.delete_tab(sid, title)
     typer.echo(f"deleted tab {title!r} from {info.title!r}", err=True)
 
 
@@ -663,16 +623,11 @@ def gsheets_pdf(
 
     The invoice move: `ko gsheets pdf <sheet> kodev-008` → kodev-008.pdf, ready to send.
     Prints the saved path (stdout)."""
-    sid = _resolve_sid(spreadsheet_id)
-    try:
-        pdf = gsheets_mod.export_pdf(
-            sid, tab, size=size, landscape=landscape, gridlines=gridlines
-        )
-        name = tab or gsheets_mod.get_info(sid).title.strip()
-    except gsheets_mod.SheetsError as e:
-        _die(str(e))
-    except HttpError as e:
-        _die(_http_error_msg(e))
+    sid = gsheets_mod.resolve_sheet(spreadsheet_id)
+    pdf = gsheets_mod.export_pdf(
+        sid, tab, size=size, landscape=landscape, gridlines=gridlines
+    )
+    name = tab or gsheets_mod.get_info(sid).title.strip()
     path = out or Path(f"{name.replace(chr(47), chr(45))}.pdf")
     path.write_bytes(pdf)
     typer.echo(f"{len(pdf) / 1024:.0f} KB, {size} {'landscape' if landscape else 'portrait'}", err=True)
@@ -694,19 +649,14 @@ def gsheets_insert_rows(
     The line-items move: insert mid-table and the layout (and =SUM ranges) stretch."""
     if row < 1:
         _die("row is 1-based — the first row is 1", code="usage")
-    try:
-        gsheets_mod.insert_dimension(
-            _resolve_sid(spreadsheet_id),
-            tab,
-            dimension="ROWS",
-            start_index=row - 1,
-            n=n,
-            inherit_from_before=False if no_inherit else None,
-        )
-    except gsheets_mod.SheetsError as e:
-        _die(str(e))
-    except HttpError as e:
-        _die(_http_error_msg(e))
+    gsheets_mod.insert_dimension(
+        gsheets_mod.resolve_sheet(spreadsheet_id),
+        tab,
+        dimension="ROWS",
+        start_index=row - 1,
+        n=n,
+        inherit_from_before=False if no_inherit else None,
+    )
     typer.echo(f"inserted {n} row(s) before row {row} in {tab!r}", err=True)
 
 
@@ -729,19 +679,14 @@ def gsheets_insert_cols(
         _die(f"bad column {col!r} — want a letter like C or a 1-based number", code="usage")
     if col_n < 1:
         _die("column is 1-based — the first column is 1 (A)", code="usage")
-    try:
-        gsheets_mod.insert_dimension(
-            _resolve_sid(spreadsheet_id),
-            tab,
-            dimension="COLUMNS",
-            start_index=col_n - 1,
-            n=n,
-            inherit_from_before=False if no_inherit else None,
-        )
-    except gsheets_mod.SheetsError as e:
-        _die(str(e))
-    except HttpError as e:
-        _die(_http_error_msg(e))
+    gsheets_mod.insert_dimension(
+        gsheets_mod.resolve_sheet(spreadsheet_id),
+        tab,
+        dimension="COLUMNS",
+        start_index=col_n - 1,
+        n=n,
+        inherit_from_before=False if no_inherit else None,
+    )
     typer.echo(f"inserted {n} column(s) before {col.upper()} in {tab!r}", err=True)
 
 
@@ -764,19 +709,14 @@ def gsheets_replace(
     Pairs with dup-tab: duplicate an invoice, then swap the old id/dates for new ones."""
     if not tab and not all_tabs:
         _die("pick a --tab, or pass --all-tabs to touch the whole spreadsheet", code="usage")
-    try:
-        n = gsheets_mod.find_replace(
-            _resolve_sid(spreadsheet_id),
-            find,
-            replacement,
-            tab=tab,
-            match_case=match_case,
-            include_formulas=in_formulas,
-        )
-    except gsheets_mod.SheetsError as e:
-        _die(str(e))
-    except HttpError as e:
-        _die(_http_error_msg(e))
+    n = gsheets_mod.find_replace(
+        gsheets_mod.resolve_sheet(spreadsheet_id),
+        find,
+        replacement,
+        tab=tab,
+        match_case=match_case,
+        include_formulas=in_formulas,
+    )
     typer.echo(str(n))
 
 
@@ -785,12 +725,7 @@ def gsheets_new(
     title: str = typer.Argument(..., help="title for the new spreadsheet"),
 ) -> None:
     """Create a new spreadsheet; prints its ID (stdout) and URL (stderr)."""
-    try:
-        new_id = gsheets_mod.create_spreadsheet(title)
-    except gsheets_mod.SheetsError as e:
-        _die(str(e))
-    except HttpError as e:
-        _die(_http_error_msg(e))
+    new_id = gsheets_mod.create_spreadsheet(title)
     typer.echo(new_id)
     typer.echo(f"https://docs.google.com/spreadsheets/d/{new_id}/edit", err=True)
 
@@ -801,12 +736,7 @@ def gsheets_clear(
     range_name: str = typer.Argument(..., help="range to clear (values only; formatting survives)"),
 ) -> None:
     """Clear the values in a range. Formatting, notes, and validation survive."""
-    try:
-        cleared = gsheets_mod.clear_range(_resolve_sid(spreadsheet_id), range_name)
-    except gsheets_mod.SheetsError as e:
-        _die(str(e))
-    except HttpError as e:
-        _die(_http_error_msg(e))
+    cleared = gsheets_mod.clear_range(gsheets_mod.resolve_sheet(spreadsheet_id), range_name)
     typer.echo(f"cleared {cleared}", err=True)
 
 
@@ -860,10 +790,7 @@ def gdocs_tabs(
 ) -> None:
     """List a doc's tabs (TSV: index, title, tabId; sub-tabs indented). Per-client shared docs
     keep one tab per client — feed a tabId or title to get/replace/append `--tab`."""
-    try:
-        tabs = gdocs_mod.list_tabs(doc)
-    except gdocs_mod.DocsError as e:
-        _die(str(e), as_json=as_json)
+    tabs = gdocs_mod.list_tabs(doc)
     if as_json:
         _emit_json(tabs)
         return
@@ -882,20 +809,14 @@ def gdocs_get(
     """Read a Doc as Markdown (tables included) — pipe it to an LLM/agent, or save with -o.
     `--tab` reads one tab as markdown-ish plain text (Drive export can't scope to a tab, so it's
     walked from the Docs API — headings/bullets kept, tables noted)."""
-    try:
-        md = gdocs_mod.get_tab_text(doc, tab) if tab else gdrive_mod.export_markdown(doc)
-    except (gdrive_mod.DriveError, gdocs_mod.DocsError) as e:
-        _die(str(e))
+    md = gdocs_mod.get_tab_text(doc, tab) if tab else gdrive_mod.export_markdown(doc)
     _write_doc(md, out)
 
 
 @gdocs_app.command("info")
 def gdocs_info(doc: str = typer.Argument(..., help="Google Doc ID or URL")) -> None:
     """Show a doc's title (stdout) and id (stderr)."""
-    try:
-        info = gdocs_mod.get_info(doc)
-    except gdocs_mod.DocsError as e:
-        _die(str(e))
+    info = gdocs_mod.get_info(doc)
     typer.echo(info.title)
     typer.echo(info.id, err=True)
 
@@ -911,12 +832,9 @@ def gdocs_append(
     """Append text to the end of a doc (or of one tab with --tab). On a multi-tab doc `--tab` is
     required (a bare append would land in the first tab only — surprising)."""
     body = text if text is not None else sys.stdin.read()
-    try:
-        if tab is None:
-            _guard_multi_tab(doc)  # multi-tab: force an explicit --tab (bare append hits tab 0)
-        n = gdocs_mod.append_text(doc, body, tab=tab)
-    except gdocs_mod.DocsError as e:
-        _die(str(e))
+    if tab is None:
+        _guard_multi_tab(doc)  # multi-tab: force an explicit --tab (bare append hits tab 0)
+    n = gdocs_mod.append_text(doc, body, tab=tab)
     typer.echo(f"appended {n} char(s)", err=True)
 
 
@@ -941,18 +859,15 @@ def gdocs_replace(
     e.g. every client in a per-client doc) — pass `--tab` or `--all-tabs`. With --tab, first
     checks open comments and refuses if the replaced text is a comment's quoted anchor (would
     orphan the thread) — `--force` overrides."""
-    try:
-        if tab is not None:
-            tab_id = gdocs_mod.resolve_tab(doc, tab)
-            if not force:
-                _guard_comment_orphans(doc, find)
-            n = gdocs_mod.replace_text(doc, find, replace, match_case=match_case, tab_ids=[tab_id])
-        else:
-            if not all_tabs:
-                _guard_multi_tab(doc, extra=" or --all-tabs")  # bare replace clobbers all tabs
-            n = gdocs_mod.replace_text(doc, find, replace, match_case=match_case)
-    except gdocs_mod.DocsError as e:
-        _die(str(e))
+    if tab is not None:
+        tab_id = gdocs_mod.resolve_tab(doc, tab)
+        if not force:
+            _guard_comment_orphans(doc, find)
+        n = gdocs_mod.replace_text(doc, find, replace, match_case=match_case, tab_ids=[tab_id])
+    else:
+        if not all_tabs:
+            _guard_multi_tab(doc, extra=" or --all-tabs")  # bare replace clobbers all tabs
+        n = gdocs_mod.replace_text(doc, find, replace, match_case=match_case)
     typer.echo(f"replaced {n} occurrence(s)", err=True)
 
 
@@ -963,10 +878,7 @@ def gdocs_add_tab(
 ) -> None:
     """Add a tab to a Doc (e.g. a new client/topic in a shared doc); prints its tabId (stdout).
     Then `append --tab <title>` to fill it. Creates a top-level tab at the end."""
-    try:
-        tab_id = gdocs_mod.add_tab(doc, title)
-    except gdocs_mod.DocsError as e:
-        _die(str(e))
+    tab_id = gdocs_mod.add_tab(doc, title)
     typer.echo(tab_id)
     typer.echo(f"added tab {title!r}", err=True)
 
@@ -1062,10 +974,7 @@ def gdocs_comments(
     as_json: bool = typer.Option(False, "--json", help="emit JSON instead of pretty text"),
 ) -> None:
     """Read review comments + replies off a Doc. Resolved are hidden unless --all."""
-    try:
-        comments = gdrive_mod.list_comments(doc, include_resolved=show_all)
-    except gdrive_mod.DriveError as e:
-        _die(str(e), as_json=as_json)
+    comments = gdrive_mod.list_comments(doc, include_resolved=show_all)
     if as_json:
         typer.echo(json.dumps(comments, default=str))
         return
@@ -1091,10 +1000,7 @@ def gdocs_reply(
 ) -> None:
     """Reply to a comment thread on a Doc (needs the read+write grant)."""
     body = text if text is not None else sys.stdin.read()
-    try:
-        r = gdrive_mod.reply_comment(doc, comment_id, body)
-    except gdrive_mod.DriveError as e:
-        _die(str(e))
+    r = gdrive_mod.reply_comment(doc, comment_id, body)
     typer.echo(f"replied to {comment_id} ({r['id']})", err=True)
 
 
@@ -1123,12 +1029,9 @@ def gdocs_shade_table(
     rows_l, cols_l = _parse(rows), _parse(cols)
     if rows_l is None and cols_l is None:
         rows_l = [0]  # convenience default: shade the header row
-    try:
-        n = gdocs_mod.shade_table(
-            doc, rows=rows_l, cols=cols_l, color=color, table_index=(None if all_tables else table)
-        )
-    except gdocs_mod.DocsError as e:
-        _die(str(e))
+    n = gdocs_mod.shade_table(
+        doc, rows=rows_l, cols=cols_l, color=color, table_index=(None if all_tables else table)
+    )
     typer.echo(f"shaded {n} range(s)", err=True)
 
 
@@ -1178,7 +1081,7 @@ def _merged_events(fetch, calendar: list[str] | None, as_json: bool):
     """Events across `_cal_accounts()`; per-account failures go to stderr, not the floor."""
     try:
         events, warnings = gcal_mod.merged(fetch, _cal_accounts(), calendar)
-    except (gcal_mod.CalError, ValueError) as e:
+    except ValueError as e:
         _die(str(e), as_json=as_json)
     for w in warnings:
         typer.echo(f"warning: skipped {w}", err=True)
@@ -1282,7 +1185,7 @@ def cal_add(
         if cal:
             cal_id = gcal_mod.resolve_calendar_ids([cal], gcal_mod.list_calendars(acct))[0]
         ev = gcal_mod.create_event(title, when, end=end, calendar_id=cal_id, minutes=minutes, account=acct)
-    except (gcal_mod.CalError, ValueError) as e:
+    except ValueError as e:
         _die(str(e), as_json=as_json)
     typer.echo(f"created: {ev.summary}  {ev.start}  [{acct} · {ev.calendar_id}]", err=True)
     typer.echo(json.dumps(asdict(ev)) if as_json else ev.id)
@@ -1296,10 +1199,7 @@ def cal_use(
     """Where `cal add` puts new events — set apart from `ko google use`, so switching mail
     accounts doesn't move your events."""
     if account is not None:
-        try:
-            gcal_mod.set_add_target(account, calendar)
-        except gcal_mod.CalError as e:
-            _die(str(e))
+        gcal_mod.set_add_target(account, calendar)
     acct, cal_id = gcal_mod.add_target()
     typer.echo(f"new events → {acct} · {calendar or cal_id}")
 
