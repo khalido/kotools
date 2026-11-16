@@ -54,6 +54,7 @@ def include_content() -> bool:
 
 
 def host() -> str:
+    """The PostHog host: POSTHOG_HOST, then [telemetry] posthog_host, then US cloud."""
     return config.setting("POSTHOG_HOST", "telemetry", "posthog_host", "https://us.i.posthog.com").rstrip("/")
 
 

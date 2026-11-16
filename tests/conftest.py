@@ -13,7 +13,15 @@ import os
 
 import pytest
 
-from ko import google_auth
+from ko import google_auth, telemetry
+
+
+@pytest.fixture(autouse=True)
+def _no_real_telemetry(monkeypatch):
+    """KO's real config.toml may have [telemetry] enabled: without this, every mocked model
+    run would raise MissingKeyError (no key) or send spans to his PostHog (key set).
+    tests/test_telemetry.py restores the real switch."""
+    monkeypatch.setattr(telemetry, "enabled", lambda: False)
 
 
 @pytest.fixture(autouse=True)

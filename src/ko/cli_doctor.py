@@ -87,9 +87,10 @@ def _publish_status() -> Status:
 def _telemetry_status() -> Status:
     from . import telemetry
 
+    source = config.key_source(telemetry.KEY)
     if not telemetry.enabled():
-        return ("– off (default)", "yellow")
-    if source := config.key_source(telemetry.KEY):
+        return (f"– off (default){f'; key: {source}' if source else ''}", "yellow")
+    if source:
         content = "with content" if telemetry.include_content() else "metadata only"
         return (f"✓ on, {content} (key: {source})", "green")
     return ("✗ enabled but no POSTHOG_API_KEY", "red")
