@@ -17,7 +17,7 @@ Cut a release with the repo's `/release` skill.
 - `ko book "<title>"`: which book it is (Open Library) and its critical reviews (Exa); `ko tv "<title>" -r` adds critics' reviews to the movie/TV card, using TMDB's exact title and year.
 - `ko movie <title>`: `ko tv` limited to films; `ko movie --now` lists what's in Australian cinemas. The TMDB token is also read from `TMDB_TOKEN`.
 - `ko tv` / `ko movie` cards add the Australian classification, runtime, genres, director or creators, top cast, Australian cinema and digital release dates (or series status, seasons and next episode), and the official trailer. `[tmdb] my_providers` in config.toml lists your services first, marked ✓.
-- `ko decide --each`: a piped JSON array is judged one row at a time, in parallel; a row that fails gets an error and the rest carry on. Over 200 rows asks for `--yes`. A piped array without the flag is judged whole, with a note.
+- `ko decide --each`: a piped JSON array is judged row by row; yes/no questions on Jev go 20 rows to a request (about a quarter of the tokens; clear-cut answers match one-at-a-time), other kinds one call per row. A row that fails gets an error and the rest carry on. Over 200 rows asks for `--yes`. A piped array without the flag is judged whole, with a note.
 - `ko gmail draft delete <id>`: shows the draft and confirms (`--yes` when not on a terminal); it skips Trash.
 - `ko book` shows the book's description and subjects from Open Library. `ko ai` and `ko agent tv` gain critics' reviews, what's in cinemas, and books.
 

@@ -579,7 +579,8 @@ def test_model_info_survives_hn_failure(monkeypatch):
     assert i.id == "x/y" and i.threads == [] and i.unavailable == ["HN: algolia down"]
 
 
-def test_decide_each_keeps_row_order_isolates_failures_and_sums_cost(monkeypatch):
+def test_decide_each_per_row_keeps_order_isolates_failures_and_sums_cost(monkeypatch):
+    """Choice (and non-Jev models) ask once per row."""
     import pydantic_ai
 
     seen = []
@@ -588,16 +589,81 @@ def test_decide_each_keeps_row_order_isolates_failures_and_sums_cost(monkeypatch
         seen.append(text)
         if "bad" in text:
             raise RuntimeError("Service temporarily unavailable")
-        return _FakeResult(0.9, {})
+        return _FakeResult("a", {})
 
     monkeypatch.setattr(pydantic_ai.Agent, "run", fake_run)
     monkeypatch.setattr(llm, "resolve", lambda m: "test")
     monkeypatch.setattr(llm, "run_cost", lambda msgs: llm.RunCost("jev-test", 10, 2, 0.001, "actual"))
     rows = [{"title": "a"}, {"title": "bad"}, "plain text row"]
-    out = llm.decide_each("q?", rows, model="jev")
+    out = llm.decide_each("q?", rows, model="jev", choice=[("a", ""), ("b", "")])
     assert [type(r).__name__ for r in out] == ["Decision", "RuntimeError", "Decision"]
     assert '{"title": "a"}' in seen and "plain text row" in seen  # dicts as JSON, strings as is
     assert (llm.last_cost.input_tokens, llm.last_cost.usd) == (20, 0.002)
+
+
+def _batch_fake(monkeypatch, fail=lambda text, calls: False, drop=lambda calls: False):
+    """Agent.run that answers a PerRow batch (row_i = i / 100) or a single yes/no (0.5)."""
+    import pydantic_ai
+
+    calls = []
+
+    async def fake_run(self, text):
+        calls.append(text)
+        if fail(text, calls):
+            raise RuntimeError("Service temporarily unavailable")
+        if text.startswith('{"items"'):
+            n = len(json.loads(text)["items"])
+            out = {f"row_{i}": i / 100 for i in range(n)}
+            if drop(calls):
+                out["row_0"] = None
+            return _FakeResult(out, {"confidence": {"row_0": 0.9}})
+        return _FakeResult(0.5, {})
+
+    monkeypatch.setattr(pydantic_ai.Agent, "run", fake_run)
+    monkeypatch.setattr(llm, "resolve", lambda m: "test")
+    monkeypatch.setattr(llm, "run_cost", lambda msgs: llm.RunCost("jev-test", 10, 2, 0.001, "actual"))
+    monkeypatch.setattr("asyncio.sleep", _no_sleep)  # the retry's 1 s wait
+    return calls
+
+
+async def _no_sleep(_):
+    return None
+
+
+def test_decide_each_batches_yes_no_on_jev(monkeypatch):
+    calls = _batch_fake(monkeypatch)
+    rows = [{"title": f"t{i}"} for i in range(llm.EACH_BATCH + 5)]
+    out = llm.decide_each("q?", rows, model="jev")
+    assert len(calls) == 2  # 20 + 5 rows, one request each
+    assert [d.answer for d in out] == [i / 100 for i in range(llm.EACH_BATCH)] + [i / 100 for i in range(5)]
+    assert out[0].confidence == 0.9 and out[1].confidence is None and out[0].kind == "yes_no"
+    assert json.loads(calls[0])["items"][0] == {"title": "t0"}
+    assert llm.last_cost.input_tokens == 20
+
+
+def test_decide_each_retries_a_batch_then_falls_back_per_row(monkeypatch):
+    # first batch request fails, the retry works: one row-per-call never happens
+    calls = _batch_fake(monkeypatch, fail=lambda text, calls: len(calls) == 1)
+    out = llm.decide_each("q?", ["a", "b"], model="jev")
+    assert len(calls) == 2 and [d.answer for d in out] == [0.0, 0.01] and llm.last_fallbacks == []
+    # every batch request fails: each row is asked on its own, and a bad row stays its own error
+    calls = _batch_fake(monkeypatch, fail=lambda text, calls: text.startswith('{"items"') or text == "bad")
+    out = llm.decide_each("q?", ["a", "bad"], model="jev")
+    assert sum(c.startswith('{"items"') for c in calls) == 2
+    assert out[0].answer == 0.5 and isinstance(out[1], RuntimeError)
+    assert llm.last_fallbacks == ["rows 1-2: batch failed twice (RuntimeError: Service temporarily unavailable); asked one row at a time"]
+
+
+def test_decide_each_retries_a_batch_reply_with_a_bad_value(monkeypatch):
+    calls = _batch_fake(monkeypatch, drop=lambda calls: len(calls) == 1)  # first reply: row_0 = None
+    out = llm.decide_each("q?", ["a", "b"], model="jev")
+    assert len(calls) == 2 and [d.answer for d in out] == [0.0, 0.01] and llm.last_fallbacks == []
+
+
+def test_decide_each_does_not_batch_other_models(monkeypatch):
+    calls = _batch_fake(monkeypatch)
+    out = llm.decide_each("q?", ["a", "b"], model="openai/gpt-test")
+    assert calls == ["a", "b"] and [d.answer for d in out] == [0.5, 0.5]
 
 
 def test_decide_each_raises_a_missing_key_once(monkeypatch):
@@ -618,6 +684,7 @@ def test_cli_decide_each(monkeypatch):
     d = llm.Decision("choice", "read", {"read": 0.88, "archive": 0.12}, 0.77, None, "jev-test")
     monkeypatch.setattr(llm, "decide_each", lambda q, rows, **k: [d, RuntimeError("down")])
     monkeypatch.setattr(llm, "last_cost", llm.RunCost("jev-test", 1, 1))
+    monkeypatch.setattr(llm, "last_fallbacks", [])
     rows = '[{"title": "First post"}, {"id": 7}]'
     r = runner.invoke(app, ["decide", "q", "--choice", "read,archive", "--each"], input=rows)
     assert r.exit_code == 0

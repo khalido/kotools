@@ -344,7 +344,7 @@ def _decide_each(question: str, text: str, opts: dict, *, yes: bool, as_json: bo
     if not rows:
         _no_results("no rows to decide on", as_json)
     if len(rows) > EACH_LIMIT and not yes:
-        _die(f"{len(rows)} rows is one call each: pass --yes to go ahead", as_json=as_json, code="usage")
+        _die(f"{len(rows)} rows is over {EACH_LIMIT}: pass --yes to go ahead", as_json=as_json, code="usage")
     try:
         results = llm_mod.decide_each(question, rows, **opts)
     except Exception as e:
@@ -359,6 +359,8 @@ def _decide_each(question: str, text: str, opts: dict, *, yes: bool, as_json: bo
         for row, r in zip(rows, results):
             cells = "error" if isinstance(r, Exception) else _answer_cells(r)
             typer.echo(f"{cells}\t{_row_label(row)}")
+    for note in llm_mod.last_fallbacks:
+        typer.echo(f"[{note}]", err=True)
     for i in failed:
         typer.echo(f"row {i}: {results[i - 1]}", err=True)
     if llm_mod.last_cost and len(failed) < len(rows):

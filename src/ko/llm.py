@@ -270,6 +270,40 @@ def _read_decision(result, kind: str, score: list[tuple[str, str]] | None, model
 
 
 EACH_CONCURRENCY = 8  # calls in flight for decide_each; Jev answers in ~100 ms, the round trip dominates
+# yes/no rows per Jev request in decide_each (Jev only: other decision models aren't measured). Measured 2026-11-16 (WORKLOG): 20 matched one call
+# per row (0 of 58 clear cases flipped) for about a quarter of the input tokens; 60 flipped 10.
+EACH_BATCH = 20
+
+
+def _batch_agent(question: str, n: int, model: str):
+    """One yes/no question per row of `{"items": [...]}`: field `row_i` is P(yes) for `items[i]`."""
+    from pydantic_ai import Agent, StructuredDict
+
+    props = {
+        f"row_{i}": {"type": "number", "minimum": 0, "maximum": 1, "description": f"About `items[{i}]`: {question}"}
+        for i in range(n)
+    }
+    schema = {"type": "object", "properties": props, "required": list(props)}
+    return Agent(resolve(model), output_type=StructuredDict(schema, name="PerRow"))
+
+
+def _row_text(row) -> str:
+    return row if isinstance(row, str) else json.dumps(row, ensure_ascii=False, default=str)
+
+
+# decide_each's batches that failed twice and were asked one row at a time — CLI layers print them.
+last_fallbacks: list[str] = []
+
+# Errors every row would hit the same way (setup, or a bug in ko): decide_each raises them once.
+_EVERY_ROW_FAILS = (config.MissingKeyError, config.ConfigError, TypeError, AttributeError, NameError, ImportError)
+
+
+def _p_yes(output: dict, i: int) -> float:
+    """Row i's P(yes) from a batch reply; a missing or non-probability value fails the batch."""
+    v = output.get(f"row_{i}")
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or not 0 <= v <= 1:
+        raise ValueError(f"row_{i} came back as {v!r}, not a probability")
+    return float(v)
 
 
 def decide_each(
@@ -281,36 +315,68 @@ def decide_each(
     score: list[tuple[str, str]] | None = None,
     tags: list[tuple[str, str]] | None = None,
 ) -> list[Decision | Exception]:
-    """`decide` once per row (its compact JSON is the text), concurrently on one event loop
-    (threads broke the gateway's loop-bound client), results in row order. A row that fails
-    comes back as its exception, so one bad call never sinks the batch; a bad model, missing
-    key or bad config raises, since every row would fail the same way. `last_cost` is the
-    batch total."""
-    global last_cost
+    """`decide` for each row (its compact JSON is the text), results in row order. A yes/no
+    question on a decision model asks EACH_BATCH rows per request; a batch that fails twice
+    falls back to one call per row. Everything else is one call per row. Calls run
+    concurrently on one event loop (threads broke the gateway's loop-bound client). A row that
+    fails comes back as its exception, so one bad call never sinks the rest; a bad model,
+    missing key or bad config raises, since every row would fail the same way. `last_cost` is
+    the total."""
+    global last_cost, last_fallbacks
     import asyncio
 
     from pydantic_ai.models import infer_model
 
     agent, kind = _decision_agent(question, model=model, choice=choice, score=score, tags=tags)
     infer_model(agent.model)  # a bad model name fails once, not once per row
+    costs: list[RunCost] = []
+    last_fallbacks = []
 
-    async def one(row, gate: asyncio.Semaphore) -> tuple[Decision | Exception, RunCost | None]:
-        text = row if isinstance(row, str) else json.dumps(row, ensure_ascii=False, default=str)
+    async def one(row, gate: asyncio.Semaphore) -> Decision | Exception:
         try:
             async with gate:
-                result = await agent.run(text)
-            return _read_decision(result, kind, score, model)
-        except (config.MissingKeyError, config.ConfigError, TypeError, AttributeError, NameError, ImportError):
+                result = await agent.run(_row_text(row))
+            d, cost = _read_decision(result, kind, score, model)
+            costs.append(cost)
+            return d
+        except _EVERY_ROW_FAILS:
             raise
         except Exception as e:
-            return e, None
+            return e
 
-    async def all_rows():
+    async def batch(start: int, chunk: list, gate: asyncio.Semaphore) -> list[Decision | Exception]:
+        ask = _batch_agent(question, len(chunk), model)
+        text = json.dumps({"items": chunk}, ensure_ascii=False, default=str)
+        error: Exception | None = None
+        for attempt in range(2):
+            if attempt:
+                await asyncio.sleep(1)  # a rate limit or blip, not an instant second hit
+            try:
+                async with gate:
+                    result = await ask.run(text)
+                answers = [_p_yes(result.output, i) for i in range(len(chunk))]
+            except _EVERY_ROW_FAILS:
+                raise
+            except Exception as e:
+                error = e
+                continue
+            costs.append(run_cost(result.all_messages()))
+            details = result.response.provider_details or {}
+            confidence = details.get("confidence") or {}
+            name = result.response.model_name or str(model)
+            return [Decision("yes_no", a, {}, confidence.get(f"row_{i}"), None, name) for i, a in enumerate(answers)]
+        last_fallbacks.append(f"rows {start + 1}-{start + len(chunk)}: batch failed twice ({type(error).__name__}: {str(error).splitlines()[0] if str(error) else ''}); asked one row at a time")
+        return list(await asyncio.gather(*(one(r, gate) for r in chunk)))
+
+    async def all_rows() -> list[Decision | Exception]:
         gate = asyncio.Semaphore(EACH_CONCURRENCY)
-        return await asyncio.gather(*(one(r, gate) for r in rows))
+        if kind == "yes_no" and (model == "jev" or str(model).startswith("typesafe:")):
+            starts = range(0, len(rows), EACH_BATCH)
+            parts = await asyncio.gather(*(batch(i, rows[i : i + EACH_BATCH], gate) for i in starts))
+            return [d for part in parts for d in part]
+        return list(await asyncio.gather(*(one(r, gate) for r in rows)))
 
     done = asyncio.run(all_rows())
-    costs = [c for _, c in done if c]
     if costs:
         usd = [c.usd for c in costs]
         last_cost = RunCost(
@@ -320,7 +386,7 @@ def decide_each(
             usd=None if None in usd else sum(usd),
             source=costs[0].source,
         )
-    return [d for d, _ in done]
+    return done
 
 
 def default_model() -> str:

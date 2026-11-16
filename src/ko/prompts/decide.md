@@ -33,7 +33,7 @@ Give an option its meaning after `=`: `--choice "reply=needs an answer from Ko,r
 
 ## Many items at once
 
-`--each` judges each row of a JSON array separately, in parallel: `ko hn top --json | ko decide "worth reading for an AI engineer?" --each`. Each row's compact JSON is the text, so trim rows to the fields the question needs first (`jq '[.[] | {title, url}]'`). Text output is one line per row, answer first and the row's title/subject/name last; `--json` gives `{row, decision}` per row, ready for `jq 'map(select(.decision.answer > 0.8))'`. A failed row prints `error` and the batch carries on. Over 200 rows needs `--yes`.
+`--each` judges each row of a JSON array separately (a yes/no on Jev asks 20 rows per request; clear-cut answers match asking one at a time, borderline ones move a little): `ko hn top --json | ko decide "worth reading for an AI engineer?" --each`. Each row's compact JSON is the text, so trim rows to the fields the question needs first (`jq '[.[] | {title, url}]'`). Text output is one line per row, answer first and the row's title/subject/name last; `--json` gives `{row, decision}` per row, ready for `jq 'map(select(.decision.answer > 0.8))'`. A failed row prints `error` and the batch carries on. Over 200 rows needs `--yes`.
 
 ## Reading the numbers
 
