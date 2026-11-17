@@ -4,8 +4,7 @@ Read CLAUDE.md first, then this. History lives in WORKLOG; this is only what's o
 
 ## Just done
 
-- **One agent (2026-11-17, branch `one-agent`).** `ko ai` absorbed `agent research|repo|tv` as on-demand capabilities; the old names are hidden aliases. Terminal `ko ai` no longer stops at the first narration, piped output keeps the whole answer. Guardrails: $1 budget per run (`--budget`) and big tool results spilled to disk; smart research $12.58 (old agent) → $0.71. Trial and numbers: WORKLOG 2026-11-17.
-- **Main is 17 commits ahead of origin, unpushed**, waiting on KO: overnight sanity, cleanup and telemetry merges plus the pre-push fixes (gmail inline embeds, fetch shared failure code). Advisor notes: `/private/tmp/claude-501/-Users-ko-code-kotools/7b6a589f-7e3c-448f-8633-ecc271d3bb5a/scratchpad/prepush/advice.md` (scratch, may be gone).
+- **One agent (2026-11-17, merged to main and pushed 2026-11-18).** `ko ai` absorbed `agent research|repo|tv` as on-demand capabilities; the old names are hidden aliases. Terminal `ko ai` no longer stops at the first narration, piped output keeps the whole answer. Guardrails: $1 budget per run (`--budget`) and big tool results spilled to disk; smart research $12.58 (old agent) → $0.71. Trial and numbers: WORKLOG 2026-11-17.
 
 ## Next, in order
 
@@ -25,7 +24,6 @@ Read CLAUDE.md first, then this. History lives in WORKLOG; this is only what's o
 
 ## Waiting on KO
 
-- Push main; merge `one-agent`.
 - Telemetry check: set `POSTHOG_API_KEY` and `[telemetry] enabled = true`, run `ko llm "hi"` and `ko ai`, check `$ai_generation` events land in PostHog, close issue #2.
 - Keys: `OMDB_API_KEY` (OMDb scores), AeroDataBox (`ko flight` fallback, designed in `docs/flight.md`); set `[tmdb] my_providers`.
 - Gmail: delete test draft `r-39674769328854445` and everx's "OLD, delete" drafts (`ko gmail draft delete --yes`).
