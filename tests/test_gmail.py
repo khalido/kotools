@@ -295,6 +295,7 @@ def _draft_with_files():
                 "headers": [{"name": "To", "value": "a@x.com"}, {"name": "Subject", "value": "Contract"}],
                 "parts": [
                     {"mimeType": "text/plain", "body": {"data": ""}},
+                    {"mimeType": "text/html", "body": {"data": _b64('<p>hi</p><img src="cid:ii_1">')}},
                     {"filename": "contract.pdf", "mimeType": "application/pdf",  # as Gmail's UI attaches
                      "headers": [{"name": "Content-Disposition", "value": 'attachment; filename="contract.pdf"'},
                                  {"name": "Content-ID", "value": "<f_abc>"}],
@@ -307,6 +308,10 @@ def _draft_with_files():
             },
         }
     }
+
+
+def _b64(text: str) -> str:
+    return base64.urlsafe_b64encode(text.encode()).decode()
 
 
 def _sent_parts(svc):
@@ -326,6 +331,20 @@ def test_update_draft_keeps_attachments_and_adds(monkeypatch, tmp_path):
     assert _sent_parts(svc) == {"contract.pdf": b"%PDF-fake", "notes.txt": b"hi"}
     assert ("get", "m1", "att1") in svc.calls  # fetched from the draft's own message
     assert svc.updated["message"]["threadId"] == "t1"
+
+
+def test_update_draft_keeps_an_inline_marked_file_the_body_does_not_show(monkeypatch):
+    """Apple Mail marks a PDF `Content-Disposition: inline`; only a `cid:` the html shows is an embed."""
+    d = _draft_with_files()
+    d["message"]["payload"]["parts"].append(
+        {"filename": "scan.pdf", "mimeType": "application/pdf",
+         "headers": [{"name": "Content-Disposition", "value": 'inline; filename="scan.pdf"'},
+                     {"name": "Content-ID", "value": "<scan_1>"}],
+         "body": {"attachmentId": "att3", "size": 5}})
+    svc = _DraftSvc(d, {"att1": b"%PDF-fake", "att3": b"%PDF-scan"})
+    monkeypatch.setattr(gmail, "_compose_service", lambda: svc)
+    u = gmail.update_draft("d1", "new body")
+    assert (u.kept, u.dropped) == (["contract.pdf", "scan.pdf"], ["logo.png"])
 
 
 def test_update_draft_drop_attachments(monkeypatch):

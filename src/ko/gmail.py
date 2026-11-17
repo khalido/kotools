@@ -303,20 +303,23 @@ def _decode_bytes(data: str) -> bytes:
 def _attachment_parts(payload: dict) -> list[dict]:
     """Every part anywhere in a (nested) payload with a filename AND an attachmentId (the
     alternative text/html body and ko's own inline images have no filename, so they're skipped).
-    `inline` marks a `Content-Disposition: inline` part: an image the old html body showed by `cid:`.
-    (Gmail's UI gives regular attachments a Content-ID too, so that header alone says nothing.)"""
+    `inline` marks a part the payload's html body shows by `cid:` (an embedded image). Neither header
+    alone says so: Gmail's UI gives regular attachments a Content-ID, and Apple Mail marks a PDF
+    `Content-Disposition: inline`."""
     out: list[dict] = []
+    html = _find_mime(payload, "text/html")
 
     def rec(part: dict) -> None:
         body = part.get("body", {})
         if part.get("filename") and body.get("attachmentId"):
-            disp = next((h["value"] for h in part.get("headers") or [] if h["name"].lower() == "content-disposition"), "")
+            cid = next((h["value"] for h in part.get("headers") or [] if h["name"].lower() == "content-id"), "")
+            cid = cid.strip().strip("<>")
             out.append({
                 "filename": part["filename"],
                 "mime": part.get("mimeType", ""),
                 "size": body.get("size", 0) or 0,
                 "id": body["attachmentId"],
-                "inline": disp.strip().lower().startswith("inline"),
+                "inline": bool(cid) and f"cid:{cid}" in html,
             })
         for p in part.get("parts", []):
             rec(p)

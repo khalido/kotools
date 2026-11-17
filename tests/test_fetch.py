@@ -808,6 +808,12 @@ def test_fetch_non_web_url_is_usage_and_skips_paid_fallbacks(monkeypatch, url):
     assert json.loads(result.stdout)[0]["code"] == "usage"
 
 
+def test_fetch_several_urls_failing_the_same_way_share_the_code(monkeypatch):
+    monkeypatch.setattr(fetch, "_rescue", lambda *a, **k: pytest.fail("sent a non-URL to archives/Exa"))
+    result = runner.invoke(app, ["fetch", "not a url", "ftp://x", "--json"])
+    assert result.exit_code == 2 and json.loads(result.stderr.splitlines()[-1])["code"] == "usage"
+
+
 def test_fetch_bare_doi_without_oa_copy_goes_to_doi_org(monkeypatch):
     from ko import papers
 

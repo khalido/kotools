@@ -1087,7 +1087,7 @@ def fetch_cmd(
         _die(
             f"no content returned for any of the {len(urls)} URL(s)",
             as_json=as_json,
-            code=rows[0]["code"] if len(urls) == 1 else "error",
+            code=codes.pop() if len(codes := {r.get("code") for r in rows}) == 1 and None not in codes else "error",
         )
     if as_json:
         typer.echo(json.dumps(rows))
