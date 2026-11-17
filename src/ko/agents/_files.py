@@ -149,7 +149,7 @@ def grep(
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=False)
     except FileNotFoundError:
         raise ModelRetry(
-            "ripgrep (rg) is not installed on this machine — use find_files + read_file instead."
+            "ripgrep (rg) is not installed on this machine — use glob + read_file instead."
         )
     except subprocess.TimeoutExpired:
         raise ModelRetry(
@@ -204,7 +204,7 @@ def glob(pattern: str, path: str = ".") -> str:
 def refs_overview_head() -> str:
     """The first OVERVIEW_HEAD_LINES of refs/CLAUDE.md (the curated map of the
     reference repos + accumulated takeaways), with a pointer to the rest —
-    thinker's memory-head pattern. Injected into the repo agent's instructions."""
+    thinker's memory-head pattern. Loaded with ko ai's `code` capability."""
     from ko import refs
 
     f = refs.claude_md(refs.refs_dir())

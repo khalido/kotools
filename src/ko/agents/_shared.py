@@ -18,6 +18,13 @@ from zoneinfo import ZoneInfo
 
 from pydantic_ai import Agent, SystemPromptPart
 from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.messages import (
+    ModelResponse,
+    PartDeltaEvent,
+    PartStartEvent,
+    TextPart,
+    TextPartDelta,
+)
 from pydantic_ai.usage import UsageLimits
 from rich.console import Console
 from rich.live import Live
@@ -64,20 +71,35 @@ def _requests_left(ctx) -> int | None:
     return None if limit is None else limit - ctx.usage.requests
 
 
+def _token_share(ctx) -> float:
+    """How much of the run's input-token budget is spent (0 when there's no budget)."""
+    limit = ctx.usage_limits.input_tokens_limit if ctx.usage_limits else None
+    return ctx.usage.input_tokens / limit if limit else 0.0
+
+
 @dataclass
 class _WrapUpNearLimit(AbstractCapability):
-    """pydantic-ai's "wrapping up before the request limit" recipe. A run that reaches its limit
+    """pydantic-ai's "wrapping up before the request limit" recipe, for the input-token budget too. A run that reaches its limit
     raises, losing every tool call already paid for, so the model is told to finish in time, and its
     tools go away on the last request. Request-scoped, so the warning doesn't bust the prompt cache."""
 
     warn_at: int = 3
+    # input tokens grow with every request (the whole context is re-sent), so the token budget
+    # warns early and takes the tools away before one more request could overshoot it
+    warn_share: float = 0.6
+    stop_share: float = 0.75
 
     async def before_model_request(self, ctx, request_context):
         left = _requests_left(ctx)
-        if left is not None and left <= self.warn_at:
+        if (left is not None and left <= self.warn_at) or _token_share(ctx) >= self.warn_share:
+            budget = (
+                f"{left} model request(s) left in this run"
+                if left is not None and left <= self.warn_at
+                else "This run's token budget is nearly spent"
+            )
             ctx.enqueue(
                 SystemPromptPart(
-                    f"{left} model request(s) left in this run: give your final answer now from "
+                    f"{budget}: give your final answer now from "
                     "what you have found, and say plainly what you could not finish.",
                     scope="request",
                 )
@@ -85,7 +107,7 @@ class _WrapUpNearLimit(AbstractCapability):
         return request_context
 
     async def prepare_tools(self, ctx, tool_defs):
-        return [] if _requests_left(ctx) == 1 else tool_defs
+        return [] if _requests_left(ctx) == 1 or _token_share(ctx) >= self.stop_share else tool_defs
 
 
 wrap_up_near_limit = _WrapUpNearLimit()
@@ -94,19 +116,49 @@ wrap_up_near_limit = _WrapUpNearLimit()
 def _stream(
     agent: Agent, prompt: str, history: list, model: str | None = None, limits=None
 ) -> tuple[str, list]:
-    """Run one turn with live markdown output. Returns (text, full message history).
+    """Run one turn to completion with live markdown output. Returns (text, full message history).
 
-    v2: run_stream_sync returns the result directly (not a context manager), and
-    stream_text(delta=False) yields the full text so far each tick.
+    Not run_stream: it takes the first text as the final answer, so a model that narrates
+    ("let me look that up") before a tool call ended the run there. run_sync with an event
+    handler runs every tool call and still streams each text part as it arrives.
     """
-    result = agent.run_stream_sync(
-        prompt, message_history=history, model=resolve(model or agent.model), usage_limits=limits
-    )
     text = ""
     with Live(console=_console, refresh_per_second=15) as live:
-        for text in result.stream_text():
-            live.update(Markdown(text))
-    return text, result.all_messages()
+
+        async def show(ctx, events) -> None:
+            nonlocal text
+            async for e in events:
+                if isinstance(e, PartStartEvent) and isinstance(e.part, TextPart):
+                    text += ("\n\n" if text else "") + e.part.content
+                elif isinstance(e, PartDeltaEvent) and isinstance(e.delta, TextPartDelta):
+                    text += e.delta.content_delta
+                else:
+                    continue
+                live.update(Markdown(text))
+
+        result = agent.run_sync(
+            prompt,
+            message_history=history,
+            model=resolve(model or agent.model),
+            usage_limits=limits,
+            event_stream_handler=show,
+        )
+    messages = result.all_messages()
+    return _run_text(messages, prior=len(history)), messages
+
+
+def _run_text(messages: list, prior: int = 0) -> str:
+    """Every text part the model wrote this run, not just the last: a model that answers
+    alongside a tool call (say, saving a memory note) and then signs off would otherwise
+    print only the sign-off (2026-11-17 trial: the picks were lost)."""
+    texts = [
+        part.content
+        for m in messages[prior:]
+        if isinstance(m, ModelResponse)
+        for part in m.parts
+        if isinstance(part, TextPart) and part.content.strip()
+    ]
+    return "\n\n".join(texts)
 
 
 def run(
@@ -120,7 +172,7 @@ def run(
     """One-shot. Streams pretty markdown to a TTY; plain text when piped. Saves the session.
 
     `resume` continues a saved session (the prompt becomes its next turn) instead of
-    starting fresh — so `ko a research "follow-up" -r <id>` works as a one-shot continuation.
+    starting fresh — so `ko ai "follow-up" -r <id>` works as a one-shot continuation.
     """
     limits = limits or UsageLimits()  # the default's limit, but visible to wrap_up_near_limit
     session_id = resume or sessions.new_id()
@@ -132,7 +184,8 @@ def run(
         result = agent.run_sync(
             prompt, message_history=history, model=resolve(model or agent.model), usage_limits=limits
         )
-        text, messages = result.output, result.all_messages()
+        messages = result.all_messages()
+        text = _run_text(messages, prior=len(history))
         print(text)
     _cost_note(messages, prior=len(history))
     sessions.save(session_id, name, messages)

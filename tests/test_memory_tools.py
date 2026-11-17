@@ -189,6 +189,30 @@ def test_ai_agent_has_all_toolsets(dirs) -> None:
     assert ai._LIMITS.request_limit == 30
 
 
+def test_ai_loads_a_bundle_on_demand_and_keeps_it_on_resume(dirs, monkeypatch) -> None:
+    """The research/code/watch how-tos stay out of the prompt until the model loads one;
+    a resumed session keeps what it loaded (pydantic-ai rebuilds it from the history)."""
+    from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
+    from pydantic_ai.models.function import FunctionModel
+
+    from ko.agents import ai
+
+    monkeypatch.setattr(ai, "refs_overview_head", lambda: "MAP-SENTINEL")
+    seen = []
+
+    def fn(messages, info):
+        seen.append(repr(messages))
+        if len(seen) == 1:
+            return ModelResponse(parts=[ToolCallPart("load_capability", {"id": "code"})])
+        return ModelResponse(parts=[TextPart("done")])
+
+    first = ai.agent.run_sync("how does x work", model=FunctionModel(fn))
+    assert "- code:" in seen[0] and "MAP-SENTINEL" not in seen[0]  # listed, not loaded
+    assert "MAP-SENTINEL" in seen[1]  # read at load time
+    ai.agent.run_sync("and y?", model=FunctionModel(fn), message_history=first.all_messages())
+    assert "MAP-SENTINEL" in seen[2]
+
+
 # --- shared agent preamble (_shared.preamble) ---
 
 
@@ -213,16 +237,10 @@ def test_preamble_falls_back_on_bad_timezone(monkeypatch):
     assert p.startswith("Today is ")
 
 
-def test_all_agents_inject_the_preamble():
-    """Every agent registers _shared.preamble as a dynamic instruction — so the shared
-    frame reaches all of them (regression guard for a new agent forgetting it).
-    pydantic-ai 2.36 wraps entries in SourcedInstruction (callables inside .instruction);
-    pre-2.36 kept them bare. Handle both — the floor (>=2.32) still admits the old shape."""
-    from ko.agents import ai, repo, research, tv
+def test_ai_injects_the_preamble():
+    """ko ai registers _shared.preamble as a dynamic instruction (pydantic-ai 2.36+ wraps
+    entries in SourcedInstruction, callables inside .instruction)."""
+    from ko.agents import ai
 
-    for mod in (ai, research, repo, tv):
-        names = [
-            getattr(getattr(i, "instruction", i), "__name__", "")
-            for i in mod.agent._instructions
-        ]
-        assert "_context" in names, mod.__name__
+    names = [getattr(getattr(i, "instruction", i), "__name__", "") for i in ai.agent._instructions]
+    assert "_context" in names

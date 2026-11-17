@@ -78,9 +78,9 @@ publish_app = typer.Typer(
 )
 app.add_typer(publish_app, name="publish")
 
-agent_app = typer.Typer(help="AI agents powered by pydantic-ai.", no_args_is_help=True)
+agent_app = typer.Typer(help="Saved `ko ai` sessions (`sessions`).", no_args_is_help=True)
 app.add_typer(agent_app, name="agent")
-app.add_typer(agent_app, name="a", hidden=True)  # shortcut: `ko a research`
+app.add_typer(agent_app, name="a", hidden=True)  # shortcut: `ko a sessions`
 
 
 # --- llm commands ---
@@ -728,65 +728,17 @@ def ai_cmd(
 # --- agent commands ---
 
 
-@agent_app.command("research")
-def agent_research(
-    prompt: str = typer.Argument(
-        None, help="research prompt; omit to enter interactive mode"
-    ),
-    model: str = typer.Option(
-        None,
-        "--model",
-        "-m",
-        help="model override, e.g. vercel:zai/glm-5.3-flash",
-    ),
-    resume: str = typer.Option(
-        None,
-        "--resume",
-        "-r",
-        help="resume a saved session id (enters interactive mode)",
-    ),
-) -> None:
-    """Research agent across web (exa), papers (arxiv, hf), and HN. No prompt = interactive REPL."""
-    _run_agent(agents.research_run, agents.research_repl, prompt, model, resume)
-
-
-@agent_app.command("repo")
-def agent_repo(
-    prompt: str = typer.Argument(
-        None,
-        help="what to find/explain, naming the repo(s) if you can — e.g. "
-        "'how does refs/llm register plugins?'; omit for interactive mode",
-    ),
-    model: str = typer.Option(
-        None, "--model", "-m", help="model override (default: basic tier)"
-    ),
-    resume: str = typer.Option(
-        None,
-        "--resume",
-        "-r",
-        help="resume a saved session id (enters interactive mode)",
-    ),
-) -> None:
-    """Repo-explorer: answers 'how does repo X do Y' over ~/code (read-only; own repos +
-    refs/ reference clones; knows the refs/CLAUDE.md map). Cheap model, cites file:line."""
-    _run_agent(agents.repo_run, agents.repo_repl, prompt, model, resume)
-
-
-@agent_app.command("tv")
-def agent_tv(
-    prompt: str = typer.Argument(
-        None, help="what you're in the mood for; omit to enter interactive mode"
-    ),
+def _ai_alias(
+    prompt: str = typer.Argument(None, help="passed to `ko ai`"),
     model: str = typer.Option(None, "--model", "-m", help="model override"),
-    resume: str = typer.Option(
-        None,
-        "--resume",
-        "-r",
-        help="resume a saved session id (enters interactive mode)",
-    ),
+    resume: str = typer.Option(None, "--resume", "-r", help="resume a saved session id"),
 ) -> None:
-    """TV/movie agent — what to watch in Australia, tuned to Ko. No prompt = interactive REPL."""
-    _run_agent(agents.tv_run, agents.tv_repl, prompt, model, resume)
+    """Folded into `ko ai` (2026-11-17), which loads the research, code or watch how-to itself."""
+    _run_agent(agents.ai_run, agents.ai_repl, prompt, model, resume)
+
+
+for _old in ("research", "repo", "tv"):  # kept so scripts and habits still work
+    agent_app.command(_old, hidden=True)(_ai_alias)
 
 
 sessions_app = typer.Typer(

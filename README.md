@@ -33,7 +33,7 @@ Full docs: **[kotools.khalido.dev](https://kotools.khalido.dev/)**.
 | Command | What it does | What I use it for |
 |---|---|---|
 | `ko ai` | the default agent: every tool above + its own memory | find X, read it, tell me what matters |
-| `ko agent` | specialist agents (`research`, `repo`, `tv`), resumable sessions | deep literature digs; how repo X does Y |
+| `ko agent sessions` | list and index saved `ko ai` sessions | finding an earlier conversation to resume |
 | `ko llm` | one-shot LLM, stdin-aware, no tools; `-f` attaches files, `--schema` constrains JSON | `… \| ko llm "summarize"` inside a pipe |
 | `ko decide` | a typed answer with probabilities: yes/no, `--choice`, `--score`, `--tags` (Jev) | `ko decide "is this a paywall page?" -f page.md` |
 | `ko brief` | morning brief: calendar + mail + HN + papers → one summary | the day's triage in one read |

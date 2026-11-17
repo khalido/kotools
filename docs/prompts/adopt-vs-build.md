@@ -62,8 +62,8 @@ against this with evidence.
 | `llm.run_cost` / `ko billing` | `SpendLimits` |
 | `telemetry.py` | core `Instrumentation` |
 | `ko prompt` briefs | `Skills` |
-| `agents/repo.py` | `RepoContext`, `Coder` |
-| `agents/research.py` | `Researcher` |
+| `agents/ai.py` `code` capability | `RepoContext`, `Coder` |
+| `agents/ai.py` `research` capability | `Researcher` |
 | nothing | `CodeMode`, `Planning`, `SubAgents`, compaction family, `ToolOutputLimits`, `SystemReminders`, `Advisor`, `DynamicWorkflow` |
 
 ## Specific questions to answer

@@ -24,14 +24,17 @@ Set a per-agent default at module import so the agent has a fallback; pass the p
 via `model=` at call time — NOT into the `Agent()` constructor — so the `-m` flag actually takes effect:
 
 ```python
-# research.py
+# ai.py
 _MODEL = os.environ.get("KO_AGENT_MODEL", models.model_for("basic"))
+# a domain how-to the model loads only when a question needs it (static description = cache-stable)
+research = Capability(id="research", description="Method for a literature question.",
+                      instructions="...", defer_loading=True)
 # defer: the model (and its key) is built per run by models.resolve(), which applies the
 # ModelSpec (gateway host order, settings). _shared.run does that for you.
-agent = Agent(_MODEL, defer_model_check=True, instructions=..., toolsets=[web, papers, news])
+agent = Agent(_MODEL, defer_model_check=True, capabilities=[research], instructions=..., toolsets=[web, papers, news])
 
 def run(prompt, model=None, resume=None):
-    return _shared.run(agent, prompt, name="research", model=model, resume=resume)
+    return _shared.run(agent, prompt, name="ai", model=model, resume=resume)
 ```
 
 `KO_AGENT_MODEL` is global to all agents (session-level override); the `-m` flag feeds `model=` per-call.

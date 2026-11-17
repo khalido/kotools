@@ -40,8 +40,8 @@ This file is a stub, not a manual — same rule as agent-browser/herdr: **the in
 | `flight <code> [date]` | flight status card: airports, local sched/est/actual times, terminal, gate (OAG free tier, cached 5 min) |
 | `brief [--raw]` | morning brief: gather + one cheap-model synthesis |
 | `publish ...` | folder → Cloudflare Worker (`new`/`preview`/`rm`/`list`) |
-| `ai "<prompt>"` | default agent, all toolsets + memory, basic tier (`-m` for hard questions) |
-| `agent research\|repo\|tv\|sessions` (`a`) | specialist agents, resumable sessions |
+| `ai "<prompt>"` | the one agent: all toolsets + memory, loads research/code/watch how-tos on demand, basic tier (`-m` for hard questions) |
+| `agent sessions` (`a`) | saved `ko ai` sessions; `agent research\|repo\|tv` are hidden aliases for `ko ai` |
 | `mcp inspect\|call\|overview\|servers` | investigate/use MCP servers |
 | `refs [pull]\|setup\|add\|list` | manage ~/code reference clones |
 | `prompt [name]` | my kickoff briefs, by name |
@@ -73,7 +73,7 @@ Releasing: `/release` repo skill — CalVer, CHANGELOG canonical, human approves
 - **Keys:** modules call `config.require_key(name, hint)` → one `MissingKeyError` type; `ko doctor` reports the lot.
 
 ## Agents (`src/ko/agents/`)
-- **Tools declared once** as FunctionToolsets in `_toolsets.py` (web, papers, news, tmdb, files…); agents are ~15-50-line compositions. Docstring-as-contract: a tool docstring states every silent filtering default — the agent-side twin of "--help is the contract".
+- **Tools declared once** as FunctionToolsets in `_toolsets.py` (web, papers, news, tmdb, files…); `ko ai` is the one agent; domain how-tos are deferred capabilities it loads on demand (`agents/ai.py`). Docstring-as-contract: a tool docstring states every silent filtering default — the agent-side twin of "--help is the contract".
 - Resilient tools wrap calls in `_try` (error note, not raise) except programming errors and `MissingKeyError` — an unset key must be learned, never routed around silently.
 - Sessions: full trace dumped per turn to state; resume `-r`; SQLite index is a rebuildable projection, the JSON log is truth ("the log is the agent").
 - Memory: per-agent md workspace, head-anchored `memory.md`; shared user context at `~/.config/ko/memory.md`. Full plan: `docs/memory.md`.

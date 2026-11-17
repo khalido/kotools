@@ -87,3 +87,48 @@ def test_run_uses_the_default_limit_when_an_agent_sets_none(monkeypatch):
     monkeypatch.setattr(_shared, "_console", type("Piped", (), {"is_terminal": False})())
     _shared.run(Fake(), "q")
     assert seen["usage_limits"].request_limit is not None
+
+
+def test_a_token_budget_winds_down_before_it_overshoots():
+    """Input tokens grow every request (the context is re-sent), so the token budget warns
+    at 60% and takes the tools away at 75%: the run answers instead of raising."""
+    agent, calls, offered = _hungry_agent()
+    result = agent.run_sync("q", usage_limits=UsageLimits(request_limit=None, input_tokens_limit=2000))
+    assert result.output == "what I found"
+    assert offered[-1][0] == 0 and len(calls) == len(offered) - 1
+    assert "token budget is nearly spent" in str(result.all_messages())
+    assert result.usage.input_tokens <= 2000
+
+
+def test_piped_output_keeps_text_written_alongside_a_tool_call():
+    msgs = [
+        ModelResponse(parts=[TextPart("the picks"), ToolCallPart("append_memory", {})]),
+        ModelResponse(parts=[TextPart("Logged them.")]),
+    ]
+    assert _shared._run_text(msgs) == "the picks\n\nLogged them."
+
+
+def test_terminal_stream_runs_past_narration_to_the_answer():
+    """run_stream would stop at "let me check" (first text = final output) and skip the tool."""
+    from pydantic_ai.models.function import DeltaToolCall
+
+    calls = []
+
+    async def stream(messages, info):
+        if len(messages) == 1:
+            yield "Let me check."
+            yield {0: DeltaToolCall(name="look", json_args="{}")}
+        else:
+            yield "The answer."
+
+    agent = Agent(FunctionModel(stream_function=stream))
+
+    @agent.tool_plain
+    def look() -> str:
+        """Look something up."""
+        calls.append("look")
+        return "a finding"
+
+    text, _ = _shared._stream(agent, "q", [])
+    assert calls == ["look"]
+    assert text == "Let me check.\n\nThe answer."

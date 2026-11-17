@@ -24,6 +24,14 @@ Candidate subcommands. WORKLOG tracks what happened; this tracks what might.
 
 **Smaller, any-time:** `ko prompt suggest` (project detection) + `include:`; CLI polish (enumerated errors, idempotency field, `has_more`+hint, `-n`/`--n` standardize, `NO_COLOR`); `ko publish --md` mobile nav; `ko gdocs` review/comment (Drive scope). Backlog commands (`yt`, `q`, `news`, `scholar`…) further down.
 
+## One agent: follow-ups (from the 2026-11-17 fold trial, not built)
+
+- [ ] **Cap the paper readers.** `arxiv_fetch`, `exa_get`, `hf_get` return whole papers (up to 293k chars) that ride along in every later request; about 70% of a smart research run's cost. Cap around 20-30k chars with an offset to read on; check pydantic-ai-harness's `ToolOutputLimits` first (docs/prompts/adopt-vs-build.md).
+- [ ] **Tool overlap, for KO to judge.** Five readers (`arxiv_fetch`, `exa_get`, `hf_get`, `fetch_url`, `papers_get`) and three topic searches (`papers_search`, `arxiv_search`, `hf_search`); `tv_reviews` vs `exa_search` for reviews; `read_note` re-reads memory already in the prompt. Either merge, or say in each docstring which to use when.
+- [ ] `papers_cites` leads with mega-surveys and `papers_refs` with BLEU/BERT/PyTorch: a recency filter or skipping the most-cited classics.
+- [ ] `pkg_info('letta')` picked the npm package for a Python question.
+- [ ] Golden questions (~10, run twice each) so the next toolset change is judged by the same set.
+
 ## Next up
 
 - [x] **`ko gmail` drafts + attachments** — SHIPPED 2026-07-27 (drafts pending user re-auth). Attachments (`gmail.readonly`, no re-auth): `ko gmail attach <id>` lists (index/filename/size/mimeType, TSV/`--json`); `attach <id> [n] -o DIR` downloads the nth (or all), never overwriting (-1, -2…) — composes with `ko doc`. Drafts (`gmail.compose` added to `SCOPES_READWRITE`, one re-auth): `draft new|reply|list|show|update|send`. Reply threading = threadId + In-Reply-To/References + `Re:` (subject override drops threadId, keeps RFC headers); `--md` → multipart/alternative (plain first, markdown-it HTML); `update` re-fetches + preserves omitted to/cc/subject/threadId; header values reject newlines. **Send is opt-in**: `draft send` refuses unless `[gmail] allow_send = true` / `KO_GMAIL_SEND=1`, then confirms (`publish rm` pattern). Live-verified: reads + attachment list/download (bytes match, collision suffix), missing-compose-scope error path. Not done: labels/archive (`gmail.modify`), re-attaching originals, inline images, tracking.
@@ -36,6 +44,8 @@ Candidate subcommands. WORKLOG tracks what happened; this tracks what might.
 - [x] **`ko papers search|get|cites|refs|similar`** — SHIPPED 2026-07-03 as designed (`docs/papers-cli-design.md`): OpenAlex backbone (no key), S2 tldr/similar behind optional `S2_API_KEY`, DOI routing in `fetch.py` (doi.org URLs → OA copy first — verified live on a Nature DOI that previously extracted to nothing), `papers_search`/`papers_cites` added to the research agent's toolset. Zero new deps. ⚠️ found live: occasional OpenAlex bad-merge records (wrong title, right abstract) — search the title and use the W-id when a record looks off.
 
 ## `ko agent repo` — cheap repo-explorer agent (SHIPPED 2026-07-10, as designed below)
+
+Folded into `ko ai` as the `code` capability 2026-11-17 (WORKLOG); `ko agent repo` is a hidden alias.
 
 Built same day: `agents/_files.py` + `files` toolset + `agents/repo.py` + `ko agent repo`. Live: answered "how does harness prevent path traversal" with exact quotes + file:line, using the refs/CLAUDE.md takeaways, for $0.0005/run on deepseek-flash. Design notes kept:
 

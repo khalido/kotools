@@ -46,7 +46,7 @@ Docs). Accounts are short tags: `ko google accounts` lists them, `-a <tag>` pick
 Task notes are markdown and render in the app.
 
 **LLM + agents** — `ko llm "<prompt>"` (one-shot, stdin-aware, no tools), `ko ai "<prompt>"`
-(the default agent, all toolsets + memory), `ko agent research|repo|tv`, `ko models`.
+(the one agent: all toolsets + memory, loads research/code/watch how-tos on demand), `ko models`.
 
 **Misc** — `ko publish` (folder → Cloudflare), `ko mcp` (inspect/call MCP servers), `ko tv`,
 `ko brief`, `ko billing`, `ko logs`, `ko prompt`, `ko refs`, `ko doctor`.

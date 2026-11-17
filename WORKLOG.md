@@ -2,6 +2,33 @@
 
 Newest first. Big picture only — git commits have the detail; candidate ideas and decisions live in `docs/ideas.md`.
 
+## 2026-11-17 — One agent: `ko ai` absorbs research, repo and tv
+
+**Why.** Anthropic's "when to fold subagents into your main agent loop" (2026-10-22): one loop that loads detail on demand usually beats specialists, on quality and usually cost. Keep separate agents only for measured context bloat, parallel throwaway work, or tool confusion. None fit: the three specialists were `ko ai` with a different prompt, model default and fewer toolsets. KO: the tools are distinct enough not to be confused, so all 29 stay visible; overlap gets fixed in descriptions if it shows up.
+
+**How.** pydantic-ai 2.67's deferred capabilities: `research`, `code` (scope rules plus the refs/CLAUDE.md map, read at load time) and `watch` (AU streaming, `[agents] tv_tastes`, don't re-pitch) are `Capability(defer_loading=True)` in `agents/ai.py`. The model sees a static one-line catalog and calls `load_capability`; the instructions arrive in the next request's system prompt and survive `-r` resume (pinned by a FunctionModel test). `agent research|repo|tv` are hidden aliases for `ko ai`; repo and tv memory appended to ai's `memory.md` (backup `memory.md.bak-2026-11-17`; the old dirs are left).
+
+**Trial, 11 live runs** (traces read by a fresh subagent):
+
+| Question | Old specialist | `ko ai` |
+|---|---|---|
+| research, smart | best answer, **$12.58** (6.2M input tokens, 19 requests, no cap) | same papers, $1.84 / $3.72; picked a benchmark as one of the three |
+| research, basic | — | before the method fix: popular picks, no citation walk; after: walked citations, found the Mem0/Zep replication dispute, $0.08 |
+| code (refs/llm plugins) | correct, $0.04 | correct, file:line spot-checked, $0.05 ×2 |
+| watch | most complete, $0.01 | good, $0.01–0.02; checked memory, didn't re-pitch |
+
+Every `ko ai` run called `load_capability` first with the right id; no invented tools or params. Research cost is context growth: whole papers (arxiv_fetch up to 239k chars, exa_get 293k) re-sent on every later request.
+
+**Fixed on the way:**
+- Terminal `ko ai` stopped at the model's first narration ("let me look that up"): `run_stream` treats the first text as the final output and skips later tool calls. `_stream` now uses `run_sync` with an event handler: runs to completion, streams every text part. Checked live, one-shot and two REPL turns.
+- Piped `ko ai` printed only the last response, so an answer written alongside a tool call was lost (the watch picks, before "Logged the picks"). It prints every text part now.
+- A 3M input-token budget next to the 30-request cap (about $6 smart, $1 basic); the wrap-up guard warns at 60% and takes tools away at 75%, so a run answers instead of raising.
+- Research method: full text for the 1-3 seeds only, at most two a request, abstracts for the rest. Base prompt: say "saved" only after the save returned (a basic run claimed a note it never wrote).
+
+Tradeoff on record: piped output now carries the model's narration lines too ("Let me check."). Better than losing an answer; if it's noise in agent traces, keep text-only parts only when they're final.
+
+**Left** (docs/ideas.md "One agent: follow-ups"): cap the paper readers' output, tool overlap.
+
 ## 2026-11-16 — Overnight cleanup
 
 **Google `except` blocks.** `_GoogleTyper` runs every Google command and callback inside `_google_errors`, which turns `AuthError`, any `GoogleError` (Sheets/Docs/Drive/Cal/Gmail errors all subclass it), `HttpError` and network errors into the same `_die` line, honouring the command's own `--json`. 22 per-command `try` blocks caught only those and printed the same thing, so they're gone, along with `_resolve_sid` (a wrapper whose only job was that catch). Five mixed blocks keep their `except ValueError` (bad cell data, bad JSON, bad dates aren't Google errors). Kept: `_guard_comment_orphans` (swallows a DriveError on purpose), `_confirm_overwrite` (a 400 means "not a Doc"), `cal cals` (skips one account, carries on). Every touched command checked before and after by `tests/test_cli_google_errors.py`: same exit code, same stderr line, same `--json` object, for a domain error, an HttpError and an AuthError.
