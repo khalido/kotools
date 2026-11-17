@@ -12,11 +12,21 @@ Interactive: ai.repl()
 
 from __future__ import annotations
 
+import os
+from datetime import timedelta
+
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import Capability
 from pydantic_ai.usage import UsageLimits
+from pydantic_ai_harness.tool_output_limits import (
+    Band,
+    LocalFileStore,
+    Spill,
+    ToolOutputLimits,
+    Truncate,
+)
 
-from ko import config, models
+from ko import config, dirs, models
 from ko.agents import _shared
 from ko.agents._files import refs_overview_head
 from ko.agents._memory import instructions_block, memory_toolset
@@ -92,10 +102,19 @@ watch = Capability(
     defer_loading=True,
 )
 
+# A tool result over 20k chars (a whole paper is up to ~300k) is saved to disk and the model
+# gets a preview plus a handle it reads on with read_tool_result. Results stay in history and
+# are re-sent every request, so this was most of a research run's cost (WORKLOG 2026-11-17).
+# If the save fails it truncates instead, and the harness logs a warning to stderr.
+output_limits = ToolOutputLimits(
+    bands=[Band(over=20_000, action=Spill(then=Truncate(max_chars=20_000)))],
+    store=LocalFileStore(base_dir=dirs.cache_dir() / "tool-output", cleanup_after=timedelta(days=7)),
+)
+
 agent = Agent(
     _MODEL,
     defer_model_check=True,  # the model (and its key) is resolved per run by _shared
-    capabilities=[_shared.wrap_up_near_limit, research, code, watch],
+    capabilities=[_shared.wrap_up_near_limit, output_limits, research, code, watch],
     instructions=(
         "You are ko — Ko's personal agent, the default entry to his CLI toolkit. "
         "Route by task: current web → exa_search/fetch_url; literature → the papers "
@@ -105,7 +124,8 @@ agent = Agent(
         "a literature, code or what-to-watch question. "
         "Combine tools freely but stay frugal: survey before reading, read only what "
         "answers the question. Keep answers tight and concrete; cite URLs, papers, or "
-        "file:line for every claim. Maintain your memory per its rules; say you saved "
+        "file:line for every claim. A long tool result comes back as a preview and a handle: "
+        "read on with read_tool_result only for the part you need. Maintain your memory per its rules; say you saved "
         "something only after the tool call that saved it returned."
     ),
     toolsets=[web, papers, news, ai_models, packages, tmdb, files, memory_toolset("ai")],
@@ -124,13 +144,36 @@ def _memory() -> str:
     return instructions_block("ai")
 
 
-def run(prompt: str, model: str | None = None, resume: str | None = None) -> str:
+# the most one run (one REPL turn) may spend, USD; it winds down to an answer before going over.
+# KO 2026-11-17 after a $12.58 research question. `--budget` per run, `[agents] budget` to change.
+DEFAULT_BUDGET = 1.0
+
+
+def budget_usd(budget: float | None = None) -> float:
+    """The run's budget: the argument, else KO_AGENT_BUDGET / `[agents] budget`, else $1.
+    A value that isn't a positive number is a ConfigError, never silently the default."""
+    raw = budget
+    for source in (lambda: os.environ.get("KO_AGENT_BUDGET"), lambda: config.local_get("agents", "budget"),
+                   lambda: config.get("agents", "budget")):
+        if raw is None:
+            raw = source()  # not config.setting: its `or` chain would turn a 0 into the default
+    raw = DEFAULT_BUDGET if raw is None else raw
+    try:
+        usd = float(raw)
+    except (TypeError, ValueError):
+        usd = 0.0
+    if not usd > 0:
+        raise config.ConfigError(f"agent budget must be a positive number of USD, got {raw!r} (--budget or [agents] budget)")
+    return usd
+
+
+def run(prompt: str, model: str | None = None, resume: str | None = None, budget: float | None = None) -> str:
     """One-shot; streams to a TTY, plain text when piped."""
     return _shared.run(
-        agent, prompt, name="ai", model=model, resume=resume, limits=_LIMITS
+        agent, prompt, name="ai", model=model, resume=resume, limits=_LIMITS, budget=budget_usd(budget)
     )
 
 
-def repl(model: str | None = None, resume: str | None = None) -> None:
+def repl(model: str | None = None, resume: str | None = None, budget: float | None = None) -> None:
     """Interactive session; pass resume=<id> to continue an earlier one."""
-    _shared.repl(agent, banner="ai", model=model, resume=resume, limits=_LIMITS)
+    _shared.repl(agent, banner="ai", model=model, resume=resume, limits=_LIMITS, budget=budget_usd(budget))

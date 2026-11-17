@@ -12,7 +12,7 @@ takes effect — the Agent reads its default model at import, before the CLI run
 from __future__ import annotations
 
 import readline  # noqa: F401 — enables up-arrow history + line editing in repl
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -31,7 +31,7 @@ from rich.live import Live
 from rich.markdown import Markdown
 
 from ko import config, logs, sessions
-from ko.llm import run_cost
+from ko.llm import run_cost, tally
 from ko.models import resolve
 
 _console = Console()
@@ -66,55 +66,92 @@ def _cost_note(messages: list, prior: int = 0) -> None:
     )
 
 
-def _requests_left(ctx) -> int | None:
-    limit = ctx.usage_limits.request_limit if ctx.usage_limits else None
-    return None if limit is None else limit - ctx.usage.requests
+_GROWTH = 1.5
 
 
-def _token_share(ctx) -> float:
-    """How much of the run's input-token budget is spent (0 when there's no budget)."""
-    limit = ctx.usage_limits.input_tokens_limit if ctx.usage_limits else None
-    return ctx.usage.input_tokens / limit if limit else 0.0
+def _requests_left(ctx) -> tuple[float, str] | None:
+    """How many more model requests this run can afford, and which limit says so: the fewest
+    left under the request cap, the input-token cap and the dollar budget
+    (`metadata["budget_usd"]`). Tokens and dollars are projected at 1.5x the last request: each
+    one re-sends the whole context plus the new tool results, so it costs more than the one
+    before. None when nothing limits the run."""
+    limits = ctx.usage_limits
+    left: list[tuple[float, str]] = []
+    if limits and limits.request_limit is not None:
+        left.append((limits.request_limit - ctx.usage.requests, f"{limits.request_limit}-request cap"))
+    mine = [m for m in ctx.messages if isinstance(m, ModelResponse) and m.run_id == ctx.run_id]
+    if not mine:
+        return min(left, default=None)
+    last = mine[-1]
+    if limits and limits.input_tokens_limit and last.usage and last.usage.input_tokens:
+        room = limits.input_tokens_limit - ctx.usage.input_tokens
+        left.append((room / (_GROWTH * last.usage.input_tokens), f"{limits.input_tokens_limit:,}-token cap"))
+    budget = (ctx.metadata or {}).get("budget_usd")
+    if budget is not None:
+        per = tally([last]).usd
+        if per is None:
+            _note_unpriced(last.model_name or "this model")
+        elif per > 0:
+            spent = tally(mine).usd or 0.0
+            left.append(((budget - spent) / (_GROWTH * per), f"${spent:.{2 if spent >= 0.1 else 4}f} of the ${budget:g} budget spent"))
+    return min(left, default=None)
+
+
+_unpriced_noted: set[str] = set()
+
+
+def _note_unpriced(model: str) -> None:
+    """Fail loud, once per model: a budget we can't price is no budget."""
+    if model not in _unpriced_noted:
+        _unpriced_noted.add(model)
+        _err.print(
+            f"[note] no price known for {model}: the run's $ budget can't be checked; "
+            "the request and token caps still apply",
+            style="yellow", markup=False, highlight=False,
+        )
 
 
 @dataclass
 class _WrapUpNearLimit(AbstractCapability):
-    """pydantic-ai's "wrapping up before the request limit" recipe, for the input-token budget too. A run that reaches its limit
-    raises, losing every tool call already paid for, so the model is told to finish in time, and its
-    tools go away on the last request. Request-scoped, so the warning doesn't bust the prompt cache."""
+    """pydantic-ai's "wrapping up before the request limit" recipe, extended to the token cap and
+    the dollar budget. A run that reaches a limit raises, losing every tool call already paid for,
+    so the model is told to finish while about three requests are left, and gets no tools at all
+    (load_capability included) once under 1.5 are. Request-scoped, so the prompt cache holds.
+    Says so on stderr once per run, naming the limit, so the caller can raise it."""
 
-    warn_at: int = 3
-    # input tokens grow with every request (the whole context is re-sent), so the token budget
-    # warns early and takes the tools away before one more request could overshoot it
-    warn_share: float = 0.6
-    stop_share: float = 0.75
+    warn_at: float = 3
+    last_at: float = 1.5  # under this, the next request has to be the answer
 
     async def before_model_request(self, ctx, request_context):
-        left = _requests_left(ctx)
-        if (left is not None and left <= self.warn_at) or _token_share(ctx) >= self.warn_share:
-            budget = (
-                f"{left} model request(s) left in this run"
-                if left is not None and left <= self.warn_at
-                else "This run's token budget is nearly spent"
+        found = _requests_left(ctx)
+        if found is None or found[0] > self.warn_at:
+            return request_context
+        left, why = found
+        if ctx.run_id not in _wound_down:
+            _wound_down.add(ctx.run_id)
+            _err.print(f"[note] wrapping up: {why}", style="yellow", markup=False, highlight=False)
+        ctx.enqueue(
+            SystemPromptPart(
+                "This run is nearly out of budget: give your final answer now from "
+                "what you have found, and say plainly what you could not finish.",
+                scope="request",
             )
-            ctx.enqueue(
-                SystemPromptPart(
-                    f"{budget}: give your final answer now from "
-                    "what you have found, and say plainly what you could not finish.",
-                    scope="request",
-                )
-            )
+        )
+        if left <= self.last_at:
+            # here, not in prepare_tools: load_capability is added after prepare_tools runs
+            params = replace(request_context.model_request_parameters, function_tools=[])
+            request_context = replace(request_context, model_request_parameters=params)
         return request_context
 
-    async def prepare_tools(self, ctx, tool_defs):
-        return [] if _requests_left(ctx) == 1 or _token_share(ctx) >= self.stop_share else tool_defs
+
+_wound_down: set[str] = set()
 
 
 wrap_up_near_limit = _WrapUpNearLimit()
 
 
 def _stream(
-    agent: Agent, prompt: str, history: list, model: str | None = None, limits=None
+    agent: Agent, prompt: str, history: list, model: str | None = None, limits=None, budget: float | None = None
 ) -> tuple[str, list]:
     """Run one turn to completion with live markdown output. Returns (text, full message history).
 
@@ -141,10 +178,16 @@ def _stream(
             message_history=history,
             model=resolve(model or agent.model),
             usage_limits=limits,
+            metadata=_budget(budget),
             event_stream_handler=show,
         )
     messages = result.all_messages()
     return _run_text(messages, prior=len(history)), messages
+
+
+def _budget(usd: float | None) -> dict | None:
+    """Run metadata carrying the dollar budget to _requests_left (it reads ctx.metadata)."""
+    return None if usd is None else {"budget_usd": usd}
 
 
 def _run_text(messages: list, prior: int = 0) -> str:
@@ -168,8 +211,10 @@ def run(
     model: str | None = None,
     resume: str | None = None,
     limits=None,
+    budget: float | None = None,
 ) -> str:
     """One-shot. Streams pretty markdown to a TTY; plain text when piped. Saves the session.
+    `budget`: most the run may spend in USD; it winds down before going over (see _requests_left).
 
     `resume` continues a saved session (the prompt becomes its next turn) instead of
     starting fresh — so `ko ai "follow-up" -r <id>` works as a one-shot continuation.
@@ -179,10 +224,11 @@ def run(
     history = sessions.load(resume) if resume else []
     logs.add(agent=name, session=session_id, resumed=bool(resume))
     if _console.is_terminal:
-        text, messages = _stream(agent, prompt, history, model=model, limits=limits)
+        text, messages = _stream(agent, prompt, history, model=model, limits=limits, budget=budget)
     else:
         result = agent.run_sync(
-            prompt, message_history=history, model=resolve(model or agent.model), usage_limits=limits
+            prompt, message_history=history, model=resolve(model or agent.model), usage_limits=limits,
+            metadata=_budget(budget),
         )
         messages = result.all_messages()
         text = _run_text(messages, prior=len(history))
@@ -200,8 +246,10 @@ def repl(
     model: str | None = None,
     resume: str | None = None,
     limits=None,
+    budget: float | None = None,
 ) -> None:
     """Interactive session; history preserved across turns and saved after each.
+    `budget` applies per turn: each prompt is its own run.
 
     `resume` = a session id to continue an earlier conversation.
     """
@@ -231,7 +279,7 @@ def repl(
             _console.print("[dim]context cleared (new session)[/dim]")
             continue
         prior = len(history)
-        _, history = _stream(agent, user_input, history, model=model, limits=limits)
+        _, history = _stream(agent, user_input, history, model=model, limits=limits, budget=budget)
         _cost_note(history, prior=prior)
         sessions.save(session_id, name, history)
         logs.add(agent=name, session=session_id)

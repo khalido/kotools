@@ -686,14 +686,19 @@ def _model_info_lines(i, years: int, *, links: bool) -> list[str]:
 
 
 def _run_agent(
-    run: Callable[..., None], repl: Callable[..., None], prompt: str | None, model: str | None, resume: str | None
+    run: Callable[..., None],
+    repl: Callable[..., None],
+    prompt: str | None,
+    model: str | None,
+    resume: str | None,
+    budget: float | None = None,
 ) -> None:
     """One-shot `run` with a prompt, else the `repl`; a missing resume id is a clean error."""
     try:
         if prompt:
-            run(prompt, model=model, resume=resume)
+            run(prompt, model=model, resume=resume, budget=budget)
         else:
-            repl(model=model, resume=resume)
+            repl(model=model, resume=resume, budget=budget)
     except FileNotFoundError as e:
         if not resume:
             _die_from(e)
@@ -719,10 +724,13 @@ def ai_cmd(
     resume: str = typer.Option(
         None, "--resume", "-r", help="resume a saved session id"
     ),
+    budget: float = typer.Option(
+        None, "--budget", "-b", help="most a run may spend, USD; it wraps up first (default $1, config \\[agents] budget)"
+    ),
 ) -> None:
-    """ko's default agent — all toolsets (web, papers, HN, movies, ~/code files read-only)
-    + its own memory. One-shot or REPL; sessions saved; capped at 30 model requests/run."""
-    _run_agent(agents.ai_run, agents.ai_repl, prompt, model, resume)
+    """ko's one agent — all toolsets (web, papers, HN, movies, ~/code files read-only) + memory,
+    loading research/code/watch how-tos as needed. One-shot or REPL; sessions saved."""
+    _run_agent(agents.ai_run, agents.ai_repl, prompt, model, resume, budget)
 
 
 # --- agent commands ---
@@ -732,9 +740,10 @@ def _ai_alias(
     prompt: str = typer.Argument(None, help="passed to `ko ai`"),
     model: str = typer.Option(None, "--model", "-m", help="model override"),
     resume: str = typer.Option(None, "--resume", "-r", help="resume a saved session id"),
+    budget: float = typer.Option(None, "--budget", "-b", help="most a run may spend, USD"),
 ) -> None:
     """Folded into `ko ai` (2026-11-17), which loads the research, code or watch how-to itself."""
-    _run_agent(agents.ai_run, agents.ai_repl, prompt, model, resume)
+    _run_agent(agents.ai_run, agents.ai_repl, prompt, model, resume, budget)
 
 
 for _old in ("research", "repo", "tv"):  # kept so scripts and habits still work

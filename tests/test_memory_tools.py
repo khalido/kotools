@@ -244,3 +244,36 @@ def test_ai_injects_the_preamble():
 
     names = [getattr(getattr(i, "instruction", i), "__name__", "") for i in ai.agent._instructions]
     assert "_context" in names
+
+
+def test_a_huge_tool_result_is_spilled_not_resent(tmp_path, monkeypatch) -> None:
+    """A whole paper (200k chars) reaches the model as a preview + handle, and the next
+    request carries that, not the paper; read_tool_result reads the rest back."""
+    from pydantic_ai import Agent
+    from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
+    from pydantic_ai.models.function import FunctionModel
+    from pydantic_ai_harness.tool_output_limits import LocalFileStore
+
+    from ko.agents import ai
+
+    monkeypatch.setattr(ai.output_limits, "_store", LocalFileStore(base_dir=tmp_path))
+    sizes, tools = [], []
+
+    def fn(messages, info):
+        sizes.append(len(repr(messages)))
+        tools.append({t.name for t in info.function_tools})
+        if len(sizes) == 1:
+            return ModelResponse(parts=[ToolCallPart("paper", {})])
+        return ModelResponse(parts=[TextPart("done")])
+
+    agent = Agent(FunctionModel(fn), capabilities=[ai.output_limits])
+
+    @agent.tool_plain
+    def paper() -> str:
+        """A whole paper."""
+        return "word " * 40_000
+
+    agent.run_sync("read it")
+    assert sizes[1] - sizes[0] < 30_000  # the 200k payload didn't ride along
+    assert "read_tool_result" in tools[1]
+    assert any(tmp_path.rglob("*"))  # the full text is on disk

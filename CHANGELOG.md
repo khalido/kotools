@@ -22,7 +22,7 @@ Cut a release with the repo's `/release` skill.
 - `ko book` shows the book's description and subjects from Open Library. `ko ai` and `ko agent tv` gain critics' reviews, what's in cinemas, and books.
 
 ### Changed
-- `ko ai` is the one agent: it loads a research, code or what-to-watch how-to when a question needs one. `ko agent research|repo|tv` still work, as hidden aliases for `ko ai` (basic tier, so `-m smart` for the old research default); their memory moved into `ko ai`'s. A run also stops at 3M input tokens, winding down first so it still answers.
+- `ko ai` is the one agent: it loads a research, code or what-to-watch how-to when a question needs one. `ko agent research|repo|tv` still work, as hidden aliases for `ko ai` (basic tier, so `-m smart` for the old research default); their memory moved into `ko ai`'s. Each run has a budget, $1 by default (`--budget`, `[agents] budget`): it winds down to an answer before going over. Tool results over 20k characters (whole papers) are saved to disk and read back in parts instead of being re-sent with every request; a smart research question went from $1.84-$3.72 to $0.71.
 - `ko gmail draft update` keeps the draft's attachments (it used to refuse, or drop them with `--force`); `--attach` adds files, `--drop-attachments` removes the old ones. Images shown inline by the old body are dropped and listed.
 - `ko decide -f` reads `.json` files.
 - `ko llm` and `ko decide` say on stderr when stdin is an open pipe with nothing in it, instead of waiting silently.

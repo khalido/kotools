@@ -22,12 +22,24 @@ Every `ko ai` run called `load_capability` first with the right id; no invented 
 **Fixed on the way:**
 - Terminal `ko ai` stopped at the model's first narration ("let me look that up"): `run_stream` treats the first text as the final output and skips later tool calls. `_stream` now uses `run_sync` with an event handler: runs to completion, streams every text part. Checked live, one-shot and two REPL turns.
 - Piped `ko ai` printed only the last response, so an answer written alongside a tool call was lost (the watch picks, before "Logged the picks"). It prints every text part now.
-- A 3M input-token budget next to the 30-request cap (about $6 smart, $1 basic); the wrap-up guard warns at 60% and takes tools away at 75%, so a run answers instead of raising.
+- A 3M input-token cap next to the 30-request cap, as a backstop when a model has no known price.
 - Research method: full text for the 1-3 seeds only, at most two a request, abstracts for the rest. Base prompt: say "saved" only after the save returned (a basic run claimed a note it never wrote).
 
 Tradeoff on record: piped output now carries the model's narration lines too ("Let me check."). Better than losing an answer; if it's noise in agent traces, keep text-only parts only when they're final.
 
-**Left** (docs/ideas.md "One agent: follow-ups"): cap the paper readers' output, tool overlap.
+**Guardrails, after the $12.58 (KO: "shocking").** Two, both measured on the same research question:
+- **Big tool results spill to disk.** pydantic-ai-harness `ToolOutputLimits` (now a runtime dependency, it was dev-only): a result over 20k chars is saved under `~/.cache/ko/tool-output/` (kept 7 days) and the model gets a preview plus a handle for `read_tool_result`. Lossless; falls back to truncating at 20k if the write fails. Session logs keep the preview, not the full text.
+- **A dollar budget per run, $1 by default** (`--budget`, `[agents] budget`; per turn in the REPL). The wrap-up guard now projects every limit as "requests left": the request cap exactly, the token cap and the budget from 1.5x the last request (each re-sends the context plus new results). It warns about three requests out and strips every tool when under 1.5 are left, so the run always ends in an answer. The strip happens on the request itself: `prepare_tools` can't drop `load_capability`, which pydantic-ai adds after it, and the review caught a run that raised by loading a capability on its last request. One stderr line says which limit fired (`[note] wrapping up: $0.62 of the $1 budget spent`), so a too-tight budget is visible, not silent. Priced by `llm.tally`, the side-effect-free half of `run_cost` (one pricing function). A model with no known price prints a one-time note and runs on the request and token caps.
+- Not used: pydantic-ai's `cost_limit` and the harness's `SpendLimits` read `usage.cost`, which the Vercel gateway leaves empty, and both raise instead of winding down.
+
+| Same question, smart | Cost | Requests | Notes |
+|---|---|---|---|
+| old `agent research` | $12.58 | 19 | 6.2M input tokens, no cap |
+| `ko ai -m smart`, no guardrails | $1.84 / $3.72 | 9 / 13 | whole papers re-sent |
+| `ko ai -m smart`, guardrails | **$0.71** | 9 | 4 results spilled, 6 read-backs, wind-down fired once; same seed papers |
+| `ko ai` basic, guardrails | $0.06 | 9 | |
+
+**Left** (docs/ideas.md "One agent: follow-ups"): tool overlap, prompt caching (traces show `cache_read_tokens: 0`).
 
 ## 2026-11-16 — Overnight cleanup
 

@@ -70,6 +70,8 @@ class RunCost:
     output_tokens: int
     usd: float | None = None
     source: str = ""
+    requests: int = 0
+    tool_calls: int = 0
 
     @property
     def note(self) -> str:
@@ -112,15 +114,13 @@ def raise_if_cut_short(messages: list, model: str) -> None:
     raise TruncatedOutput(f"{model} stopped early — {why}{via}; partial output discarded. Retry or try another -m.")
 
 
-def run_cost(messages: list) -> RunCost:
-    """Aggregate cost over a run's messages. OpenRouter puts the ACTUAL billed cost in
-    provider_details['cost'] — prefer it. The gateway reports cost only ~20 s later
-    (/v1/generation), so its calls are estimated from the cached catalog price (all input at
-    full price — cache-read discounts ignored, so it errs high); anything
-    else falls back to genai-prices, which can miss brand-new models (then tokens only).
-
-    Also adds the run onto the command's log event (tokens, cost, requests, tool calls) — so
-    call it once per run, over that run's new messages only."""
+def tally(messages: list) -> RunCost:
+    """What a run's messages cost, with no side effects (the agents' spend budget calls it
+    every request). OpenRouter puts the ACTUAL billed cost in provider_details['cost'] —
+    prefer it. The gateway reports cost only ~20 s later (/v1/generation), so its calls are
+    estimated from the cached catalog price (all input at full price — cache-read discounts
+    ignored, so it errs high); anything else falls back to genai-prices, which can miss
+    brand-new models (then tokens only, usd None)."""
     from pydantic_ai.messages import ModelResponse, ToolCallPart
 
     model, tin, tout, usd, source, requests, tools = "?", 0, 0, None, "", 0, 0
@@ -149,12 +149,21 @@ def run_cost(messages: list) -> RunCost:
                 usd, source = (usd or 0.0) + float(m.cost().total_price), "estimate"
             except Exception:
                 pass  # model not in the genai-prices snapshot yet — tokens only
+    return RunCost(model=model, input_tokens=tin, output_tokens=tout, usd=usd, source=source,
+                   requests=requests, tool_calls=tools)
+
+
+def run_cost(messages: list) -> RunCost:
+    """`tally`, then adds the run onto the command's log event (tokens, cost, requests, tool
+    calls) — so call it once per run, over that run's new messages only."""
     from ko import logs
 
+    c = tally(messages)
     prior = logs.get("cost_source")
-    logs.add(model=model, cost_source=source if prior in (None, source) else "mixed")
-    logs.inc(llm_requests=requests, tool_calls=tools, input_tokens=tin, output_tokens=tout, cost_usd=usd)
-    return RunCost(model=model, input_tokens=tin, output_tokens=tout, usd=usd, source=source)
+    logs.add(model=c.model, cost_source=c.source if prior in (None, c.source) else "mixed")
+    logs.inc(llm_requests=c.requests, tool_calls=c.tool_calls, input_tokens=c.input_tokens,
+             output_tokens=c.output_tokens, cost_usd=c.usd)
+    return c
 
 
 # --- decision models (Jev): typed answers with probabilities, not text ---------------------

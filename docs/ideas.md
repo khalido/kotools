@@ -26,10 +26,12 @@ Candidate subcommands. WORKLOG tracks what happened; this tracks what might.
 
 ## One agent: follow-ups (from the 2026-11-17 fold trial, not built)
 
-- [ ] **Cap the paper readers.** `arxiv_fetch`, `exa_get`, `hf_get` return whole papers (up to 293k chars) that ride along in every later request; about 70% of a smart research run's cost. Cap around 20-30k chars with an offset to read on; check pydantic-ai-harness's `ToolOutputLimits` first (docs/prompts/adopt-vs-build.md).
+- [x] **Cap the paper readers** (done 2026-11-17: `ToolOutputLimits` spill). `arxiv_fetch`, `exa_get`, `hf_get` return whole papers (up to 293k chars) that ride along in every later request; about 70% of a smart research run's cost. Cap around 20-30k chars with an offset to read on; check pydantic-ai-harness's `ToolOutputLimits` first (docs/prompts/adopt-vs-build.md).
 - [ ] **Tool overlap, for KO to judge.** Five readers (`arxiv_fetch`, `exa_get`, `hf_get`, `fetch_url`, `papers_get`) and three topic searches (`papers_search`, `arxiv_search`, `hf_search`); `tv_reviews` vs `exa_search` for reviews; `read_note` re-reads memory already in the prompt. Either merge, or say in each docstring which to use when.
 - [ ] `papers_cites` leads with mega-surveys and `papers_refs` with BLEU/BERT/PyTorch: a recency filter or skipping the most-cited classics.
 - [ ] `pkg_info('letta')` picked the npm package for a Python question.
+- [ ] **Prompt caching:** traces show `cache_read_tokens: 0`; try pydantic-ai `Caching` and measure.
+- [ ] **Skills as files:** the research/code/watch bundles are skills already; if they multiply, move their text to markdown files (harness `skills`) so tuning is an edit, not code.
 - [ ] Golden questions (~10, run twice each) so the next toolset change is judged by the same set.
 
 ## Next up
