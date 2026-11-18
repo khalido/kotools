@@ -1,15 +1,18 @@
-# Handover — 2026-11-17
+# Handover — 2026-11-19
 
 Read CLAUDE.md first, then this. History lives in WORKLOG; this is only what's open.
 
 ## Just done
 
 - **One agent (2026-11-17, merged to main and pushed 2026-11-18).** `ko ai` absorbed `agent research|repo|tv` as on-demand capabilities; the old names are hidden aliases. Terminal `ko ai` no longer stops at the first narration, piped output keeps the whole answer. Guardrails: $1 budget per run (`--budget`) and big tool results spilled to disk; smart research $12.58 (old agent) → $0.71. Trial and numbers: WORKLOG 2026-11-17.
+- **Gmail inline images (2026-11-18).** ko-built image emails now survive a send from Gmail's web UI: images are named parts with `X-Attachment-Id`. Before, Gmail turned them into links only KO could open, and six Everx emails went out with broken images. Inline images display at most 800px wide. `draft show` prints Markdown (html-to-markdown, as thinker uses), lists inline images apart from attachments, and warns on Gmail-only image links. Tested round trip to KO: Gmail send, ko send, and an edit in Gmail. WORKLOG 2026-11-18.
+- **`ko ai` loop guard:** harness `DetectLoops` at its defaults, with a stderr note. pydantic-ai 2.69 / harness 0.69 are in.
 
 ## Next, in order
 
+0. **pydantic-ai 2.70 / harness 0.70** cleared the one-day floor on 19 Nov: `uv lock --upgrade`, test, reinstall. It fixes two ReDoS advisories that don't reach ko (no `strip_ansi`, no secret redaction). Keep the floor (KO agreed 2026-11-18); exempt one package with `--exclude-newer-package` when a fix matters.
 1. **Closed stdout exits 1 and logs an error for every command** (`ko --help | head`, the commonest agent call). One handler in `cli.py` `main()`: exit 0, skip the error log. Typer/click's EPIPE path is `typer/core.py:359`.
-2. **One agent follow-ups** (`docs/ideas.md` "One agent: follow-ups"): KO's call on tool overlap; prompt caching.
+2. **One agent follow-ups** (`docs/ideas.md` "One agent: follow-ups"): KO's call on tool overlap; prompt caching. Also proposed, not built: `gmail draft send` refuses a draft with Gmail-only image links (gate in the module); silence trafilatura's urllib3 SOCKS DependencyWarning, which prints on every `ko` command.
 3. **Small pre-push leftovers:**
    - `ko fetch ::1` gives `InvalidURL` (code `error`) and `ko fetch https://` (no host) goes to the paid fallbacks; both should be `usage`.
    - Tighten `test_decide_each_raises_a_missing_key_once` to count calls.
