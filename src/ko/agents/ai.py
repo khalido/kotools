@@ -20,7 +20,7 @@ from pydantic_ai.capabilities import Capability
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.tool_output_limits import (
     Band,
-    LocalFileStore,
+    LocalFileOverflowStore,
     Spill,
     ToolOutputLimits,
     Truncate,
@@ -108,7 +108,7 @@ watch = Capability(
 # If the save fails it truncates instead, and the harness logs a warning to stderr.
 output_limits = ToolOutputLimits(
     bands=[Band(over=20_000, action=Spill(then=Truncate(max_chars=20_000)))],
-    store=LocalFileStore(base_dir=dirs.cache_dir() / "tool-output", cleanup_after=timedelta(days=7)),
+    store=LocalFileOverflowStore(base_dir=dirs.cache_dir() / "tool-output", cleanup_after=timedelta(days=7)),
 )
 
 agent = Agent(

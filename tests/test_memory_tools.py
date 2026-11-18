@@ -252,11 +252,11 @@ def test_a_huge_tool_result_is_spilled_not_resent(tmp_path, monkeypatch) -> None
     from pydantic_ai import Agent
     from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
     from pydantic_ai.models.function import FunctionModel
-    from pydantic_ai_harness.tool_output_limits import LocalFileStore
+    from pydantic_ai_harness.tool_output_limits import LocalFileOverflowStore
 
     from ko.agents import ai
 
-    monkeypatch.setattr(ai.output_limits, "_store", LocalFileStore(base_dir=tmp_path))
+    monkeypatch.setattr(ai.output_limits, "_store", LocalFileOverflowStore(base_dir=tmp_path))
     sizes, tools = [], []
 
     def fn(messages, info):
