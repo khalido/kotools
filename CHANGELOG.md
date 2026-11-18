@@ -32,6 +32,7 @@ Cut a release with the repo's `/release` skill.
 - `ko exa search` shows each hit's highlights by default, sized by Exa with no cap (`--summary` for a blurb, about $0.001 a result extra); `--type lite` costs about half; each search and `ko exa get` prints its cost on stderr. The agents' `exa_search` asks for an `objective`, as Exa recommends.
 
 ### Fixed
+- Inline images in `ko gmail` `--md` drafts survive sending from Gmail's web UI. Without a filename and `X-Attachment-Id`, Gmail swapped each one for a link only the sender could open, so recipients saw broken images.
 - `ko ai` in a terminal no longer stops at the model's first "let me check" line; piped, it prints the whole answer, not just the last message.
 - `-m basic|medium|smart` works wherever `-m` does; it was passed through as a model name.
 - A closed stdout (`ko gmail … | head`) is no longer reported as a Google network error.

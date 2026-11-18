@@ -796,6 +796,8 @@ def test_md_inline_image_becomes_related_part(tmp_path):
     assert img.get_payload(decode=True) == b"\x89PNG fake"
     assert img.get_content_disposition() == "inline"
     cid = img["Content-ID"].strip("<>")
+    # named, with X-Attachment-Id = cid, like Gmail's own: else Gmail's web UI unlinks it on send
+    assert img.get_filename() == "my shot.png" and img["X-Attachment-Id"] == cid
     html_out = next(p for p in msg.walk() if p.get_content_type() == "text/html").get_payload(decode=True).decode()
     assert html_out.count(f'src="cid:{cid}"') == 2
     assert 'src="https://x.com/a.png"' in html_out

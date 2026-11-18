@@ -302,7 +302,7 @@ def _decode_bytes(data: str) -> bytes:
 
 def _attachment_parts(payload: dict) -> list[dict]:
     """Every part anywhere in a (nested) payload with a filename AND an attachmentId (the
-    alternative text/html body and ko's own inline images have no filename, so they're skipped).
+    alternative text/html body has no filename, so it's skipped).
     `inline` marks a part the payload's html body shows by `cid:` (an embedded image). Neither header
     alone says so: Gmail's UI gives regular attachments a Content-ID, and Apple Mail marks a PDF
     `Content-Disposition: inline`."""
@@ -622,8 +622,14 @@ def _build_raw(
             except OSError as e:
                 raise GmailError(f"can't read image {path}: {e}") from e
             maintype, _, subtype = ctype.partition("/")
-            # no filename on purpose: it's body, not an attachment — `draft update` rebuilds it from --md
-            html_part.add_related(data, maintype=maintype, subtype=subtype, cid=f"<{cid}>", disposition="inline")
+            # A filename and X-Attachment-Id, as Gmail's own inline images have: without them, sending
+            # from Gmail's web UI swaps each image for a mail.google.com link only the sender can open
+            # (tested 2026-11-18). `draft update` still treats it as body: the html shows its cid.
+            html_part.add_related(
+                data, maintype=maintype, subtype=subtype, cid=f"<{cid}>", disposition="inline", filename=path.name,
+                params={"name": path.name},
+            )
+            html_part.get_payload()[-1]["X-Attachment-Id"] = cid
     for name, ctype, data in kept or []:
         maintype, _, subtype = (ctype or "application/octet-stream").partition("/")
         msg.add_attachment(data, maintype=maintype, subtype=subtype, filename=name)
@@ -869,7 +875,7 @@ def draft_summary(draft_id: str) -> dict:
         "cc": h.get("cc", ""),
         "bcc": h.get("bcc", ""),
         "subject": h.get("subject", "(no subject)"),
-        "attachments": len(_walk_attachments(m.get("payload", {}))),
+        "attachments": sum(not a["inline"] for a in _attachment_parts(m.get("payload", {}))),
         "mentions_attachment": mentions_attachment(_message_body(m)),
     }
 
