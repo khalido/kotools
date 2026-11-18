@@ -114,7 +114,7 @@ output_limits = ToolOutputLimits(
 agent = Agent(
     _MODEL,
     defer_model_check=True,  # the model (and its key) is resolved per run by _shared
-    capabilities=[_shared.wrap_up_near_limit, output_limits, research, code, watch],
+    capabilities=[_shared.wrap_up_near_limit, _shared.detect_loops(), output_limits, research, code, watch],
     instructions=(
         "You are ko — Ko's personal agent, the default entry to his CLI toolkit. "
         "Route by task: current web → exa_search/fetch_url; literature → the papers "

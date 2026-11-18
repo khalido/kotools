@@ -228,3 +228,43 @@ def test_a_zero_budget_in_config_is_an_error_not_the_default(monkeypatch):
     monkeypatch.setattr(config, "get", lambda *a: None)
     assert ai.budget_usd() == ai.DEFAULT_BUDGET
     assert ai.budget_usd(2.5) == 2.5
+
+
+def _looping_agent(parallel: bool):
+    """A model that repeats one tool call (across requests, or 5× in one response) until nudged."""
+    seen: list[bool] = []
+
+    def model(messages, info):
+        nudged = any(
+            "Change your approach" in str(getattr(part, "content", ""))
+            for m in messages for part in getattr(m, "parts", [])
+        )
+        seen.append(nudged)
+        if nudged:
+            return ModelResponse(parts=[TextPart("changed approach")])
+        n = 5 if parallel else 1
+        return ModelResponse(parts=[ToolCallPart("look", {"q": "same"}, tool_call_id=f"c{len(seen)}-{i}") for i in range(n)])
+
+    agent = Agent(FunctionModel(model), capabilities=[_shared.wrap_up_near_limit, _shared.detect_loops()])
+
+    @agent.tool_plain
+    def look(q: str) -> str:
+        """Look something up."""
+        return "same finding"
+
+    return agent, seen
+
+
+def test_a_repeated_call_is_caught_noted_and_the_run_answers(capsys):
+    agent, seen = _looping_agent(parallel=False)
+    result = agent.run_sync("q", usage_limits=UsageLimits(request_limit=30))
+    assert result.output == "changed approach"
+    assert len(seen) <= 6  # the same result 3× in a row is caught, well before the cap
+    assert "[note] loop: repeated_result (look)" in capsys.readouterr().err
+
+
+def test_one_call_repeated_in_a_response_is_rejected_and_retried(capsys):
+    agent, seen = _looping_agent(parallel=True)
+    result = agent.run_sync("q", usage_limits=UsageLimits(request_limit=30))
+    assert result.output == "changed approach" and seen == [False, True]
+    assert "[note] loop: repeated_parallel_call (look) ×5" in capsys.readouterr().err

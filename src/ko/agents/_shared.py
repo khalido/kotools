@@ -149,6 +149,31 @@ _wound_down: set[str] = set()
 
 wrap_up_near_limit = _WrapUpNearLimit()
 
+# Loops caught inside one response (streamed text, thinking or tool args, or one call repeated in a
+# response): DetectLoops' own nudge rejects that response and retries, so the handler does the same.
+_IN_RESPONSE_LOOPS = {"repeated_thinking", "repeated_stream_text", "repeated_tool_args", "repeated_parallel_call"}
+
+
+def _on_loop(ctx, loop) -> None:
+    """Say on stderr which loop was caught, then nudge the model as DetectLoops' default does."""
+    from pydantic_ai import ModelRetry
+
+    tools = f" ({', '.join(loop.tool_names)})" if loop.tool_names else ""
+    _err.print(f"[note] loop: {loop.pattern}{tools} ×{loop.count}, told to change approach",
+               style="yellow", markup=False, highlight=False)
+    if loop.pattern in _IN_RESPONSE_LOOPS:
+        ctx.enqueue(SystemPromptPart(loop.message, scope="request"))
+        raise ModelRetry("Your previous response was rejected because it kept repeating itself.")
+    ctx.enqueue(SystemPromptPart(loop.message))
+
+
+def detect_loops():
+    """pydantic-ai-harness's DetectLoops at its defaults (same call 5× in 10, same result 3× in a
+    row, A-B-A-B, repeated text), with a stderr note per loop. A fresh one per agent; runs get their own."""
+    from pydantic_ai_harness.detect_loops import DetectLoops
+
+    return DetectLoops(action=_on_loop)
+
 
 def _stream(
     agent: Agent, prompt: str, history: list, model: str | None = None, limits=None, budget: float | None = None
