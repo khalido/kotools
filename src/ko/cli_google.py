@@ -1301,7 +1301,10 @@ def _resolve_body(body: str | None, body_file: Path | None, md: Path | None) -> 
     except OSError as e:
         _die(f"can't read {src}: {e}")
     if md is not None:
-        return text, gmail_mod.md_to_html(text, base_dir=md.parent)
+        html_body = gmail_mod.md_to_html(text, base_dir=md.parent)
+        if bare := gmail_mod.images_without_alt(html_body):
+            typer.echo(f"[note] no alt text on {', '.join(bare)}: write ![what it shows](file)", err=True)
+        return text, html_body
     return text, None
 
 
@@ -1448,7 +1451,7 @@ def gmail_draft_new(
     body: str = typer.Option(None, "--body", help="body text (plain text/plain)"),
     body_file: Path = typer.Option(None, "--body-file", help="read the plain-text body from a file"),
     md: Path = typer.Option(
-        None, "--md", help="Markdown file → formatted mail (headings, lists, links, GFM tables, local images inline)"
+        None, "--md", help="Markdown file → formatted mail (headings, lists, links, GFM tables, local images inline as ![alt](file))"
     ),
     cc: str = typer.Option(None, "--cc", help="cc recipient(s), comma-separated"),
     attach: list[Path] = typer.Option(
@@ -1473,7 +1476,7 @@ def gmail_draft_reply(
     ),
     body: str = typer.Option(None, "--body", help="reply text (plain text/plain)"),
     body_file: Path = typer.Option(None, "--body-file", help="read the plain-text reply from a file"),
-    md: Path = typer.Option(None, "--md", help="Markdown reply → formatted mail (headings, lists, links, GFM tables, local images inline)"),
+    md: Path = typer.Option(None, "--md", help="Markdown reply → formatted mail (headings, lists, links, GFM tables, local images inline as ![alt](file))"),
     all_: bool = typer.Option(False, "--all", help="reply-all (cc the original To+Cc, minus you)"),
     cc: str = typer.Option(
         None, "--cc", help="extra cc recipient(s), comma-separated — added on top of --all's list"
@@ -1524,11 +1527,22 @@ def gmail_draft_show(
     draft_id: str = typer.Argument(..., help="draft id (from `ko gmail draft list`)"),
     as_json: bool = typer.Option(False, "--json", help="emit JSON (headers, body, attachment names)"),
 ) -> None:
-    """Show a draft: headers + plain-text body. Lists attached files (so you can confirm an
-    `--attach` stuck) when the draft has any."""
-    _id, meta, body, atts = gmail_mod.get_draft(draft_id)
+    """Show a draft: headers, then the body as Markdown (inline images in place as
+    `![alt](inline:N)`). Attached files are listed apart, so you can confirm an `--attach` stuck."""
+    d = gmail_mod.get_draft(draft_id)
+    meta = d.meta
+    if d.gmail_only_images:
+        typer.echo(
+            f"[warn] {d.gmail_only_images} image(s) link to your Gmail, so recipients can't see them; "
+            "rebuild with `draft update --md` and send without editing in Gmail",
+            err=True,
+        )
     if as_json:
-        typer.echo(json.dumps({"draft_id": _id, **_message_json(meta, body), "attachments": atts}, default=str))
+        typer.echo(json.dumps({
+            "draft_id": d.id, **_message_json(meta, d.body), "markdown": d.markdown,
+            "attachments": d.attachments,
+            "inline_images": d.inline_images, "gmail_only_images": d.gmail_only_images,
+        }, default=str))
         return
     typer.echo(f"To:      {meta.to}")
     if meta.cc:
@@ -1536,10 +1550,12 @@ def gmail_draft_show(
     if meta.bcc:
         typer.echo(f"Bcc:     {meta.bcc}")
     typer.echo(f"Subject: {meta.subject}")
-    if atts:
-        typer.echo(f"Attachments: {', '.join(atts)} ({len(atts)})")
+    if d.inline_images:
+        typer.echo(f"Inline images: {d.inline_images} (in the body)")
+    if d.attachments:
+        typer.echo(f"Attachments: {', '.join(d.attachments)} ({len(d.attachments)})")
     typer.echo("")
-    typer.echo(body)
+    typer.echo(d.markdown)
 
 
 @gmail_draft_app.command("update")
@@ -1547,7 +1563,7 @@ def gmail_draft_update(
     draft_id: str = typer.Argument(..., help="draft id to update"),
     body: str = typer.Option(None, "--body", help="new body text (plain text/plain)"),
     body_file: Path = typer.Option(None, "--body-file", help="read the new plain-text body from a file"),
-    md: Path = typer.Option(None, "--md", help="new Markdown body → formatted mail (headings, lists, links, GFM tables, local images inline)"),
+    md: Path = typer.Option(None, "--md", help="new Markdown body → formatted mail (headings, lists, links, GFM tables, local images inline as ![alt](file))"),
     subject: str = typer.Option(None, "--subject", "-s", help="new subject (else keep the existing)"),
     to: str = typer.Option(None, "--to", help="new To recipient(s) (else keep the existing)"),
     cc: str = typer.Option(
@@ -1576,6 +1592,8 @@ def gmail_draft_update(
     for label, names in (("kept", u.kept), ("added", u.added), ("dropped", u.dropped)):
         if names:
             typer.echo(f"{label}: {', '.join(names)}", err=True)
+    if u.inline_dropped:
+        typer.echo(f"dropped the old body's {u.inline_dropped} inline image(s)", err=True)
 
 
 @gmail_draft_app.command("delete")

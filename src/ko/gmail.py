@@ -492,6 +492,50 @@ INLINE_MAX_WIDTH = 800  # px; wider images show at this width, Gmail's handle ca
 _FIT_CSS = "max-width:100%;height:auto"  # and narrower on a phone, like Gmail's "Best fit"
 
 
+_CID_SRC_RE = re.compile(r"""(<img\b[^>]*?(?<![-\w])src=["'])cid:([^"']+)""", re.IGNORECASE)
+_GMAIL_SRC_RE = re.compile(r"""<img\b[^>]*?(?<![-\w])src=["'](https://mail\.google\.com/[^"']*)""", re.IGNORECASE)
+
+
+def inline_images(html_body: str) -> tuple[int, int]:
+    """(embedded, gmail-only): distinct images the html shows from its own `cid:` parts, and
+    distinct ones that link to mail.google.com, which only the sender's login can open."""
+    return (
+        len({m.group(2) for m in _CID_SRC_RE.finditer(html_body)}),
+        len(set(_GMAIL_SRC_RE.findall(html_body))),
+    )
+_ALT_RE = re.compile(r'(?<![-\w])alt="\s*[^"\s]', re.IGNORECASE)
+
+
+def images_without_alt(html_body: str) -> list[str]:
+    """File names of the local images (`file://`) the html embeds with no alt text."""
+    return [
+        Path(url2pathname(urlparse(html.unescape(m.group(2))).path)).name
+        for m in _FILE_IMG_RE.finditer(html_body)
+        if not _ALT_RE.search(m.group(1) + m.group(4))
+    ]
+
+
+def html_to_md(html_body: str) -> str:
+    """An email's html body as Markdown (html-to-markdown: headings, lists, links, tables). Embedded images become `![alt](inline:N)`, numbered by first
+    appearance; remote images keep their URL. Text the converter drops raises, never vanishes."""
+    from html_to_markdown import ConversionOptions, WarningKind, convert
+
+    order: dict[str, int] = {}
+
+    def number(m: re.Match) -> str:
+        n = order.setdefault(m.group(2), len(order) + 1)
+        return f"{m.group(1)}inline:{n}"
+
+    html_body = _CID_SRC_RE.sub(number, html_body)
+    # max_depth: 3.x stops at depth 64 by default and drops what's below (Word-made mail nests ~90)
+    opts = ConversionOptions(heading_style="atx", extract_metadata=False, max_depth=1000)
+    result = convert(html_body, opts)
+    lossy = [w.message for w in result.warnings or [] if w.kind in (WarningKind.DEPTH_LIMIT_EXCEEDED, WarningKind.TRUNCATED_INPUT)]
+    if lossy:
+        raise GmailError(f"html → Markdown dropped text: {'; '.join(lossy)}")
+    return re.sub(r"\n{3,}", "\n\n", result.content or "").strip()
+
+
 def _pixel_width(path: Path) -> int | None:
     """The image's width in pixels from its header (no full decode), or None if Pillow can't read it."""
     from PIL import Image, UnidentifiedImageError
@@ -762,17 +806,41 @@ def list_drafts(n: int = 10) -> list[DraftInfo]:
         _handle(e, "list drafts")
 
 
-def get_draft(draft_id: str) -> tuple[str, GmailMessage, str, list[str]]:
-    """A draft as (draft_id, metadata, plain-text body, attachment filenames). The filenames let
-    `show` confirm what's attached — after `--attach` there's otherwise no way to verify it stuck."""
+@dataclass
+class Draft:
+    id: str
+    meta: GmailMessage
+    body: str  # the plain-text part
+    markdown: str  # the html part as Markdown (inline images as `![alt](inline:N)`), else the plain text
+    attachments: list[str]  # files sent alongside, not the images shown in the body
+    inline_images: int  # images embedded in the body (cid: parts)
+    gmail_only_images: int  # images that link to mail.google.com: only the sender can open them
+
+
+def get_draft(draft_id: str) -> Draft:
+    """A draft as Markdown, with its attachments apart from the images its body shows. The
+    filenames let `show` confirm an `--attach` stuck; `gmail_only_images` catches a body whose
+    images Gmail's editor turned into links to the sender's mailbox (recipients see them broken)."""
     svc = _compose_service()
     try:
         d = svc.users().drafts().get(userId="me", id=draft_id, format="full").execute(num_retries=3)
     except HttpError as e:
         _handle(e, draft_id)
     m = d.get("message", {})
-    names = [name for name, _mime, _size, _att_id in _walk_attachments(m.get("payload", {}))]
-    return d["id"], _message(m), _message_body(m), names
+    payload = m.get("payload", {})
+    parts = _attachment_parts(payload)
+    html_body = _find_mime(payload, "text/html")
+    body = _message_body(m)
+    embedded, gmail_only = inline_images(html_body)
+    return Draft(
+        id=d["id"],
+        meta=_message(m),
+        body=body,
+        markdown=html_to_md(html_body) if html_body else body,
+        attachments=[a["filename"] for a in parts if not a["inline"]],
+        inline_images=embedded,
+        gmail_only_images=gmail_only,
+    )
 
 
 _ATTACH_RE = re.compile(r"attach", re.IGNORECASE)
@@ -827,7 +895,8 @@ class DraftUpdate:
     id: str
     kept: list[str]  # attachment filenames carried over from the old draft
     added: list[str]  # --attach files
-    dropped: list[str]  # removed: all of them with drop_attachments, else the old body's inline images
+    dropped: list[str]  # attachments removed by drop_attachments
+    inline_dropped: int = 0  # the old body's inline images (the new body embeds its own afresh)
 
 
 def update_draft(
@@ -848,7 +917,7 @@ def update_draft(
     The API replaces the WHOLE MIME message, so the draft's attachments (e.g. added in Gmail's
     UI) are downloaded and re-attached, then `attachments` added; `drop_attachments` removes the
     old ones instead. Images the old html body showed inline (`cid:`) can't point into a new
-    body, so they're dropped and listed: put a local `![](img.png)` in the Markdown to embed one."""
+    body, so they're dropped (counted in `inline_dropped`): the Markdown's local images embed afresh."""
     svc = _compose_service()
     try:
         existing = svc.users().drafts().get(userId="me", id=draft_id, format="full").execute(num_retries=3)
@@ -857,7 +926,7 @@ def update_draft(
     msg = existing.get("message", {})
     parts = _attachment_parts(msg.get("payload", {}))
     keep = [] if drop_attachments else [a for a in parts if not a["inline"]]
-    dropped = [a["filename"] for a in parts if a not in keep]
+    dropped = [a["filename"] for a in parts if a not in keep and not a["inline"]]
     kept: list[tuple[str, str, bytes]] = []
     for a in keep:
         try:
@@ -898,7 +967,8 @@ def update_draft(
         )
     except HttpError as e:
         _handle(e, draft_id)
-    return DraftUpdate(d["id"], [k[0] for k in kept], [p.name for p in attachments or []], dropped)
+    inline = inline_images(_find_mime(msg.get("payload", {}), "text/html"))[0]
+    return DraftUpdate(d["id"], [k[0] for k in kept], [p.name for p in attachments or []], dropped, inline)
 
 
 def delete_draft(draft_id: str, *, yes: bool = False) -> None:

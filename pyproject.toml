@@ -48,6 +48,7 @@ dependencies = [
     "pillow>=13.0.0",  # inline image widths in gmail drafts
     "xdk>=0.10.6",
     "youtube-transcript-api>=1.2.4",
+    "html-to-markdown>=3.22.2",
 ]
 
 [project.urls]

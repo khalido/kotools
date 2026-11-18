@@ -2,6 +2,13 @@
 
 Newest first. Big picture only — git commits have the detail; candidate ideas and decisions live in `docs/ideas.md`.
 
+## 2026-11-18 — Gmail inline images: 800px cap, Markdown `draft show`
+
+- **Why:** the Everx release email carried six 1,400–2,500px images at full width. Then the sent copy turned out to hold no images at all: KO edited the text in Gmail's editor, and the Sent message (18.9 KB) linked each image to a mail.google.com `view=fimg` URL that only KO's login opens. So recipients most likely saw broken images. The ko-built draft had all six as `cid:` parts. The editor is the likely cause; not proven.
+- **Cap:** an image wider than 800px gets `width="800"` and `max-width:100%;height:auto`, close to Gmail's "Best fit". There's no flag: KO never wants a giant inline image. An `<img>` that sizes itself is left alone. The bytes stay full size (sharp on retina); downscaling them is possible later if mail weight matters.
+- **`draft show` as Markdown:** html-to-markdown, the library thinker picked after converting a year of mail (261k emails; thinker CHANGELOG, 19 Oct). `max_depth=1000`, and lost text raises. Tried on the sent email first: trafilatura dropped every heading and image; markdownify and html-to-markdown matched. `--json` keeps `body` as plain text and adds `markdown`.
+- **The workflow it supports:** write the `.md` with local images, rebuild with `draft update --md` (same draft id), look in Gmail without editing, then send. `show` warns about Gmail-only image links, so an editor-broken draft is caught before it goes.
+
 ## 2026-11-17 — One agent: `ko ai` absorbs research, repo and tv
 
 **Why.** Anthropic's "when to fold subagents into your main agent loop" (2026-10-22): one loop that loads detail on demand usually beats specialists, on quality and usually cost. Keep separate agents only for measured context bloat, parallel throwaway work, or tool confusion. None fit: the three specialists were `ko ai` with a different prompt, model default and fewer toolsets. KO: the tools are distinct enough not to be confused, so all 29 stay visible; overlap gets fixed in descriptions if it shows up.

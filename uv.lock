@@ -691,6 +691,19 @@ wheels = [
 ]
 
 [[package]]
+name = "html-to-markdown"
+version = "3.22.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/99/2e/4b76006303a78d361606e24a2f19cc8972150e89bc6f46fdfca870fbddee/html_to_markdown-3.22.2.tar.gz", hash = "sha256:2459baaf14eba143efb0583b4d52ed26601c0a92f95e9e53ab67c806aeebef90", size = 6136651, upload-time = "2026-11-15T08:31:19.653Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/52/73/65d14c99fbb97a15bcf5d417b64560d0a9c73a2d59f1ea7a1071f778cd9b/html_to_markdown-3.22.2-cp311-abi3-macosx_15_0_arm64.whl", hash = "sha256:18a888f47f4b8c58edab05ebc961fc979e8cd48517fbdce8a10755e4317d562e", size = 8051414, upload-time = "2026-11-15T08:31:07.489Z" },
+    { url = "https://files.pythonhosted.org/packages/25/ee/445f55f8e5fa657856b0f242c8982dece4f9d962e91539b30e74ff02adef/html_to_markdown-3.22.2-cp311-abi3-macosx_15_0_x86_64.whl", hash = "sha256:0325adcfb8a5add93298b9c82ef40213249f28abeebea1a344a3d63738b98bec", size = 8533743, upload-time = "2026-11-15T08:31:09.733Z" },
+    { url = "https://files.pythonhosted.org/packages/46/e1/679788ca675ffa092045595009c909f567d03d739e7fabe36fcfb3a19dfe/html_to_markdown-3.22.2-cp311-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:1b75477229ab8e18f2a395d62fdb06c275cd2a9a0cddbc8a5c384c8b15cc17fc", size = 8305209, upload-time = "2026-11-15T08:31:12.171Z" },
+    { url = "https://files.pythonhosted.org/packages/ec/05/5c42f7363393269c432fde05f353c8a18b791008d3210c00a72e8f67c35f/html_to_markdown-3.22.2-cp311-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:a5c89a1bcd1c8460c7a17b4e50fb39eea42eea79cc22910aa2c772064229f833", size = 8798182, upload-time = "2026-11-15T08:31:14.818Z" },
+    { url = "https://files.pythonhosted.org/packages/3b/9c/eeb9c2c29eebdb186faf7123271777054d5bbf8138b355b3697318766771/html_to_markdown-3.22.2-cp311-abi3-win_amd64.whl", hash = "sha256:96c81622ce62bd30ebc263111227dd0eafdb10591d6fcbbd7b66f98ed49efaf5", size = 8850143, upload-time = "2026-11-15T08:31:17.631Z" },
+]
+
+[[package]]
 name = "htmldate"
 version = "1.11.0"
 source = { registry = "https://pypi.org/simple" }
@@ -900,6 +913,7 @@ dependencies = [
     { name = "google-api-python-client" },
     { name = "google-auth" },
     { name = "google-auth-oauthlib" },
+    { name = "html-to-markdown" },
     { name = "httpx" },
     { name = "httpx2" },
     { name = "liteparse" },
@@ -941,6 +955,7 @@ requires-dist = [
     { name = "google-api-python-client", specifier = ">=2.198.0" },
     { name = "google-auth", specifier = ">=2.56.2" },
     { name = "google-auth-oauthlib", specifier = ">=1.4.0" },
+    { name = "html-to-markdown", specifier = ">=3.22.2" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "httpx2", specifier = ">=2.12,<3" },
     { name = "liteparse", specifier = ">=2.15" },

@@ -327,7 +327,7 @@ def test_update_draft_keeps_attachments_and_adds(monkeypatch, tmp_path):
     extra = tmp_path / "notes.txt"
     extra.write_text("hi")
     u = gmail.update_draft("d1", "new body", attachments=[extra])
-    assert (u.kept, u.added, u.dropped) == (["contract.pdf"], ["notes.txt"], ["logo.png"])
+    assert (u.kept, u.added, u.dropped, u.inline_dropped) == (["contract.pdf"], ["notes.txt"], [], 1)
     assert _sent_parts(svc) == {"contract.pdf": b"%PDF-fake", "notes.txt": b"hi"}
     assert ("get", "m1", "att1") in svc.calls  # fetched from the draft's own message
     assert svc.updated["message"]["threadId"] == "t1"
@@ -344,14 +344,24 @@ def test_update_draft_keeps_an_inline_marked_file_the_body_does_not_show(monkeyp
     svc = _DraftSvc(d, {"att1": b"%PDF-fake", "att3": b"%PDF-scan"})
     monkeypatch.setattr(gmail, "_compose_service", lambda: svc)
     u = gmail.update_draft("d1", "new body")
-    assert (u.kept, u.dropped) == (["contract.pdf", "scan.pdf"], ["logo.png"])
+    assert (u.kept, u.dropped, u.inline_dropped) == (["contract.pdf", "scan.pdf"], [], 1)
+
+
+def test_update_draft_counts_kos_own_unnamed_inline_images(monkeypatch):
+    """ko's --md images carry no filename, so they aren't attachment parts; the html still counts them."""
+    d = _draft_with_files()
+    d["message"]["payload"]["parts"].pop()  # the Gmail-UI logo.png
+    d["message"]["payload"]["parts"][1]["body"]["data"] = _b64('<img src="cid:a@ko"><img src="cid:b@ko">')
+    svc = _DraftSvc(d, {"att1": b"%PDF-fake"})
+    monkeypatch.setattr(gmail, "_compose_service", lambda: svc)
+    assert gmail.update_draft("d1", "new body").inline_dropped == 2
 
 
 def test_update_draft_drop_attachments(monkeypatch):
     svc = _DraftSvc(_draft_with_files())
     monkeypatch.setattr(gmail, "_compose_service", lambda: svc)
     u = gmail.update_draft("d1", "new body", drop_attachments=True)
-    assert u.kept == [] and u.dropped == ["contract.pdf", "logo.png"]
+    assert u.kept == [] and u.dropped == ["contract.pdf"] and u.inline_dropped == 1
     assert _sent_parts(svc) == {}
     assert not any(c[0] == "get" and c[1] for c in svc.calls)  # nothing downloaded
 
@@ -534,13 +544,13 @@ def test_get_draft_returns_attachment_names(monkeypatch):
             return draft
 
     monkeypatch.setattr(gmail, "_compose_service", lambda: _Svc())
-    _id, meta, _body, atts = gmail.get_draft("d1")
-    assert _id == "d1" and meta.to == "a@x.com"
-    assert atts == ["invoice.pdf", "terms.pdf"]  # both files, in payload order
+    d = gmail.get_draft("d1")
+    assert d.id == "d1" and d.meta.to == "a@x.com" and d.markdown == d.body == "see attached"  # no html
+    assert d.attachments == ["invoice.pdf", "terms.pdf"]  # both files, in payload order
 
     # a draft with no attachments -> empty list (show prints no Attachments line)
     draft["message"]["payload"]["parts"] = draft["message"]["payload"]["parts"][:1]
-    assert gmail.get_draft("d1")[3] == []
+    assert gmail.get_draft("d1").attachments == []
 
 
 def test_search_json_carries_labels(monkeypatch):
@@ -589,15 +599,18 @@ def test_cli_draft_show_lists_attachments(monkeypatch):
     meta = gmail.GmailMessage(
         id="d1", thread_id="t1", date="", from_="", to="a@x.com", subject="Inv", snippet="", unread=False
     )
-    monkeypatch.setattr(
-        cli_google.gmail_mod, "get_draft", lambda did: ("d1", meta, "body", ["invoice.pdf", "terms.pdf"])
-    )
+    def draft(atts, inline=0, gmail_only=0):
+        return lambda did: gmail.Draft("d1", meta, "body", "body", atts, inline, gmail_only)
+
+    monkeypatch.setattr(cli_google.gmail_mod, "get_draft", draft(["invoice.pdf", "terms.pdf"], inline=2))
     r = CliRunner().invoke(app, ["gmail", "draft", "show", "d1"])
     assert r.exit_code == 0 and "Attachments: invoice.pdf, terms.pdf (2)" in r.stdout
+    assert "Inline images: 2 (in the body)" in r.stdout
 
-    monkeypatch.setattr(cli_google.gmail_mod, "get_draft", lambda did: ("d1", meta, "body", []))
+    monkeypatch.setattr(cli_google.gmail_mod, "get_draft", draft([], gmail_only=3))
     r = CliRunner().invoke(app, ["gmail", "draft", "show", "d1"])
-    assert r.exit_code == 0 and "Attachments:" not in r.stdout  # none -> no line
+    assert r.exit_code == 0 and "Attachments:" not in r.stdout and "Inline images" not in r.stdout
+    assert "3 image(s) link to your Gmail" in r.stderr
 
 
 def test_md_to_html_renders_gfm_tables():
@@ -842,3 +855,70 @@ def test_wide_inline_image_shows_at_most_800px(tmp_path):
     # another style attribute: add the width only, never a second style=
     out, _ = gmail._embed_file_images(f'<img src="{uri}" style="border:0">')
     assert out.count("style=") == 1 and 'width="800"' in out
+
+
+def test_html_to_md_keeps_structure_and_numbers_inline_images():
+    html_body = (
+        '<h2>1. Parts</h2><p>Hi <b>all</b>, see <a href="https://x.com">this</a>.</p>'
+        '<img alt="Parts flow" src="cid:aa@ko"><ul><li>one</li></ul>'
+        '<img src="cid:bb@ko" alt="Access"><img alt="again" src="cid:aa@ko"><img alt="r" src="https://x.com/a.png">'
+    )
+    md = gmail.html_to_md(html_body)
+    assert md.startswith("## 1. Parts") and "**all**" in md and "[this](https://x.com)" in md and "- one" in md
+    assert "![Parts flow](inline:1)" in md and "![Access](inline:2)" in md and "![again](inline:1)" in md
+    assert "![r](https://x.com/a.png)" in md and "cid:" not in md
+
+
+def test_get_draft_counts_inline_and_gmail_only_images(monkeypatch):
+    html_body = (
+        '<p>x</p><img alt="a" src="cid:ii_1"><img alt="a2" src="cid:ii_1">'
+        '<img alt="g" src="https://mail.google.com/mail/u/0/?view=fimg&amp;attid=0.1">'
+    )
+    draft = {"id": "d1", "message": {"id": "m1", "payload": {
+        "headers": [{"name": "To", "value": "a@x.com"}],
+        "parts": [
+            {"mimeType": "text/plain", "body": {"data": _b64("x")}},
+            {"mimeType": "text/html", "body": {"data": _b64(html_body)}},
+            {"filename": "noname", "mimeType": "image/png",
+             "headers": [{"name": "Content-ID", "value": "<ii_1>"}], "body": {"attachmentId": "A1", "size": 4}},
+            {"filename": "terms.pdf", "mimeType": "application/pdf", "body": {"attachmentId": "A2", "size": 9}},
+        ],
+    }}}
+
+    class _Svc:
+        def users(self):
+            return self
+
+        def drafts(self):
+            return self
+
+        def get(self, userId, id, format):
+            return self
+
+        def execute(self, num_retries=0):
+            return draft
+
+    monkeypatch.setattr(gmail, "_compose_service", lambda: _Svc())
+    d = gmail.get_draft("d1")
+    assert d.attachments == ["terms.pdf"]  # the embedded image is not an attachment
+    assert (d.inline_images, d.gmail_only_images) == (1, 1)
+    assert d.body == "x" and "![a](inline:1)" in d.markdown
+
+
+def test_md_draft_notes_images_without_alt(tmp_path):
+    import typer
+    from typer.testing import CliRunner
+
+    from ko import cli_google
+
+    (tmp_path / "a.png").write_bytes(b"\x89PNG fake")
+    (tmp_path / "b.png").write_bytes(b"\x89PNG fake")
+    md = tmp_path / "m.md"
+    md.write_text("![](a.png) ![  ](b.png) ![Chart](a.png)")
+    html_body = gmail.md_to_html(md.read_text(), base_dir=tmp_path)
+    assert gmail.images_without_alt(html_body) == ["a.png", "b.png"]
+    assert gmail.images_without_alt(f'<img alt="ok" src="{(tmp_path / "a.png").as_uri()}">') == []
+    app = typer.Typer()
+    app.command()(lambda: cli_google._resolve_body(None, None, md))
+    r = CliRunner().invoke(app, [])
+    assert "no alt text on a.png, b.png" in r.stderr
