@@ -45,6 +45,7 @@ dependencies = [
     "typer>=0.27.0",
     "tzdata>=2026.3",  # guarantees zoneinfo works cross-platform (ko cal)
     "weasyprint>=70.0",
+    "pillow>=13.0.0",  # inline image widths in gmail drafts
     "xdk>=0.10.6",
     "youtube-transcript-api>=1.2.4",
 ]

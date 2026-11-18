@@ -486,21 +486,41 @@ def md_to_html(md: str, base_dir: Path | None = None) -> str:
     return _style_tables(out)
 
 
-_FILE_IMG_RE = re.compile(r'(<img\b[^>]*?(?<![-\w])src=")(file://[^"]+)(")')  # not data-src
+_FILE_IMG_RE = re.compile(r'(<img\b[^>]*?(?<![-\w])src=")(file://[^"]+)(")([^>]*>)')  # not data-src
+_SIZED_RE = re.compile(r'(?<![-\w])((width|height)=|style="[^"]*\b(width|height)\s*:)', re.IGNORECASE)  # author sized it
+INLINE_MAX_WIDTH = 800  # px; wider images show at this width, Gmail's handle can still resize
+_FIT_CSS = "max-width:100%;height:auto"  # and narrower on a phone, like Gmail's "Best fit"
+
+
+def _pixel_width(path: Path) -> int | None:
+    """The image's width in pixels from its header (no full decode), or None if Pillow can't read it."""
+    from PIL import Image, UnidentifiedImageError
+
+    try:
+        with Image.open(path) as im:
+            return im.width
+    except (OSError, UnidentifiedImageError):
+        return None  # unreadable here: _build_raw reads the bytes next and names the file
 
 
 def _embed_file_images(html_body: str) -> tuple[str, list[tuple[str, Path]]]:
     """Swap each `<img src="file://…">` for a `cid:` reference. Returns the new HTML and the
     (cid, path) pairs to add as related parts; one part per file, however often it's used.
     Raw HTML in the Markdown that writes `<img src="file://…">` itself is embedded the same way.
-    Paths are resolved, so a symlink is judged by the file it points at."""
+    An image wider than INLINE_MAX_WIDTH gets `width=` that size, shrinking further to fit a
+    narrow screen, unless the tag already sets a width or height. Paths are resolved, so a
+    symlink is judged by the file it points at."""
     cids: dict[Path, str] = {}
 
     def swap(m: re.Match) -> str:
         path = Path(url2pathname(urlparse(html.unescape(m.group(2))).path)).resolve()
         if path not in cids:
             cids[path] = make_msgid(domain="ko")[1:-1]  # strip the <>
-        return f"{m.group(1)}cid:{cids[path]}{m.group(3)}"
+        head, tail = m.group(1), m.group(4)
+        if not _SIZED_RE.search(head + tail) and (_pixel_width(path) or 0) > INLINE_MAX_WIDTH:
+            fit = "" if re.search(r'(?<![-\w])style=', head + tail, re.IGNORECASE) else f' style="{_FIT_CSS}"'
+            head = head.replace("<img", f'<img width="{INLINE_MAX_WIDTH}"{fit}', 1)
+        return f"{head}cid:{cids[path]}{m.group(3)}{tail}"
 
     out = _FILE_IMG_RE.sub(swap, html_body)
     return out, [(cid, path) for path, cid in cids.items()]

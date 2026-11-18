@@ -824,3 +824,21 @@ def test_raw_html_img_with_src_not_first_is_embedded(tmp_path):
     assert "file://" not in html_out and 'src="cid:' in html_out
     # a scheme-relative URL is remote, not a local path
     assert 'src="//cdn.example.com/logo.png"' in gmail.md_to_html("![l](//cdn.example.com/logo.png)", base_dir=tmp_path)
+
+
+def test_wide_inline_image_shows_at_most_800px(tmp_path):
+    """A wide image gets width=800 and best-fit CSS; a narrow one and an author-sized one are left alone."""
+    from PIL import Image
+
+    Image.new("RGB", (2400, 1200)).save(tmp_path / "wide.png")
+    Image.new("RGB", (600, 300)).save(tmp_path / "narrow.png")
+    out, _ = gmail._embed_file_images(gmail.md_to_html("![w](wide.png) ![n](narrow.png)", base_dir=tmp_path))
+    wide, narrow = out.split("<img")[1:]
+    assert wide.startswith(f' width="800" style="{gmail._FIT_CSS}"') and 'alt="w"' in wide
+    assert "width" not in narrow
+    uri = (tmp_path / "wide.png").as_uri()
+    for tag in (f'<img src="{uri}" width="300">', f'<img style="height:50px" src="{uri}">'):
+        assert 'width="800"' not in gmail._embed_file_images(tag)[0]
+    # another style attribute: add the width only, never a second style=
+    out, _ = gmail._embed_file_images(f'<img src="{uri}" style="border:0">')
+    assert out.count("style=") == 1 and 'width="800"' in out
