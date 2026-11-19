@@ -16,7 +16,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from pydantic_ai import Agent, SystemPromptPart
+from pydantic_ai import Agent, InstructionCapabilityPart, OperatorSource, OperatorText
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import (
     ModelResponse,
@@ -111,6 +111,11 @@ def _note_unpriced(model: str) -> None:
         )
 
 
+@dataclass(kw_only=True)
+class WrapUpPart(InstructionCapabilityPart, namespace="ko", name="wrap_up"):
+    """The "answer now" note _WrapUpNearLimit adds near a limit; find it in history by this type."""
+
+
 @dataclass
 class _WrapUpNearLimit(AbstractCapability):
     """pydantic-ai's "wrapping up before the request limit" recipe, extended to the token cap and
@@ -131,9 +136,12 @@ class _WrapUpNearLimit(AbstractCapability):
             _wound_down.add(ctx.run_id)
             _err.print(f"[note] wrapping up: {why}", style="yellow", markup=False, highlight=False)
         ctx.enqueue(
-            SystemPromptPart(
-                "This run is nearly out of budget: give your final answer now from "
-                "what you have found, and say plainly what you could not finish.",
+            WrapUpPart(
+                content=OperatorText(
+                    "This run is nearly out of budget: give your final answer now from "
+                    "what you have found, and say plainly what you could not finish."
+                ),
+                source=OperatorSource(),
                 scope="request",
             )
         )
@@ -157,14 +165,18 @@ _IN_RESPONSE_LOOPS = {"repeated_thinking", "repeated_stream_text", "repeated_too
 def _on_loop(ctx, loop) -> None:
     """Say on stderr which loop was caught, then nudge the model as DetectLoops' default does."""
     from pydantic_ai import ModelRetry
+    from pydantic_ai_harness.detect_loops import LoopNudgePart
 
     tools = f" ({', '.join(loop.tool_names)})" if loop.tool_names else ""
     _err.print(f"[note] loop: {loop.pattern}{tools} ×{loop.count}, told to change approach",
                style="yellow", markup=False, highlight=False)
-    if loop.pattern in _IN_RESPONSE_LOOPS:
-        ctx.enqueue(SystemPromptPart(loop.message, scope="request"))
+    in_response = loop.pattern in _IN_RESPONSE_LOOPS
+    ctx.enqueue(LoopNudgePart(
+        content=OperatorText(loop.message), source=OperatorSource(), pattern=loop.pattern,
+        tool_names=loop.tool_names, scope="request" if in_response else "conversation",
+    ))
+    if in_response:
         raise ModelRetry("Your previous response was rejected because it kept repeating itself.")
-    ctx.enqueue(SystemPromptPart(loop.message))
 
 
 def detect_loops():
